@@ -4,6 +4,7 @@ import { db } from '../../lib/firebase';
 import { FileText, Plus, Upload, Clock, List, Calendar, X, Trash2, Eye, Pencil, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import MathText from '../../components/MathText';
+import html2pdf from 'html2pdf.js';
 
 export default function ManageTests() {
   const { user, role } = useAuth();
@@ -231,33 +232,137 @@ export default function ManageTests() {
   const [isSaving, setIsSaving] = useState(false);
 
   
-  const exportGradebookForAssignment = (assignmentId: string, className: string, testTitle: string) => {
-    const classStudents = studentsList.filter(s => s.className === className);
+    const removeVietnameseTones = (str: string) => {
+    if (!str) return '';
+    str = str.replace(/à|á|ạ|ả|ã|â|ầ|ấ|ậ|ẩ|ẫ|ă|ằ|ắ|ặ|ẳ|ẵ/g,"a"); 
+    str = str.replace(/è|é|ẹ|ẻ|ẽ|ê|ề|ế|ệ|ể|ễ/g,"e"); 
+    str = str.replace(/ì|í|ị|ỉ|ĩ/g,"i"); 
+    str = str.replace(/ò|ó|ọ|ỏ|õ|ô|ồ|ố|ộ|ổ|ỗ|ơ|ờ|ớ|ợ|ở|ỡ/g,"o"); 
+    str = str.replace(/ù|ú|ụ|ủ|ũ|ư|ừ|ứ|ự|ử|ữ/g,"u"); 
+    str = str.replace(/ỳ|ý|ỵ|ỷ|ỹ/g,"y"); 
+    str = str.replace(/đ/g,"d");
+    str = str.replace(/À|Á|Ạ|Ả|Ã|Â|Ầ|Ấ|Ậ|Ẩ|Ẫ|Ă|Ằ|Ắ|Ặ|Ẳ|Ẵ/g, "A");
+    str = str.replace(/È|É|Ẹ|Ẻ|Ẽ|Ê|Ề|Ế|Ệ|Ể|Ễ/g, "E");
+    str = str.replace(/Ì|Í|Ị|Ỉ|Ĩ/g, "I");
+    str = str.replace(/Ò|Ó|Ọ|Ỏ|Õ|Ô|Ồ|Ố|Ộ|Ổ|Ỗ|Ơ|Ờ|Ớ|Ợ|Ở|Ỡ/g, "O");
+    str = str.replace(/Ù|Ú|Ụ|Ủ|Ũ|Ư|Ừ|Ứ|Ự|Ử|Ữ/g, "U");
+    str = str.replace(/Ỳ|Ý|Ỵ|Ỷ|Ỹ/g, "Y");
+    str = str.replace(/Đ/g, "D");
+    return str;
+  }
+
+  
+  
+  
+  const exportGradebookForAssignment = (a: any) => {
+    const classStudents = studentsList.filter(s => s.className === a.className);
     if (classStudents.length === 0) {
       alert('Lớp này chưa có học sinh!');
       return;
     }
 
-    let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
-    csvContent += "Họ và tên,Lớp,Điểm,Ngày nộp,Trạng thái\n";
+    const container = document.createElement('div');
+    container.style.padding = '20px';
+    container.style.fontFamily = 'Arial, sans-serif';
+    container.style.color = '#333';
+    
+    let html = `
+      <h2 style="text-align: center; margin-bottom: 20px; font-size: 24px; color: #1f2937;">BẢNG ĐIỂM BÀI KIỂM TRA</h2>
+      <div style="margin-bottom: 20px; font-size: 14px;">
+        <p><b>Tên bài kiểm tra:</b> ${a.testTitle || 'Không tên'}</p>
+        <p><b>Lớp:</b> ${a.className}</p>
+        <p><b>Giáo viên:</b> ${user?.displayName || user?.email || 'Giáo viên'}</p>
+        <p><b>Giao lúc:</b> ${new Date(a.assignedDate).toLocaleString('vi-VN')}</p>
+        <p><b>Hạn nộp:</b> ${a.dueDate ? new Date(a.dueDate).toLocaleString('vi-VN') : 'Không có'}</p>
+      </div>
+      <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+        <thead>
+          <tr style="background-color: #f3f4f6;">
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">STT</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px; text-align: left;">Họ và Tên</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Bắt đầu làm</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Nộp bài</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Thời gian</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Trắc nghiệm</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Tự luận</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Tổng điểm</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
 
-    classStudents.forEach(stu => {
-      const sub = submissionsList.find(s => s.studentId === stu.id && s.assignmentId === assignmentId);
-      const score = sub && typeof sub.score === 'number' ? sub.score : 'Chưa làm';
-      const date = sub ? new Date(sub.submittedAt).toLocaleDateString('vi-VN') : '';
-      const status = sub ? (sub.score !== undefined ? 'Đã chấm' : 'Chờ chấm') : 'Chưa nộp';
+    classStudents.forEach((stu, idx) => {
+      const sub = submissionsList.find(s => s.studentId === stu.id && s.assignmentId === a.id);
       
-      csvContent += `"${stu.displayName}","${stu.className || ''}","${score}","${date}","${status}"\n`;
+      let startTimeStr = 'Chưa làm';
+      let submitTimeStr = 'Chưa nộp';
+      let durationStr = '-';
+      let scoreStr = 'Chưa nộp';
+      let mcqStr = '-';
+      let essayStr = '-';
+
+      if (sub && sub.submittedAt) {
+        submitTimeStr = new Date(sub.submittedAt).toLocaleString('vi-VN');
+        
+        if (sub.timeSpent) {
+           const durationMins = Math.floor(sub.timeSpent / 60);
+           const durationSecs = sub.timeSpent % 60;
+           durationStr = `${durationMins}p ${durationSecs}s`;
+           
+           const startTime = new Date(new Date(sub.submittedAt).getTime() - sub.timeSpent * 1000);
+           startTimeStr = startTime.toLocaleString('vi-VN');
+        } else {
+           startTimeStr = new Date(sub.submittedAt).toLocaleString('vi-VN');
+        }
+
+        if (typeof sub.score === 'number') {
+          scoreStr = sub.score.toString();
+        } else {
+          scoreStr = 'Chờ chấm';
+        }
+
+        if (sub.mcqMax > 0) {
+           mcqStr = `${Number(sub.mcqScore || 0).toFixed(1)}/${sub.mcqMax}`;
+        }
+        if (sub.essayMax > 0) {
+           essayStr = `${Number(sub.essayScore || 0).toFixed(1)}/${sub.essayMax}`;
+        }
+      }
+      
+      html += `
+        <tr>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${idx + 1}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px;">${stu.displayName || 'Không tên'}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${startTimeStr}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${submitTimeStr}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${durationStr}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${mcqStr}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${essayStr}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center; font-weight: bold; color: #2563eb;">${scoreStr}</td>
+        </tr>
+      `;
     });
 
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Diem_${className}_${testTitle.replace(/[^a-zA-Z0-9]/g, '_')}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    html += `
+        </tbody>
+      </table>
+    `;
+    
+    container.innerHTML = html;
+    
+    const opt = {
+      margin:       0.4,
+      filename:     `Bang_diem_${a.className}_${Date.now()}.pdf`,
+      image:        { type: 'jpeg', quality: 0.98 },
+      html2canvas:  { scale: 2 },
+      jsPDF:        { unit: 'in', format: 'a4', orientation: 'landscape' }
+    };
+    
+    html2pdf().set(opt).from(container).save();
   };
+
+
+
 
   const renderTestAssignments = (testId: string) => {
     const tAssigns = assignmentsList.filter(a => a.testId === testId);
@@ -281,10 +386,10 @@ export default function ManageTests() {
                   <span className="block text-red-600">Hạn: {new Date(a.dueDate).toLocaleString('vi-VN')}</span>
                 </div>
                 <button 
-                  onClick={() => exportGradebookForAssignment(a.id, a.className, a.testTitle)}
+                  onClick={() => exportGradebookForAssignment(a)}
                   className="mt-1 w-full text-xs font-semibold bg-green-100 text-green-700 py-1.5 rounded hover:bg-green-200 transition-colors"
                 >
-                  Xuất bảng điểm lớp {a.className}
+                  Xuất PDF bảng điểm lớp {a.className}
                 </button>
               </div>
             );
@@ -611,24 +716,13 @@ export default function ManageTests() {
   const renderTestCard = (t: any) => {
     return (
       <div key={t.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex flex-col h-full">
-        <div className="mb-4">
-          <span className={`text-xs font-bold px-2 py-1 rounded uppercase ${
-            t.type === 'mcq' 
-              ? (t.isCustom ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700') 
-              : (t.isCustom ? 'bg-orange-100 text-orange-700' : 'bg-purple-100 text-purple-700')
-          }`}>
-            {t.type === 'mcq' ? 'Trắc nghiệm' : 'Tự luận'}
-          </span>
-        </div>
-        
-        <div className="mb-2">
-          <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Người ra đề</div>
-          <div className="font-medium text-gray-800">{t.createdBy || 'Giáo viên'}</div>
-        </div>
-        
-        <div className="mb-4">
+        <div className="mb-4 mt-2">
           <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Tên đề kiểm tra</div>
           <div className="font-bold text-gray-800 text-lg leading-tight">{t.title}</div>
+        </div>
+        <div className="mb-4">
+          <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Người ra đề</div>
+          <div className="font-medium text-gray-800">{t.createdBy || 'Giáo viên'}</div>
         </div>
 
         <p className="text-sm text-gray-500 flex items-center gap-1 mt-auto pt-2">

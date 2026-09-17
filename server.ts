@@ -20,6 +20,28 @@ function formatError(error: any) {
 }
 
 async function startServer() {
+  
+async function generateContentWithRetry(ai, params, retries = 5) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await ai.models.generateContent(params);
+    } catch (e) {
+      const status = e.status || (e.response && e.response.status);
+      
+      // Do not retry on 400 Bad Request
+      if (status === 400) throw e;
+      
+      if (i === retries - 1) {
+        throw e;
+      }
+      
+      const delay = (i + 1) * 3500; // 3.5s, 7s, 10.5s, 14s
+      console.warn(`API error ${status} (${e.message}), retrying in ${delay}ms... (Attempt ${i + 1}/${retries})`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
+
   const app = express();
   const PORT = 3000;
 
@@ -53,18 +75,10 @@ CRITICAL REQUIREMENT: Do NOT output JSON. Output your response using EXACTLY the
 (Put beautifully formatted HTML here containing ONLY the answers, rubrics, and explanations.)
 [/ANSWERS]`;
 
-      let response;
-      try {
-        response = await ai.models.generateContent({
+      const response = await generateContentWithRetry(ai, {
           model: "gemini-3.6-flash",
           contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
         });
-      } catch (e) {
-        response = await ai.models.generateContent({
-          model: "gemini-3.6-flash",
-          contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
-        });
-      }
 
       let responseText = response.text || "";
       
@@ -171,7 +185,7 @@ Output exactly a JSON object in this format (no markdown code blocks, just raw J
       }
       parts.push({ text: prompt });
 
-      const response = await ai.models.generateContent({
+      const response = await generateContentWithRetry(ai, {
         model: "gemini-3.6-flash",
         contents: [{ role: "user", parts: parts }]
       });
@@ -226,12 +240,12 @@ Format your output EXACTLY as a valid JSON array without any markdown formatting
       let response;
       if (autoGenType === 'matrix' && matrixFileDataUrl) {
         const base64Data = matrixFileDataUrl.split(',')[1];
-        response = await ai.models.generateContent({
+        response = await generateContentWithRetry(ai, {
           model: "gemini-3.6-flash",
           contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
         });
       } else {
-        response = await ai.models.generateContent({ model: "gemini-3.6-flash", contents: prompt });
+        response = await generateContentWithRetry(ai, { model: "gemini-3.6-flash", contents: prompt });
       }
 
       let responseText = response.text || "[]";
@@ -269,18 +283,10 @@ For each question, output an object in a JSON array with the following fields:
 
 Format your output EXACTLY as a valid JSON array without any markdown formatting.`;
 
-      let response;
-      try {
-        response = await ai.models.generateContent({
+      const response = await generateContentWithRetry(ai, {
           model: "gemini-3.6-flash",
           contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
         });
-      } catch (e) {
-        response = await ai.models.generateContent({
-          model: "gemini-3.6-flash",
-          contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
-        });
-      }
 
       let responseText = response.text || "[]";
       responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();

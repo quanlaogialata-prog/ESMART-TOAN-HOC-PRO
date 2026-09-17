@@ -71,7 +71,7 @@ export default function Dashboard() {
           <button onClick={logout} className="text-red-500 hover:text-red-700 text-sm font-semibold">Đăng xuất</button>
         </div>
       </header>
-      <main className="flex-1 p-6 overflow-auto">
+      <main className="flex-1 p-4 sm:p-6 overflow-x-hidden overflow-y-auto min-w-0">
         {role === 'admin' && activeTab === 'admin' && <AdminDashboard />}
         {(role === 'teacher' || role === 'admin') && activeTab === 'curriculum' && <Curriculum />}
         {(role === 'teacher' || role === 'admin') && activeTab === 'tests' && <ManageTests />}

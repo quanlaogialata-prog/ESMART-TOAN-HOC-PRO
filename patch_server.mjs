@@ -1,12 +1,63 @@
 import fs from 'fs';
 let content = fs.readFileSync('server.ts', 'utf8');
 
-// The issue might be that gemini-2.5-flash is not available in the SDK version being used, 
-// or there's a strict payload size limit (413 payload too large) if the file is too big.
-// But the error says "Failed to extract questions", meaning it hit the catch block. Let's log it.
+const retryHelper = `
+async function generateContentWithRetry(ai, params, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await ai.models.generateContent(params);
+    } catch (e) {
+      const status = e.status || (e.response && e.response.status) || 500;
+      if (i === retries - 1 || (status !== 503 && status !== 429)) {
+        throw e;
+      }
+      console.warn(\`API error \${status}, retrying in \${(i + 1) * 2000}ms... (Attempt \${i + 1}/\${retries})\`);
+      await new Promise(r => setTimeout(r, (i + 1) * 2000));
+    }
+  }
+}
+`;
 
-const regex = /res\.status\(500\)\.json\(\{ error: "Failed to extract questions" \}\);/;
-content = content.replace(regex, `console.error("Extract API Error:", error);\n      res.status(500).json({ error: "Failed to extract questions", details: String(error) });`);
+// Insert after imports
+content = content.replace(
+  'const app = express();',
+  retryHelper + '\n  const app = express();'
+);
+
+// Update api/extract-questions (around line 273)
+content = content.replace(
+  /let response;\n      try \{\n        response = await ai\.models\.generateContent\(\{[\s\S]*?\}\);\n      \} catch \(e\) \{\n        response = await ai\.models\.generateContent\(\{[\s\S]*?\}\);\n      \}/,
+  `const response = await generateContentWithRetry(ai, {
+          model: "gemini-3.6-flash",
+          contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
+        });`
+);
+
+// Update api/extract-answers (around line 56)
+content = content.replace(
+  /let response;\n      try \{\n        response = await ai\.models\.generateContent\(\{[\s\S]*?\}\);\n      \} catch \(e\) \{\n        response = await ai\.models\.generateContent\(\{[\s\S]*?\}\);\n      \}/,
+  `const response = await generateContentWithRetry(ai, {
+          model: "gemini-3.6-flash",
+          contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
+        });`
+);
+
+// Update generate-test 
+content = content.replace(
+  /response = await ai\.models\.generateContent\(\{\n          model: "gemini-3.6-flash",\n          contents: \[\{ role: "user", parts: \[\{ inlineData: \{ mimeType: mimeType \|\| "application\/pdf", data: base64Data \} \}, \{ text: prompt \}\] \}\]\n        \}\);/g,
+  `response = await generateContentWithRetry(ai, {\n          model: "gemini-3.6-flash",\n          contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]\n        });`
+);
+
+content = content.replace(
+  /response = await ai\.models\.generateContent\(\{ model: "gemini-3.6-flash", contents: prompt \}\);/g,
+  `response = await generateContentWithRetry(ai, { model: "gemini-3.6-flash", contents: prompt });`
+);
+
+// Update grade-essay
+content = content.replace(
+  /const response = await ai\.models\.generateContent\(\{\n        model: "gemini-3.6-flash",\n        contents: \[\{ role: "user", parts: parts \}\]\n      \}\);/,
+  `const response = await generateContentWithRetry(ai, {\n        model: "gemini-3.6-flash",\n        contents: [{ role: "user", parts: parts }]\n      });`
+);
 
 fs.writeFileSync('server.ts', content);
-console.log("Patched server for debugging");
+console.log('Patched server.ts with retry logic');

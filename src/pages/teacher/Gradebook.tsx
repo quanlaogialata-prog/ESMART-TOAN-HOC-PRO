@@ -3,8 +3,7 @@ import { collection, getDocs, doc, getDoc, query, where, orderBy } from 'firebas
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Download, FileText, Calendar, Filter, Users } from 'lucide-react';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import html2pdf from 'html2pdf.js';
 // Need this to support UTF-8 in PDF if possible, but jsPDF base font doesn't support Vietnamese well.
 // We might need to use standard English ASCII mapping or base64 font.
 // Since we don't have a font file, we'll try standard text, or strip diacritics.
@@ -88,7 +87,13 @@ export default function Gradebook() {
       const subData = subSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
       
       const classAssignmentIds = asmData.map(a => a.id);
-      const classSubData = subData.filter(s => classAssignmentIds.includes(s.assignmentId));
+      const studentIdMap = {};
+      stuData.forEach(s => studentIdMap[s.id] = true);
+
+      const classSubData = subData.filter(s => 
+        classAssignmentIds.includes(s.assignmentId) && 
+        studentIdMap[s.studentId]
+      );
       
       setSubmissions(classSubData);
     } catch (error) {
@@ -157,83 +162,186 @@ export default function Gradebook() {
     };
   };
 
+  
+  
+  
   const handleDownloadTestPdf = () => {
     const asm = assignments.find(a => a.id === exportTestId);
     const cls = classes.find(c => c.id === selectedClassId);
     if (!asm || !cls) return;
 
-    const doc = new jsPDF();
-    const title = removeVietnameseTones(`Ket qua bai kiem tra: ${asm.testTitle || 'Khong ten'}`);
-    const teacher = removeVietnameseTones(`Giao vien giao bai: ${teacherName}`);
-    const classNameStr = removeVietnameseTones(`Lop: ${cls.name}`);
+    const container = document.createElement('div');
+    container.style.padding = '20px';
+    container.style.fontFamily = 'Arial, sans-serif';
+    container.style.color = '#333';
+    
+    let html = `
+      <h2 style="text-align: center; margin-bottom: 20px; font-size: 24px; color: #1f2937;">BẢNG ĐIỂM BÀI KIỂM TRA</h2>
+      <div style="margin-bottom: 20px; font-size: 14px;">
+        <p><b>Tên bài kiểm tra:</b> ${asm.testTitle || 'Không tên'}</p>
+        <p><b>Lớp:</b> ${cls.name}</p>
+        <p><b>Giáo viên:</b> ${teacherName}</p>
+        <p><b>Giao lúc:</b> ${new Date(asm.assignedDate).toLocaleString('vi-VN')}</p>
+        <p><b>Hạn nộp:</b> ${asm.dueDate ? new Date(asm.dueDate).toLocaleString('vi-VN') : 'Không có'}</p>
+      </div>
+      <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+        <thead>
+          <tr style="background-color: #f3f4f6;">
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">STT</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px; text-align: left;">Họ và Tên</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Bắt đầu làm</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Nộp bài</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Thời gian</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Trắc nghiệm</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Tự luận</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Tổng điểm</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
 
-    doc.setFontSize(16);
-    doc.text(title, 14, 20);
-    doc.setFontSize(12);
-    doc.text(teacher, 14, 30);
-    doc.text(classNameStr, 14, 38);
+    students.forEach((stu, idx) => {
+      const sub = submissions.find(s => s.studentId === stu.id && s.assignmentId === asm.id);
+      
+      let startTimeStr = 'Chưa làm';
+      let submitTimeStr = 'Chưa nộp';
+      let durationStr = '-';
+      let scoreStr = 'Chưa nộp';
+      let mcqStr = '-';
+      let essayStr = '-';
 
-    const tableData = students.map((s, idx) => {
-      const sub = submissions.find(x => x.assignmentId === asm.id && x.studentId === s.id);
-      const score = sub ? sub.score : 'Chua lam';
-      return [
-        idx + 1,
-        removeVietnameseTones(s.displayName || 'Khong ten'),
-        removeVietnameseTones(s.email || ''),
-        score
-      ];
+      if (sub && sub.submittedAt) {
+        submitTimeStr = new Date(sub.submittedAt).toLocaleString('vi-VN');
+        
+        if (sub.timeSpent) {
+           const durationMins = Math.floor(sub.timeSpent / 60);
+           const durationSecs = sub.timeSpent % 60;
+           durationStr = `${durationMins}p ${durationSecs}s`;
+           const startTime = new Date(new Date(sub.submittedAt).getTime() - sub.timeSpent * 1000);
+           startTimeStr = startTime.toLocaleString('vi-VN');
+        } else {
+           startTimeStr = new Date(sub.submittedAt).toLocaleString('vi-VN');
+        }
+
+        if (typeof sub.score === 'number') {
+          scoreStr = sub.score.toString();
+        } else {
+          scoreStr = 'Chờ chấm';
+        }
+
+        if (sub.mcqMax > 0) {
+           mcqStr = `${Number(sub.mcqScore || 0).toFixed(1)}/${sub.mcqMax}`;
+        }
+        if (sub.essayMax > 0) {
+           essayStr = `${Number(sub.essayScore || 0).toFixed(1)}/${sub.essayMax}`;
+        }
+      }
+      
+      html += `
+        <tr>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${idx + 1}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px;">${stu.displayName || 'Không tên'}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${startTimeStr}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${submitTimeStr}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${durationStr}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${mcqStr}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${essayStr}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center; font-weight: bold; color: #2563eb;">${scoreStr}</td>
+        </tr>
+      `;
     });
 
-    autoTable(doc, {
-      startY: 45,
-      head: [['STT', removeVietnameseTones('Ho ten'), 'Email', removeVietnameseTones('Diem')]],
-      body: tableData,
-    });
-
-    doc.save(`Ket_qua_bai_kiem_tra_${removeVietnameseTones(asm.testTitle || 'Kiem_tra')}.pdf`);
+    html += `
+        </tbody>
+      </table>
+    `;
+    
+    container.innerHTML = html;
+    
+    const opt = {
+      margin:       0.4,
+      filename:     `Bang_diem_${cls.name}_${Date.now()}.pdf`,
+      image:        { type: 'jpeg', quality: 0.98 },
+      html2canvas:  { scale: 2 },
+      jsPDF:        { unit: 'in', format: 'a4', orientation: 'landscape' }
+    };
+    
+    html2pdf().set(opt).from(container).save();
+    
     setShowTestPdfModal(false);
   };
 
+
+
+
+  
+  
+  
   const handleDownloadPeriodPdf = () => {
     const cls = classes.find(c => c.id === selectedClassId);
     if (!cls) return;
 
-    const doc = new jsPDF();
-    let timeText = 'Tat ca';
-    if (timeFilter === 'week') timeText = 'Tuan nay';
-    if (timeFilter === 'month') timeText = 'Thang nay';
-    if (timeFilter === 'semester') timeText = 'Hoc ky nay';
+    let timeText = 'Tất cả';
+    if (timeFilter === 'week') timeText = 'Tuần này';
+    if (timeFilter === 'month') timeText = 'Tháng này';
+    if (timeFilter === 'semester') timeText = 'Học kỳ này';
 
-    const title = removeVietnameseTones(`Tong hop ket qua hoc tap`);
-    const timeStr = removeVietnameseTones(`Thoi gian: ${timeText}`);
-    const classNameStr = removeVietnameseTones(`Lop: ${cls.name}`);
-    const teacher = removeVietnameseTones(`Giao vien: ${teacherName}`);
+    const container = document.createElement('div');
+    container.style.padding = '20px';
+    container.style.fontFamily = 'Arial, sans-serif';
+    container.style.color = '#333';
+    
+    let html = `
+      <h2 style="text-align: center; margin-bottom: 20px; font-size: 24px; color: #1f2937;">TỔNG HỢP KẾT QUẢ HỌC TẬP</h2>
+      <div style="margin-bottom: 20px; font-size: 14px;">
+        <p><b>Thời gian:</b> ${timeText}</p>
+        <p><b>Lớp:</b> ${cls.name}</p>
+        <p><b>Giáo viên:</b> ${teacherName}</p>
+      </div>
+      <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+        <thead>
+          <tr style="background-color: #f3f4f6;">
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">STT</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px; text-align: left;">Họ và Tên</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Số bài đã làm</th>
+            <th style="border: 1px solid #e5e7eb; padding: 8px;">Điểm trung bình</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
 
-    doc.setFontSize(16);
-    doc.text(title, 14, 20);
-    doc.setFontSize(12);
-    doc.text(timeStr, 14, 30);
-    doc.text(classNameStr, 14, 38);
-    doc.text(teacher, 14, 46);
-
-    const tableData = students.map((s, idx) => {
+    students.forEach((s, idx) => {
       const stats = getStudentStats(s.id);
-      return [
-        idx + 1,
-        removeVietnameseTones(s.displayName || 'Khong ten'),
-        stats.count,
-        stats.avg
-      ];
+      html += `
+        <tr>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${idx + 1}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px;">${s.displayName || 'Không tên'}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${stats.count}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center; font-weight: bold; color: #2563eb;">${stats.avg}</td>
+        </tr>
+      `;
     });
 
-    autoTable(doc, {
-      startY: 55,
-      head: [['STT', removeVietnameseTones('Ho ten'), removeVietnameseTones('So bai da lam'), removeVietnameseTones('Diem trung binh')]],
-      body: tableData,
-    });
-
-    doc.save(`Tong_hop_ket_qua_${timeText}_Lop_${removeVietnameseTones(cls.name)}.pdf`);
+    html += `
+        </tbody>
+      </table>
+    `;
+    
+    container.innerHTML = html;
+    
+    const opt = {
+      margin:       0.5,
+      filename:     `Tong_hop_ket_qua_${cls.name}_${Date.now()}.pdf`,
+      image:        { type: 'jpeg', quality: 0.98 },
+      html2canvas:  { scale: 2 },
+      jsPDF:        { unit: 'in', format: 'a4', orientation: 'portrait' }
+    };
+    
+    html2pdf().set(opt).from(container).save();
   };
+
+
+
 
   if (loading) {
     return <div className="p-8 text-center text-gray-500">Đang tải dữ liệu...</div>;
@@ -288,25 +396,26 @@ export default function Gradebook() {
         </div>
       </div>
 
-      <div className="flex gap-4 mb-4">
+      <div className="bg-orange-50 text-orange-700 text-xs p-3 rounded-lg border border-orange-100 mb-4 sm:hidden">Lưu ý: Nếu không tải được PDF trên điện thoại, vui lòng mở ứng dụng trong Tab mới.</div>\n      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
         <button
           onClick={() => setShowTestPdfModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg font-medium hover:bg-blue-100 transition-colors"
+          className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg font-medium hover:bg-blue-100 transition-colors w-full"
         >
           <Download size={18} />
           Tải xuống bảng điểm bài kiểm tra
         </button>
         <button
           onClick={handleDownloadPeriodPdf}
-          className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-lg font-medium hover:bg-green-100 transition-colors"
+          className="flex items-center justify-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-lg font-medium hover:bg-green-100 transition-colors w-full"
         >
           <Download size={18} />
-          Tải xuống kết quả {timeFilter === 'week' ? 'tuần' : timeFilter === 'month' ? 'tháng' : timeFilter === 'semester' ? 'học kỳ' : 'tất cả'}
+          Tải kết quả (Excel)
         </button>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <table className="w-full text-left border-collapse">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 w-full relative">
+        <div className="overflow-x-auto w-full" style={{ WebkitOverflowScrolling: "touch" }}>
+        <table className="w-full min-w-[800px] text-left border-collapse whitespace-nowrap">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 text-sm">
               <th className="px-6 py-4 font-medium">Họ và Tên</th>
@@ -353,11 +462,12 @@ export default function Gradebook() {
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {showTestPdfModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
               <Download size={20} className="text-blue-600"/> Tải xuống bảng điểm bài kiểm tra
             </h2>

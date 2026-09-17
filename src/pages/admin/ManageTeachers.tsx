@@ -1,11 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { collection, getDocs, updateDoc, doc, setDoc, addDoc, deleteDoc, query, where } from 'firebase/firestore';
-import { initializeApp, deleteApp } from 'firebase/app';
+import { initializeApp, deleteApp, getApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword, updatePassword, deleteUser } from 'firebase/auth';
 import { db, firebaseConfig } from '../../lib/firebase';
 import { Users, UserPlus, BookOpen, Database, Key, Trash2 } from 'lucide-react';
-import { topicsData, lessonsData, testsData } from '../../data/seedData';
-import { chapter1Data } from '../../data/chapter1';
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState<any[]>([]);
@@ -61,7 +59,11 @@ export default function AdminDashboard() {
         
         const email = `${finalSafeName}@toanhoc.pro`;
         processedEmailsInCurrentBatch.add(email);
-        const password = `${finalSafeName}123456`;
+        // Convert "Nguyễn Văn Tuấn" -> "tuan" for password
+        const nameParts = cleanName.trim().split(/\s+/);
+        const firstName = nameParts[nameParts.length - 1] || 'user';
+        const firstNameNoTones = firstName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+        const password = `${firstNameNoTones}123456`;
 
         const cred = await createUserWithEmailAndPassword(secondAuth, email, password);
         
@@ -69,7 +71,7 @@ export default function AdminDashboard() {
           role: 'student',
           email: email,
           fullName: cleanName,
-          displayName: email,
+          displayName: cleanName,
           parentPhone: cleanPhone,
           rawPassword: password,
           grade: importGrade,
@@ -102,6 +104,7 @@ export default function AdminDashboard() {
   
   // New User Form
   const [newFullName, setNewFullName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
   // Removed newUsername and newPassword
   const [newRole, setNewRole] = useState<'teacher' | 'student'>('teacher');
   const [newGrade, setNewGrade] = useState('9');
@@ -109,9 +112,9 @@ export default function AdminDashboard() {
   const [newParentPhone, setNewParentPhone] = useState('');
   const [showClassModal, setShowClassModal] = useState(false);
   const [sysMsg, setSysMsg] = useState('');
+  const [syncingPasswords, setSyncingPasswords] = useState(false);
   const [sysError, setSysError] = useState('');
-  const [showDeleteDataModal, setShowDeleteDataModal] = useState(false);
-  const [deleteDataGrade, setDeleteDataGrade] = useState('9');
+
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assigningTeacher, setAssigningTeacher] = useState<any>(null);
   const [assignedClasses, setAssignedClasses] = useState<string[]>([]);
@@ -130,8 +133,8 @@ export default function AdminDashboard() {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setUsers(data);
       const clsSnap = await getDocs(collection(db, 'classes'));
-      const fetchedClasses = clsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      fetchedClasses.sort((a, b) => {
+      const fetchedClasses = clsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      fetchedClasses.sort((a: any, b: any) => {
         const gradeDiff = Number(a.grade || 0) - Number(b.grade || 0);
         if (gradeDiff !== 0) return gradeDiff;
         return (a.name || '').localeCompare(b.name || '');
@@ -200,6 +203,17 @@ export default function AdminDashboard() {
       const cred = await signInWithEmailAndPassword(secondAuth, u.email, u.rawPassword);
       await deleteUser(cred.user);
       await deleteDoc(doc(db, 'users', u.id));
+
+      if (u.role === 'student') {
+        const qStats = query(collection(db, 'student_stats'), where('studentId', '==', u.id));
+        const snapStats = await getDocs(qStats);
+        snapStats.forEach(d => deleteDoc(d.ref));
+        
+        const qSubs = query(collection(db, 'submissions'), where('studentId', '==', u.id));
+        const snapSubs = await getDocs(qSubs);
+        snapSubs.forEach(d => deleteDoc(d.ref));
+      }
+
       await loadData();
       setSysMsg('Đã xóa tài khoản thành công.');
       setTimeout(() => setSysMsg(''), 3000);
@@ -211,107 +225,123 @@ export default function AdminDashboard() {
     }
   };
 
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [classToDelete, setClassToDelete] = useState<string | null>(null);
+  const handleDeleteAllStudents = async () => {
+    if (users.filter(u => u.role === 'student').length === 0) {
+      setSysError('Không có học sinh nào để xóa.');
+      setTimeout(() => setSysError(''), 3000);
+      return;
+    }
+    
+    if (!window.confirm('CẢNH BÁO: Hành động này sẽ xóa TOÀN BỘ học sinh cùng với tất cả dữ liệu bài tập và điểm số của họ. Bạn có chắc chắn muốn tiếp tục?')) {
+      return;
+    }
+
+    setIsDeletingAll(true);
+    setSysMsg('Đang xóa toàn bộ danh sách học sinh. Vui lòng không đóng trang web này...');
+    
+    const studentsList = users.filter(u => u.role === 'student');
+    let successCount = 0;
+    
+    try {
+      const secondApp = initializeApp(firebaseConfig, 'SecondaryAppDelAll' + Date.now());
+      const secondAuth = getAuth(secondApp);
+
+      for (const u of studentsList) {
+        if (!u.rawPassword) continue;
+        
+        try {
+          // Xóa trên Firebase Auth
+          const cred = await signInWithEmailAndPassword(secondAuth, u.email, u.rawPassword);
+          await deleteUser(cred.user);
+          
+          // Xóa document trên Firestore (users)
+          await deleteDoc(doc(db, 'users', u.id));
+          
+          // Xóa dữ liệu student_stats
+          const qStats = query(collection(db, 'student_stats'), where('studentId', '==', u.id));
+          const snapStats = await getDocs(qStats);
+          const deleteStatsPromises = snapStats.docs.map(d => deleteDoc(d.ref));
+          await Promise.all(deleteStatsPromises);
+          
+          // Xóa dữ liệu submissions
+          const qSubs = query(collection(db, 'submissions'), where('studentId', '==', u.id));
+          const snapSubs = await getDocs(qSubs);
+          const deleteSubsPromises = snapSubs.docs.map(d => deleteDoc(d.ref));
+          await Promise.all(deleteSubsPromises);
+          
+          successCount++;
+        } catch (e) {
+          console.error(`Lỗi khi xóa học sinh ${u.email}:`, e);
+        }
+      }
+      
+      deleteApp(secondApp);
+      await loadData();
+      setSysMsg(`Đã xóa thành công ${successCount} học sinh.`);
+      setTimeout(() => setSysMsg(''), 5000);
+    } catch (e: any) {
+      console.error(e);
+      setSysError('Có lỗi xảy ra trong quá trình xóa hàng loạt.');
+    } finally {
+      setIsDeletingAll(false);
+    }
+  };
+
   const handleDeleteClass = async (classId: string) => {
     if (classToDelete !== classId) {
       setClassToDelete(classId);
       setTimeout(() => setClassToDelete(null), 3000); // Reset after 3s
       return;
     }
+    
+    setSysMsg('Đang xóa lớp và danh sách học sinh...');
+    const cls = schoolClasses.find(c => c.id === classId);
+    
+    if (cls) {
+      const studentsInClass = users.filter(u => u.role === 'student' && u.className === cls.name);
+      if (studentsInClass.length > 0) {
+        try {
+          const secondApp = initializeApp(firebaseConfig, 'SecondaryAppDelClass' + Date.now());
+          const secondAuth = getAuth(secondApp);
+
+          for (const u of studentsInClass) {
+            try {
+              if (u.rawPassword) {
+                const cred = await signInWithEmailAndPassword(secondAuth, u.email, u.rawPassword);
+                await deleteUser(cred.user);
+              }
+              
+              await deleteDoc(doc(db, 'users', u.id));
+              
+              const qStats = query(collection(db, 'student_stats'), where('studentId', '==', u.id));
+              const snapStats = await getDocs(qStats);
+              await Promise.all(snapStats.docs.map(d => deleteDoc(d.ref)));
+              
+              const qSubs = query(collection(db, 'submissions'), where('studentId', '==', u.id));
+              const snapSubs = await getDocs(qSubs);
+              await Promise.all(snapSubs.docs.map(d => deleteDoc(d.ref)));
+            } catch (err) {
+              console.error('Lỗi khi xóa học sinh:', u.email, err);
+            }
+          }
+          deleteApp(secondApp);
+        } catch (err) {
+          console.error('Lỗi khởi tạo Auth phụ:', err);
+        }
+      }
+    }
+
     await deleteDoc(doc(db, 'classes', classId));
     setClassToDelete(null);
+    setSysMsg('Đã xóa lớp và học sinh thành công.');
+    setTimeout(() => setSysMsg(''), 3000);
     loadData();
   };
   
-      const [isDeletingData, setIsDeletingData] = useState(false);
-  const handleDeleteDataByGrade = async () => {
-    setIsDeletingData(true);
-    setSysMsg(''); setSysError('');
-    try {
-      const isAll = deleteDataGrade === 'all';
-      let topicsSnap;
-      if (isAll) {
-        topicsSnap = await getDocs(collection(db, 'topics'));
-      } else {
-        topicsSnap = await getDocs(query(collection(db, 'topics'), where('grade', '==', Number(deleteDataGrade))));
-      }
-      
-      let deletedCount = 0;
-      let totalLessons = 0;
-      for (const t of topicsSnap.docs) {
-        const topicId = t.id;
-        await deleteDoc(doc(db, 'topics', topicId));
-        deletedCount++;
-        const lessonsSnap = await getDocs(query(collection(db, 'lessons'), where('topicId', '==', topicId)));
-        for (const l of lessonsSnap.docs) {
-          await deleteDoc(doc(db, 'lessons', l.id));
-          totalLessons++;
-        }
-        const testsSnap = await getDocs(query(collection(db, 'tests'), where('topicId', '==', topicId)));
-        for (const ts of testsSnap.docs) {
-          await deleteDoc(doc(db, 'tests', ts.id));
-        }
-      }
-      if (isAll) {
-        const allLessons = await getDocs(collection(db, 'lessons'));
-        for (const l of allLessons.docs) await deleteDoc(doc(db, 'lessons', l.id));
-        const allTests = await getDocs(collection(db, 'tests'));
-        for (const ts of allTests.docs) await deleteDoc(doc(db, 'tests', ts.id));
-      }
-      setSysMsg(`Thành công! Đã xóa ${deletedCount} chủ đề và ${totalLessons} bài học.`);
-      setTimeout(() => setShowDeleteDataModal(false), 2000);
-    } catch (err: any) {
-      console.error("Delete Error:", err);
-      setSysError("Lỗi khi xóa: " + err.message);
-    } finally {
-      setIsDeletingData(false);
-    }
-  };
+    
 
-  const seedSystemData = async () => {
-    try {
-      for (const t of topicsData) {
-        await setDoc(doc(db, 'topics', t.id), t);
-      }
-      for (const l of lessonsData) {
-        await setDoc(doc(db, 'lessons', l.id), l);
-      }
-      for (const ts of testsData) {
-        await setDoc(doc(db, 'tests', ts.id), ts);
-      }
-      setSysMsg('Đã tạo dữ liệu bài học từ hệ thống thành công!'); setTimeout(() => setSysMsg(''), 3000);
-    } catch(e: any) {
-      setSysError('Lỗi: ' + e.message); setTimeout(() => setSysError(''), 3000);
-    }
-  };
-
-  const importCustomLessonData = async () => {
-    try {
-      const topicRef = await addDoc(collection(db, 'topics'), {
-        ...chapter1Data.topic,
-        createdAt: new Date().toISOString()
-      });
-      for (const lesson of chapter1Data.lessons) {
-        await addDoc(collection(db, 'lessons'), {
-          topicId: topicRef.id,
-          title: lesson.title,
-          knowledge: lesson.knowledge,
-          videoUrl: ''
-        });
-      }
-      for (const test of chapter1Data.tests) {
-        await addDoc(collection(db, 'tests'), {
-          topicId: topicRef.id,
-          grade: 9,
-          ...test,
-          createdAt: new Date().toISOString()
-        });
-      }
-      setSysMsg('Đã nhập dữ liệu thành công!'); setTimeout(() => setSysMsg(''), 3000);
-    } catch (e: any) {
-      setSysError('Lỗi nhập dữ liệu: ' + e.message); setTimeout(() => setSysError(''), 3000);
-    }
-  };
 
   const handleCreateClass = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -323,6 +353,71 @@ export default function AdminDashboard() {
     setClassFormName('');
     setShowClassModal(false);
     loadData();
+  };
+
+  
+  const handleSyncPasswords = async () => {
+    
+    setSyncingPasswords(true);
+    setSysMsg('Bắt đầu đồng bộ mật khẩu...');
+    setSysError('');
+
+    try {
+      const appName = 'SecondaryAppSync_' + Date.now();
+      const secondApp = initializeApp(firebaseConfig, appName);
+      const secondAuth = getAuth(secondApp);
+
+      let successCount = 0;
+      let failCount = 0;
+
+      const usersSnap = await getDocs(collection(db, 'users'));
+      const allUsers = usersSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+
+      for (const u of allUsers) {
+        if (!u.rawPassword || !u.email || !u.fullName) {
+          failCount++;
+          continue;
+        }
+
+        const nameParts = u.fullName.trim().split(/\s+/);
+        const firstName = nameParts[nameParts.length - 1] || 'user';
+        const firstNameNoTones = firstName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+        const newPassword = `${firstNameNoTones}123456`;
+
+        if (u.rawPassword === newPassword) {
+           continue; // already correct
+        }
+
+        try {
+          // login with rawPassword
+          const cred = await signInWithEmailAndPassword(secondAuth, u.email, u.rawPassword);
+          await updatePassword(cred.user, newPassword);
+          await setDoc(doc(db, 'users', u.id), { rawPassword: newPassword }, { merge: true });
+          await signOut(secondAuth);
+          successCount++;
+          setSysMsg(`Đang đồng bộ... (${successCount} thành công)`);
+        } catch (err) {
+          console.error('Lỗi khi đồng bộ user:', u.email, err);
+          failCount++;
+          if (secondAuth.currentUser) {
+            await signOut(secondAuth);
+          }
+        }
+        
+        // Small delay to avoid rate limiting
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      setSysMsg(`Đồng bộ hoàn tất! Cập nhật thành công: ${successCount}, Bỏ qua/Lỗi: ${failCount}`);
+      loadData();
+      try { await deleteApp(secondApp); } catch(e) {}
+    } catch (err: any) {
+      console.error(err);
+      setSysError('Lỗi hệ thống: ' + err.message);
+    } finally {
+      setSyncingPasswords(false);
+      setTimeout(() => setSysMsg(''), 6000);
+    }
   };
 
   const handleCreateUser = async (e: React.FormEvent) => {
@@ -344,8 +439,13 @@ export default function AdminDashboard() {
         counter++;
       }
       
-      const email = `${finalSafeName}@toanhoc.pro`;
-      const generatedPassword = `${finalSafeName}123456`;
+      const generatedEmail = `${finalSafeName}@toanhoc.pro`;
+      const email = (newRole === 'teacher' && newEmail.trim()) ? newEmail.trim() : generatedEmail;
+      // Convert "Nguyễn Văn Tuấn" -> "tuan" for password
+      const nameParts = newFullName.trim().split(/\s+/);
+      const firstName = nameParts[nameParts.length - 1] || 'user';
+      const firstNameNoTones = firstName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+      const generatedPassword = `${firstNameNoTones}123456`;
       
       const cred = await createUserWithEmailAndPassword(secondAuth, email, generatedPassword);
       
@@ -353,7 +453,7 @@ export default function AdminDashboard() {
         role: newRole,
         fullName: newFullName,
         email: email,
-        displayName: email,
+        displayName: newFullName,
         rawPassword: generatedPassword,
         createdAt: new Date().toISOString()
       };
@@ -369,6 +469,7 @@ export default function AdminDashboard() {
       
       setShowAddModal(false);
       setNewFullName('');
+      setNewEmail('');
       setNewClassName('');
       setNewParentPhone('');
       loadData();
@@ -405,7 +506,7 @@ export default function AdminDashboard() {
 
   if (loading) return <div>Đang tải danh sách người dùng...</div>;
 
-  const filteredUsers = users.filter(u => u.role === activeTab).sort((a, b) => {
+  const filteredUsers = users.filter(u => u.role === activeTab).sort((a: any, b: any) => {
     if (activeTab === 'student') {
       const gradeDiff = Number(a.grade || 0) - Number(b.grade || 0);
       if (gradeDiff !== 0) return gradeDiff;
@@ -423,34 +524,6 @@ export default function AdminDashboard() {
         <div>
           <h2 className="text-xl font-bold text-gray-800">Bảng điều khiển Quản trị</h2>
           <p className="text-sm text-gray-500 mt-1">Quản lý tài khoản người dùng và hệ thống</p>
-        </div>
-        
-        <div className="flex items-center gap-3">
-        <button 
-          onClick={() => setShowDeleteDataModal(true)}
-          className="bg-red-50 text-red-600 border border-red-200 px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 hover:bg-red-100 transition-colors"
-        >
-          <Trash2 size={16} /> Xóa dữ liệu bài học
-        </button>
-        <div className="relative group">
-          <button className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 hover:bg-green-700">
-            <Database size={16} /> Tạo dữ liệu bài học
-          </button>
-          <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border border-gray-100 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-            <button onClick={seedSystemData} className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm text-gray-700 border-b border-gray-50 transition-colors">
-              Tạo bài học từ hệ thống
-            </button>
-            <label className="block w-full text-left px-4 py-3 hover:bg-gray-50 text-sm text-gray-700 cursor-pointer transition-colors">
-              <input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => {
-                if(e.target.files && e.target.files.length > 0) {
-                  importCustomLessonData();
-                  e.target.value = '';
-                }
-              }} />
-              Nhập bài học
-            </label>
-          </div>
-        </div>
         </div>
       </div>
 
@@ -506,6 +579,15 @@ export default function AdminDashboard() {
             Danh sách {activeTab === 'teacher' ? 'Giáo viên' : activeTab === 'student' ? 'Học sinh' : 'Khối Lớp'}
           </h2>
           <div className="flex gap-2">
+            {(activeTab === 'student' || activeTab === 'teacher') && (
+              <button 
+                onClick={handleSyncPasswords}
+                disabled={syncingPasswords}
+                className="bg-yellow-500 text-white border border-yellow-600 px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 hover:bg-yellow-600 transition-colors disabled:opacity-50"
+              >
+                <Key size={16} /> {syncingPasswords ? 'Đang đồng bộ...' : 'Đồng bộ Mật khẩu'}
+              </button>
+            )}
             {activeTab === 'student' && (
               <button 
                 onClick={() => setShowImportModal(true)}
@@ -764,43 +846,66 @@ export default function AdminDashboard() {
       )}
 
       
-      {/* Delete Data Modal */}
-      {showDeleteDataModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-red-50">
-              <h2 className="text-lg font-bold text-red-800">Xóa dữ liệu bài học theo khối</h2>
-            </div>
-            <div className="p-6 space-y-4">
-              <p className="text-sm text-gray-600">Chọn khối lớp mà bạn muốn xóa toàn bộ dữ liệu (chủ đề, bài học, bài kiểm tra).</p>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Khối Lớp</label>
-                <select 
-                  value={deleteDataGrade}
-                  onChange={e => setDeleteDataGrade(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                >
-                  <option value="all">Tất cả các khối (Xóa sạch)</option>
-                  <option value="6">Khối 6</option>
-                  <option value="7">Khối 7</option>
-                  <option value="8">Khối 8</option>
-                  <option value="9">Khối 9</option>
-                  <option value="10">Khối 10</option>
-                  <option value="11">Khối 11</option>
-                  <option value="12">Khối 12</option>
-                </select>
+      {/* Import Students Modal */}
+      {showImportModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold mb-4">Nhập học sinh theo danh sách</h2>
+            <div className="space-y-4">
+              <div className="flex gap-4">
+                <div className="w-1/2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Khối Lớp</label>
+                  <select 
+                    value={importGrade} onChange={e => { setImportGrade(e.target.value); setImportClassName(""); }}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  >
+                    {[6, 7, 8, 9, 10, 11, 12].map(g => <option key={g} value={g}>Khối {g}</option>)}
+                  </select>
+                </div>
+                <div className="w-1/2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tên Lớp</label>
+                  <select 
+                    value={importClassName} onChange={e => setImportClassName(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  >
+                    <option value="">-- Chọn lớp --</option>
+                    {schoolClasses.filter(c => String(c.grade) === String(importGrade)).map(c => (
+                      <option key={c.id} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              <div className="pt-4 flex gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Danh sách (Mỗi dòng một học sinh, định dạng: <b>Họ và tên, Số điện thoại (tùy chọn)</b>)
+                </label>
+                <textarea 
+                  value={importText} onChange={e => setImportText(e.target.value)}
+                  rows={5}
+                  placeholder="Nguyễn Văn A, 0901234567&#10;Trần Thị B&#10;Lê Văn C, 0987654321"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none resize-none font-mono text-sm"
+                />
+              </div>
+              <div className="bg-blue-50 text-blue-800 p-3 rounded-lg text-sm">
+                <ul className="list-disc ml-5 space-y-1">
+                  <li>Email sẽ được tự động tạo theo dạng: <b>hoten@toanhoc.pro</b></li>
+                  <li>Mật khẩu mặc định là: <b>tên123456</b> (VD: Nguyễn Văn Tuấn {'->'} tuan123456)</li>
+                </ul>
+              </div>
+              <div className="pt-4 flex gap-3 justify-end">
                 <button 
-                  type="button"
-                  onClick={() => setShowDeleteDataModal(false)}
-                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
+                  onClick={() => setShowImportModal(false)}
+                  className="px-4 py-2 text-gray-800 bg-gray-200 hover:bg-gray-300 rounded-lg font-medium transition-colors"
                 >
                   Hủy
                 </button>
-                <button onClick={handleDeleteDataByGrade} disabled={isDeletingData} className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50">
-     <Trash2 size={16} /> {isDeletingData ? 'Đang xóa...' : 'Xóa ngay'}
-   </button>
+                <button 
+                  onClick={handleImportStudents}
+                  disabled={creatingUser}
+                  className="px-4 py-2 text-white bg-green-600 hover:bg-green-700 rounded-lg font-medium transition-colors disabled:opacity-50"
+                >
+                  {creatingUser ? 'Đang nhập...' : 'Bắt đầu Nhập'}
+                </button>
               </div>
             </div>
           </div>
@@ -808,193 +913,57 @@ export default function AdminDashboard() {
       )}
 
       {/* Add User Modal */}
-      
-      {editingUserPass && (
+      {showAddModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <h2 className="text-xl font-bold mb-4">Đổi mật khẩu: {editingUserPass.displayName}</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Mật khẩu mới</label>
-                <input 
-                  type="text"
-                  value={newPass}
-                  onChange={e => setNewPass(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="Nhập mật khẩu mới (ít nhất 6 ký tự)"
-                />
-              </div>
-              <div className="flex gap-3 justify-end mt-6">
-                <button 
-                  onClick={() => { setEditingUserPass(null); setNewPass(''); setSysError(''); }}
-                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium"
-                >
-                  Hủy
-                </button>
-                <button 
-                  onClick={handleUpdatePassword}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700"
-                >
-                  Cập nhật
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      
-      {/* Import Modal */}
-      {showImportModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6">
-            <h2 className="text-xl font-bold mb-4">Nhập danh sách Học sinh</h2>
-            
-            <div className="space-y-4">
-              <div className="flex gap-4">
-                <div className="w-1/3">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Khối</label>
-                  <select 
-                    value={importGrade}
-                    onChange={e => {
-                      setImportGrade(e.target.value);
-                      setImportClassName('');
-                    }}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  >
-                    <option value="6">Khối 6</option>
-                    <option value="7">Khối 7</option>
-                    <option value="8">Khối 8</option>
-                    <option value="9">Khối 9</option>
-                    <option value="10">Khối 10</option>
-                    <option value="11">Khối 11</option>
-                    <option value="12">Khối 12</option>
-                  </select>
-                </div>
-                <div className="flex-1">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Lớp</label>
-                  <select 
-                    value={importClassName}
-                    onChange={e => setImportClassName(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  >
-                    <option value="">-- Chọn lớp --</option>
-                    {schoolClasses.filter(c => c.grade === importGrade).map(c => (
-                      <option key={c.id} value={c.name}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Danh sách học sinh</label>
-                <p className="text-xs text-gray-500 mb-2">Nhập tên học sinh (hoặc copy từ file Excel/Text), mỗi học sinh trên một dòng.</p>
-                <textarea 
-                  value={importText}
-                  onChange={e => setImportText(e.target.value)}
-                  rows={8}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="Nguyễn Văn A
-Trần Thị B
-Lê Văn C"
-                ></textarea>
-              </div>
-
-              <div className="flex gap-3 justify-end mt-6">
-                <button 
-                  onClick={() => setShowImportModal(false)}
-                  disabled={creatingUser}
-                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium"
-                >
-                  Hủy
-                </button>
-                <button 
-                  onClick={handleImportStudents}
-                  disabled={creatingUser}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
-                >
-                  {creatingUser ? 'Đang nhập...' : 'Bắt đầu nhập'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-              <h2 className="text-lg font-bold text-gray-800">Thêm {newRole === 'teacher' ? 'Giáo viên' : 'Học sinh'} mới</h2>
-            </div>
-            <form onSubmit={handleCreateUser} className="p-6 space-y-4">
-              {sysError && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm mb-4">{sysError}</div>}
-              {sysMsg && <div className="p-3 bg-green-50 text-green-600 rounded-lg text-sm mb-4">{sysMsg}</div>}
+            <h2 className="text-xl font-bold mb-4">Thêm {newRole === 'teacher' ? 'Giáo viên' : 'Học sinh'} Mới</h2>
+            <form onSubmit={handleCreateUser} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Họ và tên</label>
                 <input 
-                  type="text" 
-                  required
-                  value={newFullName}
-                  onChange={e => setNewFullName(e.target.value)}
+                  type="text" required
+                  value={newFullName} onChange={e => setNewFullName(e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="VD: Nguyễn Văn A"
                 />
-                <p className="text-xs text-gray-500 mt-1">Mật khẩu mặc định: tên viết liền không dấu + 123456 (VD: nguyenvana123456)</p>
               </div>
-
+              {newRole === 'teacher' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input 
+                    type="email" required
+                    value={newEmail} onChange={e => setNewEmail(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+              )}
+              
               {newRole === 'student' && (
                 <>
                   <div className="flex gap-4">
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Khối</label>
-                        <select 
-                          value={newGrade}
-                          onChange={e => {
-                             setNewGrade(e.target.value);
-                             const firstClass = schoolClasses.find(c => c.grade === e.target.value);
-                             if(firstClass) setNewClassName(firstClass.name);
-                             else setNewClassName('');
-                          }}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                        >
-                          <option value="6">Khối 6</option>
-                          <option value="7">Khối 7</option>
-                          <option value="8">Khối 8</option>
-                          <option value="9">Khối 9</option>
-                    <option value="10">Khối 10</option>
-                    <option value="11">Khối 11</option>
-                    <option value="12">Khối 12</option>
-                        </select>
-                      </div>
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Lớp</label>
-                        <select 
-                          value={newClassName}
-                          onChange={e => setNewClassName(e.target.value)}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                        >
-                          <option value="">-- Chọn lớp --</option>
-                          {schoolClasses.filter(c => c.grade === newGrade).map(c => (
-                            <option key={c.id} value={c.name}>{c.name}</option>
-                          ))}
-                        </select>
-                      </div>
+                    <div className="w-1/2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Khối Lớp</label>
+                      <select 
+                        value={newGrade} onChange={e => { setNewGrade(e.target.value); setNewClassName(""); }}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      >
+                        {[6, 7, 8, 9, 10, 11, 12].map(g => <option key={g} value={g}>Khối {g}</option>)}
+                      </select>
                     </div>
-                    {newRole === 'student' && (
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">SĐT Phụ huynh</label>
-                        <input 
-                          type="text"
-                          value={newParentPhone}
-                          onChange={e => setNewParentPhone(e.target.value)}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                          placeholder="Nhập số điện thoại Zalo của phụ huynh..."
-                        />
-                      </div>
-                    )}
+                    <div className="w-1/2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Tên Lớp</label>
+                      <select 
+                        required value={newClassName} onChange={e => setNewClassName(e.target.value)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      >
+                        <option value="">-- Chọn lớp --</option>
+                        {schoolClasses.filter(c => String(c.grade) === String(newGrade)).map(c => (
+                          <option key={c.id} value={c.name}>{c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Phân quyền mặc định</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Quyền truy cập</label>
                     <div className="flex gap-4">
                       <label className="flex items-center gap-2">
                         <input 
@@ -1016,6 +985,10 @@ Lê Văn C"
                   </div>
                 </>
               )}
+
+              <p className="text-xs text-gray-500 italic mt-2">
+                Mật khẩu mặc định: Tên (chữ thường, không dấu) + 123456 (VD: tuan123456)
+              </p>
 
               <div className="pt-4 flex gap-3 justify-end">
                 <button 

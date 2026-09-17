@@ -44,10 +44,18 @@ export default function ManageSubmissions() {
       const subs: any[] = [];
       const subsMap: any = {};
 
+      const studentIdMap = {};
+      allStudents.forEach(s => studentIdMap[s.id] = s);
+
       subSnap.forEach(d => {
         const subData = d.data();
         const asm = asmMap[subData.assignmentId];
         
+        // Skip submission if student no longer exists
+        if (!studentIdMap[subData.studentId]) {
+          return;
+        }
+
         // Filter out if teacher is not admin and assignment belongs to a class they don't manage
         if (role !== 'admin' && asm && asm.classId) {
           if (!assignedClassIds.includes(asm.classId)) {
@@ -208,15 +216,16 @@ export default function ManageSubmissions() {
         <h2 className="text-2xl font-bold text-gray-800">Quản lý & Chấm điểm bài làm</h2>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <table className="w-full text-left border-collapse">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 w-full relative">
+        <div className="overflow-x-auto w-full" style={{ WebkitOverflowScrolling: "touch" }}>
+        <table className="w-full min-w-[800px] text-left border-collapse whitespace-nowrap">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200 text-gray-600 text-sm">
               <th className="p-4 font-semibold">Học sinh</th>
               <th className="p-4 font-semibold">Bài kiểm tra</th>
               <th className="p-4 font-semibold">Thời gian nộp</th>
               <th className="p-4 font-semibold">Điểm số</th>
-              <th className="p-4 font-semibold text-center">Thao tác</th>
+              <th className="p-4 font-semibold text-center sticky right-0 bg-gray-100 z-10 shadow-[-12px_0_15px_-5px_rgba(0,0,0,0.05)] border-l border-gray-200">Thao tác</th>
             </tr>
           </thead>
           <tbody>
@@ -224,7 +233,7 @@ export default function ManageSubmissions() {
               const asm = assignments[sub.assignmentId];
               const date = sub.isOverdueFlag ? 'Chưa nộp' : new Date(sub.submittedAt).toLocaleString('vi-VN');
               return (
-                <tr key={sub.id} className="border-b border-gray-100 hover:bg-gray-50">
+                <tr key={sub.id} className="border-b border-gray-100 hover:bg-gray-50 group">
                   <td className="p-4">
                     <div className="font-medium text-gray-800">{sub.studentEmail}</div>
                   </td>
@@ -239,7 +248,7 @@ export default function ManageSubmissions() {
                       </span>
                     )}
                   </td>
-                  <td className="p-4 text-center">
+                  <td className="p-4 text-center sticky right-0 bg-white z-10 shadow-[-12px_0_15px_-5px_rgba(0,0,0,0.05)] border-l border-gray-100 group-hover:bg-gray-50">
                     {sub.isOverdueFlag ? (
                         <div className="inline-flex px-3 py-1 bg-red-50 text-red-600 border border-red-100 rounded-lg text-sm font-medium items-center">
                            Quá hạn
@@ -270,6 +279,7 @@ export default function ManageSubmissions() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {selectedSubmission && (
