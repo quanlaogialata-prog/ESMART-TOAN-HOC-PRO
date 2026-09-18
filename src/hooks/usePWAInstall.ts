@@ -25,7 +25,12 @@ export function usePWAInstall() {
     
     setInIframe(window !== window.parent);
 
+    
+    if ((window as any).deferredPWAInstallPrompt) {
+      setDeferredPrompt((window as any).deferredPWAInstallPrompt);
+    }
     const handleBeforeInstallPrompt = (e: Event) => {
+      (window as any).deferredPWAInstallPrompt = e;
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
     };
