@@ -1,8 +1,9 @@
-import {StrictMode} from 'react';
-import {createRoot} from 'react-dom/client';
-import App from './App.tsx';
-import './index.css';
+import fs from 'fs';
 
+let content = fs.readFileSync('src/main.tsx', 'utf8');
+
+const swScript = `
+// Unregister any leftover service workers
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then((registrations) => {
     for (let registration of registrations) {
@@ -13,8 +14,8 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+createRoot`;
+
+content = content.replace("createRoot", swScript);
+
+fs.writeFileSync('src/main.tsx', content);
