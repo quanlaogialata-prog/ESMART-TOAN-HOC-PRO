@@ -67,11 +67,13 @@ export const PWAInstallButton: React.FC = () => {
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl relative">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Hướng dẫn cài đặt</h3>
             <p className="mt-2 text-sm text-gray-600 leading-relaxed mb-4">
-              Trình duyệt đang chặn tính năng này do bạn đang xem qua khung thu nhỏ.
+              Trình duyệt đang chặn tính năng này do bạn đang xem ứng dụng qua một ứng dụng khác (ví dụ: Zalo, Messenger, Facebook).
               <br/><br/>
               <strong>Cách khắc phục:</strong><br/>
-              1. Nhấn nút <strong>Mở trong thẻ mới (Open in new tab)</strong> (Biểu tượng ô vuông mũi tên chéo ở góc phải phía trên màn hình).<br/><br/>
-              2. Ở thẻ mới đó, bạn có thể nhấn lại nút Cài đặt App này để tải ứng dụng về máy.
+              1. Copy đường link (URL) của trang web hiện tại.<br/><br/>
+              2. Mở trình duyệt web của bạn (Chrome, Safari,...) và dán link vào để truy cập.
+<br/><br/>
+3. Ở trình duyệt đó, bạn nhấn lại nút Tải App này để cài đặt.
             </p>
             <button
               onClick={() => setShowGeneralGuide(false)}
