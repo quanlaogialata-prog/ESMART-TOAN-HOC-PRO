@@ -65,15 +65,13 @@ export const PWAInstallButton: React.FC = () => {
       {showGeneralGuide && (
         <div className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl relative">
-            <h3 className="text-lg font-bold text-gray-900 mb-4">Hướng dẫn cài đặt</h3>
+            <h3 className="text-lg font-bold text-gray-900 mb-4">Hướng dẫn cài đặt thủ công</h3>
             <p className="mt-2 text-sm text-gray-600 leading-relaxed mb-4">
-              Trình duyệt đang chặn tính năng này do bạn đang xem ứng dụng qua một ứng dụng khác (ví dụ: Zalo, Messenger, Facebook).
+              Hệ thống chưa thể mở hộp thoại cài đặt tự động (do bạn vừa gỡ app, hoặc đang mở web qua Zalo/Messenger).
               <br/><br/>
-              <strong>Cách khắc phục:</strong><br/>
-              1. Copy đường link (URL) của trang web hiện tại.<br/><br/>
-              2. Mở trình duyệt web của bạn (Chrome, Safari,...) và dán link vào để truy cập.
-<br/><br/>
-3. Ở trình duyệt đó, bạn nhấn lại nút Tải App này để cài đặt.
+              <strong>Cách cài đặt nhanh chóng:</strong><br/>
+              1. <strong>Nếu mở qua Zalo/Messenger:</strong> Nhấn dấu 3 chấm góc trên, chọn "Mở bằng trình duyệt" (Chrome/Safari).<br/><br/>
+              2. <strong>Trên trình duyệt Chrome/Cốc Cốc:</strong> Nhấn vào Menu (dấu 3 chấm ⋮) ở góc phải màn hình trình duyệt, sau đó chọn <strong>"Cài đặt ứng dụng"</strong> (Install app) hoặc <strong>"Thêm vào màn hình chính"</strong>.
             </p>
             <button
               onClick={() => setShowGeneralGuide(false)}
