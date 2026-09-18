@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router';
+import { PWAInstallButton } from '../components/PWAInstallButton';
 
 export default function Login() {
   const { user, loginWithGoogle, loginWithEmailPassword, loading } = useAuth();
@@ -92,6 +93,10 @@ export default function Login() {
           <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
           Đăng nhập với Google
         </button>
+
+        <div className="mt-6 flex justify-center">
+          <PWAInstallButton />
+        </div>
       </div>
     </div>
   );
