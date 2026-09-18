@@ -8,6 +8,7 @@ import ManageSubmissions from './teacher/ManageSubmissions';
 import Gradebook from './teacher/Gradebook';
 import StudentDashboard from './student/StudentDashboard';
 import SettingsModal from '../components/SettingsModal';
+import { PWAInstallButton } from '../components/PWAInstallButton';
 
 type Tab = 'curriculum' | 'tests' | 'grading' | 'gradebook' | 'admin' | 'student';
 
