@@ -67,6 +67,7 @@ export default function Dashboard() {
         )}
 
         <div className="flex items-center gap-4">
+          <PWAInstallButton />
           <span className="text-gray-700 font-medium">{user.displayName}</span>
           <button onClick={() => setShowSettings(true)} className="text-gray-600 hover:text-gray-900 text-sm font-semibold">Cài đặt</button>
           <button onClick={logout} className="text-red-500 hover:text-red-700 text-sm font-semibold">Đăng xuất</button>
