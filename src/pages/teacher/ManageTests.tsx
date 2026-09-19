@@ -353,9 +353,9 @@ export default function ManageTests() {
     const opt = {
       margin:       0.4,
       filename:     `Bang_diem_${a.className}_${Date.now()}.pdf`,
-      image:        { type: 'jpeg', quality: 0.98 },
+      image:        { type: 'jpeg' as const, quality: 0.98 },
       html2canvas:  { scale: 2 },
-      jsPDF:        { unit: 'in', format: 'a4', orientation: 'landscape' }
+      jsPDF:        { unit: 'in', format: 'a4', orientation: 'landscape' as const }
     };
     
     html2pdf().set(opt).from(container).save();
@@ -484,19 +484,22 @@ export default function ManageTests() {
               if (Array.isArray(generated) && generated.length > 0) {
                 testData.questionsData = JSON.stringify(generated);
               } else {
+                setSysMsg('');
                 setSysError('AI trả về kết quả rỗng. Hãy thử lại với câu lệnh rõ ràng hơn.');
                 setIsSaving(false);
                 return;
               }
             } else {
+              setSysMsg('');
               const errData = await res.json().catch(() => ({}));
               setSysError('Lỗi máy chủ khi tạo đề bằng AI: ' + (errData.details || errData.error || res.statusText));
               setIsSaving(false);
               return;
             }
-          } catch(e) {
+          } catch(e: any) {
             console.error("Generate error", e);
-            setSysError('Lỗi kết nối khi tạo đề bằng AI.');
+            setSysMsg('');
+            setSysError('Lỗi kết nối khi tạo đề bằng AI: ' + (e?.message || 'Không nhận được phản hồi từ máy chủ'));
             setIsSaving(false);
             return;
           }
@@ -524,17 +527,20 @@ export default function ManageTests() {
                     testData.answerFileUrl = "data:text/html;base64," + encodeBase64("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Đáp án</title><script type='text/x-mathjax-config'>MathJax.Hub.Config({tex2jax: {inlineMath: [['$','$'], ['\\\\(','\\\\)']], displayMath: [['$$$$','$$$$'], ['\\\\[','\\\\]']], processEscapes: true}});</script><script type='text/javascript' async src='https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-MML-AM_CHTML'></script></head><body style='font-family: Arial; line-height: 1.6; padding: 20px; max-width: 800px; margin: 0 auto;'>" + splitData.answersHtml + "</body></html>");
                     testData.answerFileName = "dap_an_chi_tiet.html";
                  } else {
+                    setSysMsg('');
                     setSysError('AI không thể tự động tách được Đề và Đáp án từ file này. Vui lòng bỏ tích chọn tách tự động, hoặc tự tách thành 2 file riêng biệt trên máy của bạn rồi tải lên.');
                     setIsSaving(false);
                     return;
                  }
               } else {
+                 setSysMsg('');
                  const errData = await splitRes.json().catch(() => ({})); setSysError('Lỗi máy chủ khi tách đề: ' + (errData.details || errData.error || splitRes.statusText));
                  setIsSaving(false);
                  return;
               }
            } catch(e) {
               console.error("Split error", e);
+              setSysMsg('');
               setSysError('Lỗi kết nối khi tách đề.');
               setIsSaving(false);
               return;
@@ -570,11 +576,13 @@ export default function ManageTests() {
                   testData.type = 'mixed';
                 }
               } else {
+                setSysMsg('');
                 setSysError('AI trả về kết quả rỗng. Vui lòng kiểm tra lại tài liệu.');
                 setIsSaving(false);
                 return;
               }
             } else {
+              setSysMsg('');
               const errData = await res.json().catch(() => ({}));
               setSysError('Lỗi máy chủ khi trích xuất bằng AI: ' + (errData.details || errData.error || res.statusText));
               setIsSaving(false);
@@ -582,6 +590,7 @@ export default function ManageTests() {
             }
           } catch(e) {
              console.error("Extraction error", e);
+             setSysMsg('');
              setSysError('Lỗi kết nối khi trích xuất tài liệu.');
              setIsSaving(false);
              return;
@@ -1377,10 +1386,10 @@ export default function ManageTests() {
                         <div className="space-y-2 pl-4">
                           {q.options?.map((opt: string, optIdx: number) => (
                             <div key={optIdx} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-colors">
-                              <div className="w-6 h-6 rounded-full border-2 border-gray-300 flex items-center justify-center text-xs font-bold text-gray-500">
+                              <div className="w-6 h-6 rounded-full border-2 border-gray-300 flex items-center justify-center text-xs font-bold text-gray-500 shrink-0">
                                 {String.fromCharCode(65 + optIdx)}
                               </div>
-                              <span className="text-gray-700"><MathText content={opt} /></span>
+                              <span className="text-gray-700 flex-1"><MathText content={typeof opt === 'string' ? opt.replace(/^[a-dA-D][\.\)]\s*/, '') : opt} /></span>
                             </div>
                           ))}
                         </div>

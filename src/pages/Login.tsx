@@ -39,7 +39,7 @@ export default function Login() {
     <div className="flex h-screen items-center justify-center bg-gray-50">
       <div className="max-w-md w-full bg-white p-8 rounded-xl shadow-lg text-center">
         
-        <h1 className="text-3xl font-bold text-blue-600 mb-2">TRUNG TÂM ESMART KB</h1>
+        <h1 className="text-3xl font-bold text-blue-600 mb-2">TRUNG TÂM ESMART</h1>
         <p className="text-gray-600 mb-8">Hệ thống ôn tập và kiểm tra môn Toán</p>
         
         {error && (

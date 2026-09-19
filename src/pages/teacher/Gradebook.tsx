@@ -261,9 +261,9 @@ export default function Gradebook() {
     const opt = {
       margin:       0.4,
       filename:     `Bang_diem_${cls.name}_${Date.now()}.pdf`,
-      image:        { type: 'jpeg', quality: 0.98 },
+      image:        { type: 'jpeg' as const, quality: 0.98 },
       html2canvas:  { scale: 2 },
-      jsPDF:        { unit: 'in', format: 'a4', orientation: 'landscape' }
+      jsPDF:        { unit: 'in', format: 'a4', orientation: 'landscape' as const }
     };
     
     html2pdf().set(opt).from(container).save();
@@ -332,9 +332,9 @@ export default function Gradebook() {
     const opt = {
       margin:       0.5,
       filename:     `Tong_hop_ket_qua_${cls.name}_${Date.now()}.pdf`,
-      image:        { type: 'jpeg', quality: 0.98 },
+      image:        { type: 'jpeg' as const, quality: 0.98 },
       html2canvas:  { scale: 2 },
-      jsPDF:        { unit: 'in', format: 'a4', orientation: 'portrait' }
+      jsPDF:        { unit: 'in', format: 'a4', orientation: 'portrait' as const }
     };
     
     html2pdf().set(opt).from(container).save();

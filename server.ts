@@ -9,38 +9,102 @@ import dotenv from "dotenv";
 dotenv.config();
 
 function formatError(error: any) {
-  const msg = String(error);
-  if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429')) {
-    return 'API Key đã vượt quá giới hạn lượt dùng miễn phí (Quá tải). Vui lòng đợi khoảng 1 phút rồi thử lại, hoặc thêm API Key của bạn trong phần Cài đặt.';
+  const msg = String(error?.message || error);
+  if (msg.includes('503') || msg.includes('UNAVAILABLE') || msg.includes('high demand')) {
+    return 'Máy chủ Google AI hiện đang quá tải do lượng truy cập cao (Lỗi 503: High Demand). Hệ thống đã tự động thử các mô hình dự phòng nhưng máy chủ của Google vẫn đang bận. Bạn vui lòng chờ khoảng 30 giây đến 1 phút rồi nhấn tạo đề lại nhé.';
   }
-  if (msg.includes('PERMISSION_DENIED') || msg.includes('403')) {
-    return 'API Key không có quyền truy cập hoặc đã bị vô hiệu hóa. Vui lòng kiểm tra lại API Key.';
+  if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429')) {
+    return 'API Key đã vượt quá giới hạn lượt dùng miễn phí (Quá tải 429). Vui lòng đợi khoảng 1 phút rồi thử lại, hoặc thêm API Key của bạn trong phần Cài đặt.';
+  }
+  if (msg.includes('PERMISSION_DENIED') || msg.includes('403') || msg.includes('UNAUTHENTICATED') || msg.includes('401')) {
+    return 'API Key không có quyền truy cập hoặc đã bị vô hiệu hóa. Vui lòng kiểm tra lại API Key trong phần Cài đặt.';
   }
   return msg;
 }
 
-async function startServer() {
+const FALLBACK_MODELS = [
+  "gemini-3.5-flash-lite",
+  "gemini-flash-lite-latest",
+  "gemini-3.6-flash",
+  "gemini-3.8-flash",
+  "gemini-3.1-flash-lite",
+];
+
+async function generateContentWithRetry(ai: any, params: any, maxAttempts = 5) {
+  const requestedModel = params.model || FALLBACK_MODELS[0];
+  const candidateModels = [
+    requestedModel,
+    ...FALLBACK_MODELS.filter(m => m !== requestedModel)
+  ];
   
-async function generateContentWithRetry(ai, params, retries = 5) {
-  for (let i = 0; i < retries; i++) {
+  let lastError: any = null;
+  let modelIndex = 0;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const currentModel = candidateModels[modelIndex % candidateModels.length];
+    const currentParams = { ...params, model: currentModel };
+    
     try {
-      return await ai.models.generateContent(params);
-    } catch (e) {
+      // 18s per-call timeout to guarantee response before proxy disconnect
+      const generatePromise = ai.models.generateContent(currentParams);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(`Model ${currentModel} timed out after 18s`)), 18000)
+      );
+      return await Promise.race([generatePromise, timeoutPromise]);
+    } catch (e: any) {
+      lastError = e;
       const status = e.status || (e.response && e.response.status);
+      const errMsg = String(e.message || e);
       
-      // Do not retry on 400 Bad Request
-      if (status === 400) throw e;
+      // Do not retry on 400 Bad Request or 401/403 authentication errors
+      if (status === 400 || status === 401 || status === 403) throw e;
       
-      if (i === retries - 1) {
-        throw e;
+      if (attempt === maxAttempts - 1) {
+        break;
       }
-      
-      const delay = (i + 1) * 3500; // 3.5s, 7s, 10.5s, 14s
-      console.warn(`API error ${status} (${e.message}), retrying in ${delay}ms... (Attempt ${i + 1}/${retries})`);
-      await new Promise(r => setTimeout(r, delay));
+
+      // If 503 UNAVAILABLE, 429 RATE_LIMIT, 500, 504, timeout -> switch to next model immediately
+      modelIndex++;
+      const nextModel = candidateModels[modelIndex % candidateModels.length];
+      console.warn(`[Gemini] ${currentModel} failed (${errMsg.slice(0, 80)}). Switching to fallback model: ${nextModel} (Attempt ${attempt + 1}/${maxAttempts})`);
+
+      // Very brief delay (400ms) before trying the next fallback model
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }
+
+  throw lastError;
+}
+
+function safeParseJsonArray(raw: string): any[] {
+  if (!raw) return [];
+  const start = raw.indexOf("[");
+  const end = raw.lastIndexOf("]");
+  if (start === -1 || end === -1 || end <= start) return [];
+
+  const candidate = raw.slice(start, end + 1);
+  try {
+    return JSON.parse(candidate);
+  } catch (e) {
+    try {
+      // 1. First attempt: escape solitary backslashes that are not followed by " or another \
+      const fixed = candidate.replace(/(?<!\\)\\(?!["\\])/g, "\\\\");
+      return JSON.parse(fixed);
+    } catch (e2) {
+      try {
+        // 2. Second attempt: handle unescaped LaTeX backslashes before letters
+        let fixed2 = candidate.replace(/\\([a-zA-Z])/g, "\\\\$1");
+        fixed2 = fixed2.replace(/\\([^"\\/])/g, "\\\\$1");
+        return JSON.parse(fixed2);
+      } catch (e3) {
+        console.warn("Failed to parse JSON array from AI output");
+        return [];
+      }
     }
   }
 }
+
+async function startServer() {
 
   const app = express();
   const PORT = 3000;
@@ -61,7 +125,10 @@ async function generateContentWithRetry(ai, params, retries = 5) {
       }
 
       const base64Data = fileDataUrl.split(',')[1];
-      const ai = new GoogleGenAI({ apiKey: apiKey });
+      const ai = new GoogleGenAI({ 
+        apiKey: apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
       
       const prompt = `You are an expert tutor. The attached document contains BOTH a test (questions) AND its answers/explanations.
 I need you to perfectly separate them into two distinct HTML documents.
@@ -76,7 +143,7 @@ CRITICAL REQUIREMENT: Do NOT output JSON. Output your response using EXACTLY the
 [/ANSWERS]`;
 
       const response = await generateContentWithRetry(ai, {
-          model: "gemini-3.6-flash",
+          model: "gemini-3.5-flash-lite",
           contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
         });
 
@@ -154,7 +221,10 @@ CRITICAL REQUIREMENT: Do NOT output JSON. Output your response using EXACTLY the
 
       if (!apiKey) return res.status(500).json({ error: "API key is not set on the server." });
       
-      const ai = new GoogleGenAI({ apiKey: apiKey });
+      const ai = new GoogleGenAI({ 
+        apiKey: apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
       let base64Data = "";
       if (submissionImageDataUrl) base64Data = submissionImageDataUrl.split(',')[1];
       
@@ -186,7 +256,7 @@ Output exactly a JSON object in this format (no markdown code blocks, just raw J
       parts.push({ text: prompt });
 
       const response = await generateContentWithRetry(ai, {
-        model: "gemini-3.6-flash",
+        model: "gemini-3.5-flash-lite",
         contents: [{ role: "user", parts: parts }]
       });
 
@@ -212,7 +282,10 @@ Output exactly a JSON object in this format (no markdown code blocks, just raw J
 
       if (!apiKey) return res.status(500).json({ error: "API key is not set." });
 
-      const ai = new GoogleGenAI({ apiKey: apiKey });
+      const ai = new GoogleGenAI({ 
+        apiKey: apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
       let prompt = `You are an expert curriculum designer and teacher. Please generate a K-12 exam test for grade ${grade} with the title: "${title}".`;
       
       if (autoGenType === 'mcq') {
@@ -229,29 +302,27 @@ Output exactly a JSON object in this format (no markdown code blocks, just raw J
 For each question, output an object in a JSON array with the following fields:
 - "id": A unique string ID (e.g., "q1", "q2")
 - "type": "mcq" (for multiple choice), "tf" (for true/false), "short" (for short fill-in-the-blank), or "essay" (for long answer)
-- "question": The full text of the question. IMPORTANT: Any math formulas MUST be wrapped in LaTeX delimiters: use $...$ for inline math and $$...$$ for block math.
-- "options": An array of strings for MCQ choices (A, B, C, D). Only include this field for mcq type. Math formulas here MUST also be wrapped in $...$ or $$...$$.
+- "question": The full text of the question in Vietnamese. IMPORTANT: Any math formulas, variables, and vectors MUST be wrapped in LaTeX delimiters: use $...$ for inline math and $$...$$ for block math. Example: $\\overrightarrow{AB}$, $\\frac{a}{b}$, $\\sqrt{x}$, $90^\\circ$.
+- "options": An array of strings for MCQ choices (A, B, C, D). Math formulas and vectors here MUST also be wrapped in $...$ or $$...$$, e.g., "$\\overrightarrow{AB} + \\overrightarrow{AD} = \\overrightarrow{AC}$".
 - "correctAnswer": The correct answer text.
 - "points": A number (default to 1 or 2).
-- "explanation": A detailed step-by-step explanation (lời giải chi tiết) in Vietnamese for the question. IMPORTANT: Any math formulas MUST be wrapped in LaTeX delimiters: use $...$ for inline math and $$...$$ for block math.
+- "explanation": A detailed step-by-step explanation (lời giải chi tiết) in Vietnamese for the question. Math formulas and vectors MUST be wrapped in LaTeX delimiters: use $...$ for inline math and $$...$$ for block math.
 
-Format your output EXACTLY as a valid JSON array without any markdown formatting.`;
+CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST be properly escaped with double backslash (e.g. \\\\overrightarrow, \\\\frac, \\\\sqrt, \\\\cdot, \\\\alpha). Format your output EXACTLY as a valid JSON array without any markdown formatting.`;
 
       let response;
       if (autoGenType === 'matrix' && matrixFileDataUrl) {
         const base64Data = matrixFileDataUrl.split(',')[1];
         response = await generateContentWithRetry(ai, {
-          model: "gemini-3.6-flash",
+          model: "gemini-3.5-flash-lite",
           contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
         });
       } else {
-        response = await generateContentWithRetry(ai, { model: "gemini-3.6-flash", contents: prompt });
+        response = await generateContentWithRetry(ai, { model: "gemini-3.5-flash-lite", contents: prompt });
       }
 
       let responseText = response.text || "[]";
-      responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-      let parsed = [];
-      try { parsed = JSON.parse(responseText); } catch(e) {}
+      let parsed = safeParseJsonArray(responseText);
       res.json(parsed);
     } catch (error: any) {
       res.status(500).json({ error: "Failed to generate test", details: formatError(error) });
@@ -268,7 +339,10 @@ Format your output EXACTLY as a valid JSON array without any markdown formatting
       if (!fileDataUrl) return res.status(400).json({ error: "No file data provided." });
 
       const base64Data = fileDataUrl.split(',')[1];
-      const ai = new GoogleGenAI({ apiKey: apiKey });
+      const ai = new GoogleGenAI({ 
+        apiKey: apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
       
       const prompt = `You are an expert AI assistant that extracts exam questions from a document.
 CRITICAL REQUIREMENT: You MUST extract EVERY SINGLE question present in the document.
@@ -284,14 +358,12 @@ For each question, output an object in a JSON array with the following fields:
 Format your output EXACTLY as a valid JSON array without any markdown formatting.`;
 
       const response = await generateContentWithRetry(ai, {
-          model: "gemini-3.6-flash",
+          model: "gemini-3.5-flash-lite",
           contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
         });
 
       let responseText = response.text || "[]";
-      responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-      let parsed = [];
-      try { parsed = JSON.parse(responseText); } catch(e) {}
+      let parsed = safeParseJsonArray(responseText);
       res.json(parsed);
     } catch (error: any) {
       console.error("Extract API Error:", error);
