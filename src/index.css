@@ -1,1 +1,45 @@
 @import "tailwindcss";
+
+@media print {
+  /* Hide all app chrome, sidebars, modals, headers, footers */
+  body * {
+    visibility: hidden;
+  }
+
+  /* Show only the designated offline print content */
+  #offline-print-content,
+  #offline-print-content * {
+    visibility: visible;
+  }
+
+  #offline-print-content {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 12mm 15mm !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  /* Page break helpers */
+  .break-inside-avoid,
+  .export-avoid-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .page-break-before {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 10mm 10mm 10mm 10mm;
+  }
+}

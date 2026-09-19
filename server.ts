@@ -344,18 +344,31 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
         httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
       });
       
-      const prompt = `You are an expert AI assistant that extracts exam questions from a document.
-CRITICAL REQUIREMENT: You MUST extract EVERY SINGLE question present in the document.
-For each question, output an object in a JSON array with the following fields:
-- "id": A unique string ID (e.g., "q1")
-- "type": "mcq" (multiple choice), "tf" (true/false), "short" (short fill-in), or "essay" (long answer)
-- "question": The full text of the question (wrap math in $)
-- "options": An array of strings for MCQ choices (A, B, C, D) (wrap math in $)
-- "correctAnswer": The correct answer text
-- "points": A number (default to 1 or 2)
-- "explanation": A detailed step-by-step explanation (lời giải chi tiết) in Vietnamese (wrap math in $)
+      const prompt = `You are an expert Vietnamese exam document parser and educator.
+Extract EVERY SINGLE question present in this exam document.
+Follow the standard Vietnamese exam structure:
+- PHẦN I: Trắc nghiệm nhiều phương án lựa chọn (A, B, C, D) -> "type": "mcq"
+- PHẦN II: Trắc nghiệm đúng sai (với các ý a, b, c, d) -> "type": "tf"
+- PHẦN III: Trắc nghiệm trả lời ngắn (điền kết quả/đáp số số học) -> "type": "short"
+- PHẦN TỰ LUẬN: Các bài toán tự luận trình bày lời giải -> "type": "essay"
 
-Format your output EXACTLY as a valid JSON array without any markdown formatting.`;
+For each question, output an object in a JSON array with the following fields:
+- "id": Unique ID (e.g., "q1", "q2")
+- "type": "mcq" | "tf" | "short" | "essay"
+- "question": Full question stem in Vietnamese. Wrap all math formulas, variables, and vectors in LaTeX $...$ or $$...$$
+- "options": 
+  * For "mcq": Array of 4 choices ["A. ...", "B. ...", "C. ...", "D. ..."] (with LaTeX math wrapped in $)
+  * For "tf": Array of 4 sub-statements ["a) ...", "b) ...", "c) ...", "d) ..."] (with LaTeX math wrapped in $)
+  * For "short" or "essay": Empty array []
+- "correctAnswer": 
+  * For "mcq": "A", "B", "C", or "D"
+  * For "tf": Format like "a-Đ, b-S, c-Đ, d-S" or "Đ, S, Đ, S"
+  * For "short": Numerical value or short expression (e.g. "15", "-3/4", "2.5")
+  * For "essay": Key final answer or scoring guide summary
+- "points": Number of points (default: 0.25 for mcq, 1.0 for tf, 0.5 for short, 1.0 to 2.0 for essay)
+- "explanation": Detailed step-by-step solution in Vietnamese with LaTeX math wrapped in $
+
+Output valid JSON array only, without markdown fences. Escaping backslashes for LaTeX (\\\\frac, \\\\sqrt, \\\\vec).`;
 
       const response = await generateContentWithRetry(ai, {
           model: "gemini-3.5-flash-lite",
@@ -368,6 +381,111 @@ Format your output EXACTLY as a valid JSON array without any markdown formatting
     } catch (error: any) {
       console.error("Extract API Error:", error);
       res.status(500).json({ error: "Failed to extract questions", details: formatError(error) });
+    }
+  });
+
+  app.post("/api/generate-isomorphic-variant", async (req, res) => {
+    try {
+      const { baseQuestions, sourceCode, targetCode, testTitle, grade } = req.body;
+      const apiKeyHeader = req.headers['x-gemini-api-key'];
+      const apiKey = (Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader) || process.env.GEMINI_API_KEY_CUSTOM || process.env.GEMINI_API_KEY;
+
+      if (!apiKey) return res.status(500).json({ error: "API key is not set on the server." });
+      if (!baseQuestions || !Array.isArray(baseQuestions) || baseQuestions.length === 0) {
+        return res.status(400).json({ error: "Không có câu hỏi gốc để tạo mã đề tương tự." });
+      }
+
+      const ai = new GoogleGenAI({ 
+        apiKey: apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
+
+      // Prepare clean questions summary for the prompt
+      const simplifiedQuestions = baseQuestions.map((q, idx) => ({
+        index: idx + 1,
+        id: q.id || `q_${idx + 1}`,
+        type: q.type || 'mcq',
+        question: q.question,
+        options: Array.isArray(q.options) ? q.options : [],
+        correctAnswer: q.correctAnswer,
+        points: q.points || 1,
+        explanation: q.explanation || ''
+      }));
+
+      const prompt = `Bạn là chuyên gia ra đề thi môn Toán và kiểm tra đánh giá chất lượng cao.
+Nhiệm vụ của bạn: Từ danh sách các câu hỏi của đề thi gốc (Mã đề: "${sourceCode || '101'}") thuộc đề thi "${testTitle || 'Kiểm tra Toán'}" lớp ${grade || 'THPT'}, hãy tạo ra một BỘ ĐỀ THI TƯƠNG TỰ cho MÃ ĐỀ MỚI: "${targetCode || '102'}".
+
+YÊU CẦU CỐT LÕI (BẮT BUỘC TUÂN THỦ 100%):
+1. GIỮ NGUYÊN HOÀN TOÀN CẤU TRÚC VÀ DẠNG CÂU HỎI:
+   - Số lượng câu hỏi của mã đề mới PHẢI CHÍNH XÁC BẰNG số lượng câu hỏi của đề gốc (${simplifiedQuestions.length} câu).
+   - Câu thứ i trong mã đề mới phải tương ứng hoàn toàn với câu thứ i trong đề gốc về: dạng toán, phương pháp giải, mức độ nhận thức (nhận biết, thông hiểu, vận dụng, vận dụng cao), và kiểu câu hỏi (trắc nghiệm 4 lựa chọn 'mcq', đúng/sai 'tf', điền đáp án ngắn 'short', hoặc tự luận 'essay').
+2. THAY ĐỔI SỐ LIỆU TOÁN HỌC (ISOMORPHIC / PARALLEL QUESTIONS):
+   - Thay đổi các thông số, hệ số phương trình, độ dài, số đo góc, tọa độ, số liệu trong đề bài sao cho hợp lý, đẹp về mặt toán học (tránh ra nghiệm số quá xấu/vô lý) nhưng đảm bảo học sinh không thể chép số liệu hoặc chép đáp án từ mã đề gốc.
+3. TÍNH TOÁN LẠI ĐÁP ÁN ĐÚNG VÀ PHƯƠNG ÁN NHIỄU CHÍNH XÁC:
+   - Với số liệu mới, giải và tính toán chính xác đáp án đúng.
+   - Với câu trắc nghiệm (mcq), tạo 4 phương án A, B, C, D mới tương ứng (1 đáp án đúng và 3 phương án gây nhiễu hợp lý dựa trên các lỗi học sinh thường gặp). Trường "correctAnswer" phải ghi rõ ký tự đáp án đúng mới (ví dụ: "A", "B", "C", hoặc "D") hoặc khớp với nội dung đáp án đúng mới.
+4. LỜI GIẢI CHI TIẾT MỚI:
+   - Cung cấp lời giải chi tiết (explanation) từng bước tương ứng với số liệu mới của câu hỏi này bằng tiếng Việt.
+5. ĐỊNH DẠNG CÔNG THỨC TOÁN (LATEX):
+   - Toàn bộ công thức toán, biến số, ký hiệu vector phải được kẹp trong cặp dấu $...$ (nội dòng) hoặc $$...$$ (khối). Ví dụ: $x^2 - 5x + 6 = 0$, $\\overrightarrow{AB}$, $\\frac{a}{b}$, $\\sqrt{2}$.
+   - Chú ý: Vì xuất ra JSON, các dấu gạch chéo ngược trong LaTeX phải escape cẩn thận: \\\\frac, \\\\sqrt, \\\\alpha, \\\\vec, v.v.
+
+DƯỚI ĐÂY LÀ DANH SÁCH CÂU HỎI GỐC CỦA MÃ ĐỀ ${sourceCode || '101'}:
+${JSON.stringify(simplifiedQuestions, null, 2)}
+
+ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
+Xuất ra DUY NHẤT một mảng JSON các câu hỏi của Mã đề ${targetCode || '102'}, mỗi phần tử gồm các trường:
+[
+  {
+    "id": "v${targetCode}_q1",
+    "type": "mcq",
+    "question": "Nội dung câu hỏi mới với số liệu thay đổi...",
+    "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+    "correctAnswer": "A",
+    "points": 1,
+    "explanation": "Lời giải chi tiết với số liệu mới..."
+  }
+]
+TUYỆT ĐỐI KHÔNG thêm bất kỳ văn bản giải thích hay markdown codeblock nào ngoài mảng JSON này.`;
+
+      const response = await generateContentWithRetry(ai, {
+        model: "gemini-3.5-flash-lite",
+        contents: prompt
+      });
+
+      let responseText = response.text || "[]";
+      let parsed = safeParseJsonArray(responseText);
+
+      if (!parsed || parsed.length === 0) {
+        throw new Error("Không thể phân tích dữ liệu câu hỏi được sinh từ AI.");
+      }
+
+      const cleanedQuestions = parsed.map((q: any, idx: number) => {
+        const origQ = baseQuestions[idx] || {};
+        let options = Array.isArray(q.options) ? q.options : [];
+        let correctAnswer = q.correctAnswer;
+        
+        return {
+          ...q,
+          id: q.id || `v${targetCode}_q${idx + 1}`,
+          originalId: origQ.id || `q_${idx + 1}`,
+          type: q.type || origQ.type || 'mcq',
+          points: q.points || origQ.points || 1,
+          question: q.question || origQ.question,
+          options: options,
+          correctAnswer: correctAnswer || origQ.correctAnswer,
+          explanation: q.explanation || ''
+        };
+      });
+
+      res.json({
+        code: targetCode,
+        questions: cleanedQuestions,
+        questionsData: JSON.stringify(cleanedQuestions)
+      });
+    } catch (error: any) {
+      console.error("Error generating isomorphic variant:", error);
+      res.status(500).json({ error: "Lỗi khi sinh mã đề tương tự", details: formatError(error) });
     }
   });
 

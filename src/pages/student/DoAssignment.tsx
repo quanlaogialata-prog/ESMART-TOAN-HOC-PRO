@@ -27,9 +27,11 @@ export default function DoAssignment() {
   const [errorMsg, setErrorMsg] = useState('');
   
 
+  const [assignedVariantCode, setAssignedVariantCode] = useState<string | null>(null);
+
   useEffect(() => {
     loadData();
-  }, [assignmentId]);
+  }, [assignmentId, user?.email, user?.uid]);
 
   useEffect(() => {
     if (timeLeft > 0 && !submitted) {
@@ -44,19 +46,24 @@ export default function DoAssignment() {
     try {
       if (!assignmentId) return;
 
+      let existingSub: any = null;
+
       // Check existing submission
       if (user?.email) {
         const subQ = query(collection(db, 'submissions'), where('assignmentId', '==', assignmentId), where('studentEmail', '==', user.email));
         const subSnap = await getDocs(subQ);
         if (!subSnap.empty) {
-          const subData = subSnap.docs[0].data();
+          existingSub = subSnap.docs[0].data();
           setSubmitted(true);
-          setResult(subData);
+          setResult(existingSub);
+          if (existingSub.variantCode) {
+            setAssignedVariantCode(existingSub.variantCode);
+          }
           
           // Pre-fill answers from submission
           const prevAnswers: any = {};
-          if (subData.feedback) {
-            subData.feedback.forEach((fb: any) => {
+          if (existingSub.feedback) {
+            existingSub.feedback.forEach((fb: any) => {
               if (fb.studentAnswer) {
                 prevAnswers[fb.questionId] = fb.studentAnswer;
               }
@@ -82,20 +89,54 @@ export default function DoAssignment() {
         setTimeLeft(testData.durationMinutes * 60);
 
         let parsedQuestions: any = [];
-        try {
-          parsedQuestions = JSON.parse(testData.questionsData || "[]");
-          // Handle cases where AI returns an object like { "questions": [...] }
-          if (parsedQuestions && typeof parsedQuestions === 'object' && !Array.isArray(parsedQuestions)) {
-            if (Array.isArray(parsedQuestions.questions)) {
-              parsedQuestions = parsedQuestions.questions;
-            } else if (Array.isArray(parsedQuestions.data)) {
-              parsedQuestions = parsedQuestions.data;
-            } else {
-              parsedQuestions = [];
+        let studentVariantCode: string | null = existingSub?.variantCode || null;
+
+        // Determine variant for multi-variant tests
+        const isMulti = assignData.isMultiVariant || testData.isMultiVariant || (testData.variants && testData.variants.length > 1);
+        if (isMulti) {
+          const vCodes: string[] = assignData.variantCodes || testData.variantCodes || (testData.variants ? testData.variants.map((v: any) => v.code) : []);
+          
+          if (!studentVariantCode) {
+            if (assignData.studentVariants) {
+              if (user?.uid && assignData.studentVariants[user.uid]) {
+                studentVariantCode = assignData.studentVariants[user.uid];
+              } else if (user?.email && assignData.studentVariants[user.email]) {
+                studentVariantCode = assignData.studentVariants[user.email];
+              }
+            }
+            if (!studentVariantCode && vCodes.length > 0) {
+              const hash = (user?.uid || user?.email || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+              studentVariantCode = vCodes[hash % vCodes.length];
             }
           }
-        } catch (e) {
-          // ignore
+
+          const variantsList: any[] = assignData.variants || testData.variants || [];
+          const matchedVariant = variantsList.find((v: any) => v.code === studentVariantCode);
+          if (matchedVariant && Array.isArray(matchedVariant.questions) && matchedVariant.questions.length > 0) {
+            parsedQuestions = matchedVariant.questions;
+          }
+        }
+
+        if (studentVariantCode) {
+          setAssignedVariantCode(studentVariantCode);
+        }
+
+        if (!parsedQuestions || parsedQuestions.length === 0) {
+          try {
+            parsedQuestions = JSON.parse(testData.questionsData || "[]");
+            // Handle cases where AI returns an object like { "questions": [...] }
+            if (parsedQuestions && typeof parsedQuestions === 'object' && !Array.isArray(parsedQuestions)) {
+              if (Array.isArray(parsedQuestions.questions)) {
+                parsedQuestions = parsedQuestions.questions;
+              } else if (Array.isArray(parsedQuestions.data)) {
+                parsedQuestions = parsedQuestions.data;
+              } else {
+                parsedQuestions = [];
+              }
+            }
+          } catch (e) {
+            // ignore
+          }
         }
 
         // ensure IDs exist and types are normalized
@@ -286,6 +327,7 @@ export default function DoAssignment() {
       assignmentId,
       studentId: user?.uid || "",
       studentEmail: user?.email || "",
+      variantCode: assignedVariantCode || "",
       submittedAt: new Date().toISOString(),
       score: totalScore,
       maxScore,
@@ -326,7 +368,14 @@ export default function DoAssignment() {
             <ArrowLeft size={24} />
           </button>
           <div>
-            <h1 className="text-lg font-bold text-gray-800">{assignment.testTitle}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold text-gray-800">{assignment.testTitle}</h1>
+              {assignedVariantCode && (
+                <span className="bg-indigo-100 text-indigo-800 text-xs font-black px-2.5 py-0.5 rounded-full border border-indigo-200 shadow-xs">
+                  Mã đề: {assignedVariantCode}
+                </span>
+              )}
+            </div>
             <p className="text-sm text-gray-500">Khối {assignment.grade}</p>
           </div>
         </div>
@@ -354,7 +403,12 @@ export default function DoAssignment() {
           {submitted && result && (
             <div className="bg-white p-8 rounded-2xl shadow-sm border border-green-100 flex flex-col items-center mb-8">
               <CheckCircle size={64} className="text-green-500 mb-4" />
-              <h2 className="text-2xl font-bold text-gray-800 mb-2">Đã nộp bài thành công!</h2>
+              <h2 className="text-2xl font-bold text-gray-800 mb-1">Đã nộp bài thành công!</h2>
+              {assignedVariantCode && (
+                <div className="mb-2 px-3 py-1 bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-lg text-sm font-semibold">
+                  Mã đề làm bài: <span className="font-extrabold text-blue-700">{assignedVariantCode}</span>
+                </div>
+              )}
               <div className="w-full max-w-md bg-gray-50 rounded-xl p-6 mt-4">
                 <div className="flex justify-between items-center mb-4 pb-4 border-b border-gray-200">
                   <span className="text-gray-600 font-medium text-lg">Tổng điểm</span>

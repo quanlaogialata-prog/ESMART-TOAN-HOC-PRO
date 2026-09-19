@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { collection, getDocs, addDoc, updateDoc, query, where, deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { Book, Plus, Video, FileText, X, ExternalLink, PlayCircle, Download, UploadCloud, Trash2, Database } from 'lucide-react';
+import { Book, Plus, Video, FileText, X, ExternalLink, PlayCircle, Download, UploadCloud, Trash2, Database, Pencil, AlertTriangle } from 'lucide-react';
 import { topicsData, lessonsData, testsData } from '../../data/seedData';
 import { chapter1Data } from '../../data/chapter1';
 // @ts-ignore
@@ -16,8 +16,11 @@ export default function TeacherDashboard() {
   const [sysMsg, setSysMsg] = useState('');
   const [lessonToDelete, setLessonToDelete] = useState<string | null>(null);
   const [showTopicModal, setShowTopicModal] = useState(false);
-  const [newTopicName, setNewTopicName] = useState('');
-  const [newTopicSpecial, setNewTopicSpecial] = useState(false);
+  const [editingTopic, setEditingTopic] = useState<any | null>(null);
+  const [topicFormName, setTopicFormName] = useState('');
+  const [topicFormSpecial, setTopicFormSpecial] = useState(false);
+  const [topicToDelete, setTopicToDelete] = useState<any | null>(null);
+  const [isDeletingTopic, setIsDeletingTopic] = useState(false);
   const [showLessonModal, setShowLessonModal] = useState(false);
   const [editingLesson, setEditingLesson] = useState<any | null>(null);
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
@@ -28,6 +31,8 @@ export default function TeacherDashboard() {
 
   useEffect(() => {
     loadTopics();
+    setSelectedTopicId(null);
+    setLessons([]);
   }, [grade]);
 
 
@@ -249,25 +254,99 @@ export default function TeacherDashboard() {
   };
 
   
-  const handleCreateTopic = async (e: React.FormEvent) => {
+  const openAddTopic = () => {
+    setEditingTopic(null);
+    setTopicFormName('');
+    setTopicFormSpecial(false);
+    setShowTopicModal(true);
+  };
+
+  const openEditTopic = (topic: any) => {
+    setEditingTopic(topic);
+    setTopicFormName(topic.name || '');
+    setTopicFormSpecial(!!topic.isSpecial);
+    setShowTopicModal(true);
+  };
+
+  const handleSaveTopic = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTopicName.trim()) return;
+    if (!topicFormName.trim()) return;
     try {
-      await addDoc(collection(db, 'topics'), {
-        name: newTopicName,
-        grade,
-        isSpecial: grade === 9 && newTopicSpecial,
-        createdAt: new Date().toISOString()
-      });
+      if (editingTopic) {
+        await updateDoc(doc(db, 'topics', editingTopic.id), {
+          name: topicFormName.trim(),
+          ...(grade === 9 ? { isSpecial: topicFormSpecial } : {}),
+          updatedAt: new Date().toISOString()
+        });
+        setSysMsg('Cập nhật tên chủ đề thành công!');
+      } else {
+        await addDoc(collection(db, 'topics'), {
+          name: topicFormName.trim(),
+          grade,
+          isSpecial: grade === 9 && topicFormSpecial,
+          createdAt: new Date().toISOString()
+        });
+        setSysMsg('Thêm chủ đề thành công!');
+      }
       setShowTopicModal(false);
-      setNewTopicName('');
-      setNewTopicSpecial(false);
+      setEditingTopic(null);
+      setTopicFormName('');
+      setTopicFormSpecial(false);
       loadTopics();
-      setSysMsg('Thêm chủ đề thành công!');
       setTimeout(() => setSysMsg(''), 3000);
     } catch(err: any) {
       setSysError("Lỗi: " + err.message);
       setTimeout(() => setSysError(''), 3000);
+    }
+  };
+
+  const handleDeleteTopic = async () => {
+    if (!topicToDelete) return;
+    setIsDeletingTopic(true);
+    try {
+      const topicId = topicToDelete.id;
+      // 1. Delete all tests under this topic
+      const qTests = query(collection(db, 'tests'), where('topicId', '==', topicId));
+      const testsSnap = await getDocs(qTests);
+      for (const tDoc of testsSnap.docs) {
+        const qAssign = query(collection(db, 'assignments'), where('testId', '==', tDoc.id));
+        const assignSnap = await getDocs(qAssign);
+        for (const aDoc of assignSnap.docs) {
+          const qSub = query(collection(db, 'submissions'), where('assignmentId', '==', aDoc.id));
+          const subSnap = await getDocs(qSub);
+          for (const sDoc of subSnap.docs) {
+            await deleteDoc(doc(db, 'submissions', sDoc.id));
+          }
+          await deleteDoc(doc(db, 'assignments', aDoc.id));
+        }
+        await deleteDoc(doc(db, 'tests', tDoc.id));
+      }
+
+      // 2. Delete all lessons under this topic
+      const qLessons = query(collection(db, 'lessons'), where('topicId', '==', topicId));
+      const lessonsSnap = await getDocs(qLessons);
+      for (const lDoc of lessonsSnap.docs) {
+        await deleteDoc(doc(db, 'lessons', lDoc.id));
+      }
+
+      // 3. Delete the topic document itself
+      await deleteDoc(doc(db, 'topics', topicId));
+
+      setSysMsg(`Đã xóa chủ đề "${topicToDelete.name}" thành công!`);
+      setTimeout(() => setSysMsg(''), 3000);
+
+      if (selectedTopicId === topicId) {
+        setSelectedTopicId(null);
+        setLessons([]);
+      }
+      setTopicToDelete(null);
+      loadTopics();
+    } catch (err: any) {
+      console.error(err);
+      setSysError('Lỗi khi xóa chủ đề: ' + err.message);
+      setTimeout(() => setSysError(''), 3000);
+    } finally {
+      setIsDeletingTopic(false);
     }
   };
   
@@ -293,7 +372,7 @@ export default function TeacherDashboard() {
     html2pdf().set(opt).from(element).save();
   };
 
-  const createTopic = () => setShowTopicModal(true);
+  const currentTopic = topics.find(t => t.id === selectedTopicId);
 
   return (
     <>
@@ -344,35 +423,91 @@ export default function TeacherDashboard() {
           </select>
           
           <div className="flex items-center gap-1">
-            
-            <button onClick={createTopic} title="Thêm chủ đề" className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-md">
+            <button onClick={openAddTopic} title="Thêm chủ đề mới" className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-md transition-colors">
               <Plus size={18} />
             </button>
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {topics.map(t => (
-            <button 
-              key={t.id}
-              onClick={() => loadLessons(t.id)}
-              className="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-50 text-gray-700 font-medium text-sm flex items-center gap-3 transition-colors"
-            >
-              <Book size={18} className="text-gray-400" />
-              <span className="flex-1 truncate">{t.name}</span>
-              {t.isSpecial && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-bold">Lên 10</span>}
-            </button>
-          ))}
+          {topics.map(t => {
+            const isSelected = selectedTopicId === t.id;
+            return (
+              <div 
+                key={t.id}
+                onClick={() => loadLessons(t.id)}
+                className={`group w-full text-left px-3 py-2.5 rounded-lg text-sm flex items-center justify-between gap-2 cursor-pointer transition-all ${
+                  isSelected 
+                    ? 'bg-blue-50 text-blue-700 font-semibold border border-blue-200' 
+                    : 'text-gray-700 hover:bg-gray-50 border border-transparent font-medium'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <Book size={17} className={isSelected ? 'text-blue-600 shrink-0' : 'text-gray-400 shrink-0'} />
+                  <span className="truncate">{t.name}</span>
+                  {t.isSpecial && (
+                    <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-bold shrink-0">
+                      Lên 10
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-0.5 shrink-0 opacity-80 group-hover:opacity-100">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openEditTopic(t);
+                    }}
+                    title="Sửa tên chủ đề"
+                    className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded transition-colors"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setTopicToDelete(t);
+                    }}
+                    title="Xóa chủ đề"
+                    className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-100 rounded transition-colors"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
           {topics.length === 0 && <div className="p-4 text-center text-sm text-gray-400">Chưa có chủ đề nào</div>}
         </div>
       </div>
 
       {/* Main Content: Lessons */}
       <div className="flex-1 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
-        <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-          <h2 className="text-lg font-bold text-gray-800">Danh sách Bài học</h2>
+        <div className="p-6 border-b border-gray-100 flex justify-between items-center gap-4">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <h2 className="text-lg font-bold text-gray-800 truncate">
+              {currentTopic ? currentTopic.name : 'Danh sách Bài học'}
+            </h2>
+            {currentTopic && (
+              <div className="flex items-center gap-1 shrink-0 ml-1">
+                <button
+                  onClick={() => openEditTopic(currentTopic)}
+                  title="Sửa tên chủ đề"
+                  className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                >
+                  <Pencil size={15} />
+                </button>
+                <button
+                  onClick={() => setTopicToDelete(currentTopic)}
+                  title="Xóa chủ đề"
+                  className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            )}
+          </div>
           <button 
             onClick={openAddLesson}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center gap-2"
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center gap-2 shrink-0 shadow-sm"
           >
             <Plus size={16} /> Thêm bài học
           </button>
@@ -482,23 +617,37 @@ export default function TeacherDashboard() {
         </div>
       )}
 
-      {/* Add Topic Modal */}
+      {/* Add / Edit Topic Modal */}
       {showTopicModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-              <h2 className="text-lg font-bold text-gray-800">Thêm Chủ Đề Mới (Lớp {grade})</h2>
+              <h2 className="text-lg font-bold text-gray-800">
+                {editingTopic ? 'Chỉnh sửa tên chủ đề' : `Thêm chủ đề mới (Lớp ${grade})`}
+              </h2>
+              <button 
+                onClick={() => {
+                  setShowTopicModal(false);
+                  setEditingTopic(null);
+                }}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-full transition-colors"
+              >
+                <X size={20} />
+              </button>
             </div>
-            <form onSubmit={handleCreateTopic} className="p-6 space-y-4">
+            <form onSubmit={handleSaveTopic} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tên chủ đề/chuyên đề</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Tên chủ đề / chuyên đề <span className="text-red-500">*</span>
+                </label>
                 <input 
                   type="text" 
                   required
-                  value={newTopicName}
-                  onChange={e => setNewTopicName(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="VD: Chương 1: Đại số"
+                  value={topicFormName}
+                  onChange={e => setTopicFormName(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-gray-800"
+                  placeholder="VD: Chương 1: Đại số và Phương trình"
+                  autoFocus
                 />
               </div>
               {grade === 9 && (
@@ -506,29 +655,79 @@ export default function TeacherDashboard() {
                   <input 
                     type="checkbox" 
                     id="isSpecial"
-                    checked={newTopicSpecial}
-                    onChange={e => setNewTopicSpecial(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded"
+                    checked={topicFormSpecial}
+                    onChange={e => setTopicFormSpecial(e.target.checked)}
+                    className="w-4 h-4 text-blue-600 rounded cursor-pointer"
                   />
-                  <label htmlFor="isSpecial" className="text-sm text-gray-700">Đây là chuyên đề ôn thi vào 10</label>
+                  <label htmlFor="isSpecial" className="text-sm text-gray-700 cursor-pointer">
+                    Đây là chuyên đề ôn thi vào 10
+                  </label>
                 </div>
               )}
               <div className="pt-4 flex gap-3">
                 <button 
                   type="button"
-                  onClick={() => setShowTopicModal(false)}
-                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
+                  onClick={() => {
+                    setShowTopicModal(false);
+                    setEditingTopic(null);
+                  }}
+                  className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
                 >
                   Hủy
                 </button>
                 <button 
                   type="submit"
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                  className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-sm"
                 >
-                  Thêm mới
+                  {editingTopic ? 'Lưu thay đổi' : 'Thêm mới'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Topic Modal */}
+      {topicToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-red-50">
+              <div className="flex items-center gap-2 text-red-700 font-bold">
+                <AlertTriangle size={20} />
+                <h2 className="text-lg">Xác nhận xóa chủ đề</h2>
+              </div>
+              <button 
+                onClick={() => setTopicToDelete(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-full transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-gray-700 text-sm leading-relaxed">
+                Bạn có chắc chắn muốn xóa chủ đề <strong className="text-gray-900 font-semibold">"{topicToDelete.name}"</strong>?
+              </p>
+              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 leading-relaxed">
+                ⚠️ <strong>Lưu ý:</strong> Toàn bộ các bài học và bài kiểm tra thuộc chủ đề này cũng sẽ bị xóa vĩnh viễn khỏi hệ thống.
+              </div>
+              <div className="pt-2 flex gap-3">
+                <button 
+                  type="button"
+                  onClick={() => setTopicToDelete(null)}
+                  disabled={isDeletingTopic}
+                  className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
+                >
+                  Hủy
+                </button>
+                <button 
+                  onClick={handleDeleteTopic}
+                  disabled={isDeletingTopic}
+                  className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 shadow-sm"
+                >
+                  <Trash2 size={16} /> {isDeletingTopic ? 'Đang xóa...' : 'Xác nhận xóa'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

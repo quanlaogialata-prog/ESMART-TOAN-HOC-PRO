@@ -236,6 +236,11 @@ export default function ManageSubmissions() {
                 <tr key={sub.id} className="border-b border-gray-100 hover:bg-gray-50 group">
                   <td className="p-4">
                     <div className="font-medium text-gray-800">{sub.studentEmail}</div>
+                    {sub.variantCode && (
+                      <span className="inline-block mt-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-full">
+                        Mã đề: {sub.variantCode}
+                      </span>
+                    )}
                   </td>
                   <td className="p-4 text-gray-600">{asm?.testTitle || 'Bài kiểm tra không xác định'}</td>
                   <td className="p-4 text-gray-600 text-sm">{date}</td>

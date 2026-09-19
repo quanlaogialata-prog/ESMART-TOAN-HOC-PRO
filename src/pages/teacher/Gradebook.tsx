@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { collection, getDocs, doc, getDoc, query, where, orderBy } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Download, FileText, Calendar, Filter, Users } from 'lucide-react';
+import { Download, FileText, Calendar, Filter, Users, FileSpreadsheet } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
+import ExportStudentAccountsModal from '../../components/ExportStudentAccountsModal';
 // Need this to support UTF-8 in PDF if possible, but jsPDF base font doesn't support Vietnamese well.
 // We might need to use standard English ASCII mapping or base64 font.
 // Since we don't have a font file, we'll try standard text, or strip diacritics.
@@ -24,6 +25,7 @@ export default function Gradebook() {
   
   const [showTestPdfModal, setShowTestPdfModal] = useState(false);
   const [exportTestId, setExportTestId] = useState('');
+  const [showExportAccountsModal, setShowExportAccountsModal] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -240,7 +242,10 @@ export default function Gradebook() {
       html += `
         <tr>
           <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${idx + 1}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px;">${stu.displayName || 'Không tên'}</td>
+          <td style="border: 1px solid #e5e7eb; padding: 8px;">
+            ${stu.displayName || 'Không tên'}
+            ${sub && sub.variantCode ? `<div style="font-size: 11px; color: #4f46e5; font-weight: bold;">(Mã đề: ${sub.variantCode})</div>` : ''}
+          </td>
           <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${startTimeStr}</td>
           <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${submitTimeStr}</td>
           <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${durationStr}</td>
@@ -396,20 +401,28 @@ export default function Gradebook() {
         </div>
       </div>
 
-      <div className="bg-orange-50 text-orange-700 text-xs p-3 rounded-lg border border-orange-100 mb-4 sm:hidden">Lưu ý: Nếu không tải được PDF trên điện thoại, vui lòng mở ứng dụng trong Tab mới.</div>\n      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+      <div className="bg-orange-50 text-orange-700 text-xs p-3 rounded-lg border border-orange-100 mb-4 sm:hidden">Lưu ý: Nếu không tải được PDF trên điện thoại, vui lòng mở ứng dụng trong Tab mới.</div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <button
           onClick={() => setShowTestPdfModal(true)}
-          className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg font-medium hover:bg-blue-100 transition-colors w-full"
+          className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg font-medium hover:bg-blue-100 transition-colors w-full border border-blue-100"
         >
           <Download size={18} />
-          Tải xuống bảng điểm bài kiểm tra
+          Tải bảng điểm bài kiểm tra
         </button>
         <button
           onClick={handleDownloadPeriodPdf}
-          className="flex items-center justify-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-lg font-medium hover:bg-green-100 transition-colors w-full"
+          className="flex items-center justify-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-lg font-medium hover:bg-green-100 transition-colors w-full border border-green-100"
         >
           <Download size={18} />
           Tải kết quả (Excel)
+        </button>
+        <button
+          onClick={() => setShowExportAccountsModal(true)}
+          className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-800 rounded-lg font-semibold hover:bg-emerald-100 transition-colors w-full border border-emerald-200"
+        >
+          <FileSpreadsheet size={18} className="text-emerald-600" />
+          Xuất DS tài khoản HS lớp này
         </button>
       </div>
 
@@ -509,6 +522,16 @@ export default function Gradebook() {
             </div>
           </div>
         </div>
+      )}
+      {/* Export Student Accounts Modal */}
+      {showExportAccountsModal && (
+        <ExportStudentAccountsModal
+          isOpen={showExportAccountsModal}
+          onClose={() => setShowExportAccountsModal(false)}
+          students={students}
+          classes={classes}
+          initialSelectedClass={classes.find(c => c.id === selectedClassId)?.name || 'all'}
+        />
       )}
     </div>
   );

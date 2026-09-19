@@ -3,7 +3,8 @@ import { collection, getDocs, updateDoc, doc, setDoc, addDoc, deleteDoc, query, 
 import { initializeApp, deleteApp, getApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword, updatePassword, deleteUser } from 'firebase/auth';
 import { db, firebaseConfig } from '../../lib/firebase';
-import { Users, UserPlus, BookOpen, Database, Key, Trash2 } from 'lucide-react';
+import { Users, UserPlus, BookOpen, Database, Key, Trash2, FileSpreadsheet, Download } from 'lucide-react';
+import ExportStudentAccountsModal from '../../components/ExportStudentAccountsModal';
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState<any[]>([]);
@@ -14,6 +15,11 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<'teacher' | 'student' | 'classes'>('teacher');
   const [schoolClasses, setSchoolClasses] = useState<any[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
+
+  // Student Export Modal State
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportInitialClass, setExportInitialClass] = useState('all');
+  const [filterClass, setFilterClass] = useState('all');
 
   const [showImportModal, setShowImportModal] = useState(false);
   const [importText, setImportText] = useState('');
@@ -506,7 +512,13 @@ export default function AdminDashboard() {
 
   if (loading) return <div>Đang tải danh sách người dùng...</div>;
 
-  const filteredUsers = users.filter(u => u.role === activeTab).sort((a: any, b: any) => {
+  const filteredUsers = users.filter(u => {
+    if (u.role !== activeTab) return false;
+    if (activeTab === 'student' && filterClass !== 'all') {
+      if (u.className !== filterClass) return false;
+    }
+    return true;
+  }).sort((a: any, b: any) => {
     if (activeTab === 'student') {
       const gradeDiff = Number(a.grade || 0) - Number(b.grade || 0);
       if (gradeDiff !== 0) return gradeDiff;
@@ -574,41 +586,85 @@ export default function AdminDashboard() {
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-          <h2 className="text-lg font-bold text-gray-800">
-            Danh sách {activeTab === 'teacher' ? 'Giáo viên' : activeTab === 'student' ? 'Học sinh' : 'Khối Lớp'}
-          </h2>
-          <div className="flex gap-2">
+        <div className="p-5 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h2 className="text-lg font-bold text-gray-800">
+              Danh sách {activeTab === 'teacher' ? 'Giáo viên' : activeTab === 'student' ? 'Học sinh' : 'Khối Lớp'}
+            </h2>
+            {activeTab === 'student' && (
+              <div className="flex items-center gap-1.5 bg-gray-100 px-2.5 py-1 rounded-lg">
+                <span className="text-xs font-semibold text-gray-600">Lọc theo lớp:</span>
+                <select
+                  value={filterClass}
+                  onChange={(e) => setFilterClass(e.target.value)}
+                  className="bg-white border border-gray-300 rounded text-xs font-medium px-2 py-0.5 text-gray-800 outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="all">Tất cả các lớp ({users.filter(u => u.role === 'student').length})</option>
+                  {schoolClasses.map(cls => (
+                    <option key={cls.id} value={cls.name}>
+                      Lớp {cls.name} (Khối {cls.grade}) - {users.filter(u => u.role === 'student' && u.className === cls.name).length} HS
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-2 flex-wrap items-center">
+            {activeTab === 'student' && (
+              <button
+                onClick={() => {
+                  setExportInitialClass(filterClass !== 'all' ? filterClass : 'all');
+                  setShowExportModal(true);
+                }}
+                className="bg-emerald-600 text-white px-3.5 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 hover:bg-emerald-700 shadow-2xs transition-colors"
+                title="Xuất file Excel và in thẻ tài khoản học sinh theo từng lớp"
+              >
+                <FileSpreadsheet size={15} /> Xuất DS tài khoản theo lớp
+              </button>
+            )}
+            {activeTab === 'classes' && (
+              <button
+                onClick={() => {
+                  setExportInitialClass('all');
+                  setShowExportModal(true);
+                }}
+                className="bg-emerald-600 text-white px-3.5 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 hover:bg-emerald-700 shadow-2xs transition-colors"
+                title="Xuất danh sách tài khoản học sinh toàn bộ các lớp"
+              >
+                <FileSpreadsheet size={15} /> Xuất tài khoản tất cả các lớp
+              </button>
+            )}
             {(activeTab === 'student' || activeTab === 'teacher') && (
               <button 
                 onClick={handleSyncPasswords}
                 disabled={syncingPasswords}
-                className="bg-yellow-500 text-white border border-yellow-600 px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 hover:bg-yellow-600 transition-colors disabled:opacity-50"
+                className="bg-yellow-500 text-white border border-yellow-600 px-3.5 py-2 rounded-lg font-medium text-xs flex items-center gap-1.5 hover:bg-yellow-600 transition-colors disabled:opacity-50"
               >
-                <Key size={16} /> {syncingPasswords ? 'Đang đồng bộ...' : 'Đồng bộ Mật khẩu'}
+                <Key size={14} /> {syncingPasswords ? 'Đang đồng bộ...' : 'Đồng bộ Mật khẩu'}
               </button>
             )}
             {activeTab === 'student' && (
               <button 
                 onClick={() => setShowImportModal(true)}
-                className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 hover:bg-green-700"
+                className="bg-green-700 text-white px-3.5 py-2 rounded-lg font-medium text-xs flex items-center gap-1.5 hover:bg-green-800"
               >
                 Nhập danh sách
               </button>
             )}
             <button 
-            onClick={() => {
-              if (activeTab === 'classes') {
-                setShowClassModal(true);
-              } else {
-                setNewRole(activeTab);
-                setShowAddModal(true);
-              }
-            }}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 hover:bg-blue-700"
-          >
-            <UserPlus size={16} /> Thêm {activeTab === 'teacher' ? 'giáo viên' : activeTab === 'student' ? 'học sinh' : 'khối lớp'}
-          </button>
+              onClick={() => {
+                if (activeTab === 'classes') {
+                  setShowClassModal(true);
+                } else {
+                  setNewRole(activeTab);
+                  setShowAddModal(true);
+                }
+              }}
+              className="bg-blue-600 text-white px-3.5 py-2 rounded-lg font-medium text-xs flex items-center gap-1.5 hover:bg-blue-700"
+            >
+              <UserPlus size={15} /> Thêm {activeTab === 'teacher' ? 'giáo viên' : activeTab === 'student' ? 'học sinh' : 'khối lớp'}
+            </button>
           </div>
         </div>
         
@@ -618,27 +674,57 @@ export default function AdminDashboard() {
             <thead className="bg-gray-50 text-gray-600 border-b">
               <tr>
                 <th className="px-6 py-4 font-medium">Họ và Tên</th>
-                <th className="px-6 py-4 font-medium">Tên hiển thị</th>
-                {activeTab === 'student' && <th className="px-6 py-4 font-medium">Khối</th>}
-                {activeTab === 'student' && <th className="px-6 py-4 font-medium">Lớp</th>}
+                <th className="px-6 py-4 font-medium">
+                  {activeTab === 'student' ? 'Tên đăng nhập' : 'Tên hiển thị'}
+                </th>
+                {activeTab === 'student' && <th className="px-4 py-4 font-medium">Mật khẩu</th>}
+                {activeTab === 'student' && <th className="px-4 py-4 font-medium">Khối</th>}
+                {activeTab === 'student' && <th className="px-4 py-4 font-medium">Lớp</th>}
+                {activeTab === 'student' && <th className="px-4 py-4 font-medium">SĐT Phụ huynh</th>}
                 <th className="px-6 py-4 font-medium">Hành động</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filteredUsers.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">Chưa có dữ liệu</td>
+                  <td colSpan={activeTab === 'student' ? 7 : 4} className="px-6 py-8 text-center text-gray-500">Chưa có dữ liệu</td>
                 </tr>
               )}
               {filteredUsers.map(u => (
                 <tr key={u.id} className="hover:bg-gray-50/50">
                   <td className="px-6 py-4 font-medium text-gray-800">{u.fullName || u.displayName}</td>
-                  <td className="px-6 py-4 text-gray-600">{u.displayName}</td>
+                  <td className="px-6 py-4 text-gray-600">
+                    {activeTab === 'student' ? (
+                      <span className="font-mono text-blue-700 font-semibold">
+                        {u.email ? u.email.replace('@toanhoc.pro', '') : u.displayName}
+                      </span>
+                    ) : (
+                      u.displayName
+                    )}
+                  </td>
                   {activeTab === 'student' && (
-                    <td className="px-6 py-4 text-gray-600">Khối {u.grade || '9'}</td>
+                    <td className="px-4 py-4 font-mono text-xs">
+                      {u.rawPassword ? (
+                        <span className="bg-amber-50 text-amber-800 px-2 py-0.5 rounded font-bold border border-amber-200">
+                          {u.rawPassword}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 italic">••••••••</span>
+                      )}
+                    </td>
                   )}
                   {activeTab === 'student' && (
-                    <td className="px-6 py-4 text-gray-600">{u.className || '-'}</td>
+                    <td className="px-4 py-4 text-gray-600">Khối {u.grade || '9'}</td>
+                  )}
+                  {activeTab === 'student' && (
+                    <td className="px-4 py-4 text-gray-600 font-medium">
+                      <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-100 text-xs">
+                        {u.className || '-'}
+                      </span>
+                    </td>
+                  )}
+                  {activeTab === 'student' && (
+                    <td className="px-4 py-4 text-gray-600 text-xs">{u.parentPhone || '-'}</td>
                   )}
                     <td className="px-6 py-4">
                       <div className="flex gap-2 items-center flex-wrap">
@@ -719,7 +805,19 @@ export default function AdminDashboard() {
                       {users.filter(u => u.role === 'student' && String(u.grade) === String(cls.grade) && u.className === cls.name).length} học sinh
                     </td>
                     <td className="px-6 py-4 text-gray-600">
-                       <button onClick={() => handleDeleteClass(cls.id)} className={`text-xs px-2 py-1 rounded border ${classToDelete === cls.id ? 'bg-red-600 text-white border-red-600' : 'text-red-500 border-red-200 bg-red-50'}`}>{classToDelete === cls.id ? 'Xác nhận xóa' : 'Xóa'}</button>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => {
+                            setExportInitialClass(cls.name);
+                            setShowExportModal(true);
+                          }}
+                          className="text-xs px-2.5 py-1 rounded-md border bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100 flex items-center gap-1 font-medium transition-colors"
+                          title={`Xuất file danh sách tài khoản học sinh lớp ${cls.name}`}
+                        >
+                          <Download size={12} /> Xuất DS tài khoản
+                        </button>
+                        <button onClick={() => handleDeleteClass(cls.id)} className={`text-xs px-2 py-1 rounded border ${classToDelete === cls.id ? 'bg-red-600 text-white border-red-600' : 'text-red-500 border-red-200 bg-red-50'}`}>{classToDelete === cls.id ? 'Xác nhận xóa' : 'Xóa'}</button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1010,6 +1108,14 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
+      {/* Export Student Accounts Modal */}
+      <ExportStudentAccountsModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        students={users.filter(u => u.role === 'student')}
+        classes={schoolClasses}
+        initialSelectedClass={exportInitialClass}
+      />
     </div>
   );
 }

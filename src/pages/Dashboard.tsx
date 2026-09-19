@@ -4,12 +4,13 @@ import { Navigate } from 'react-router';
 import AdminDashboard from './admin/ManageTeachers';
 import Curriculum from './teacher/Curriculum';
 import ManageTests from './teacher/ManageTests';
+import ManageOfflineTests from './teacher/ManageOfflineTests';
 import ManageSubmissions from './teacher/ManageSubmissions';
 import Gradebook from './teacher/Gradebook';
 import StudentDashboard from './student/StudentDashboard';
 import SettingsModal from '../components/SettingsModal';
 
-type Tab = 'curriculum' | 'tests' | 'grading' | 'gradebook' | 'admin' | 'student';
+type Tab = 'curriculum' | 'tests' | 'offline-tests' | 'grading' | 'gradebook' | 'admin' | 'student';
 
 export default function Dashboard() {
   const { user, role, loading, logout } = useAuth();
@@ -26,7 +27,7 @@ export default function Dashboard() {
           <h1 className="text-xl font-bold text-blue-600 tracking-tight">TRUNG TÂM ESMART <span className="text-sm font-medium text-gray-500 ml-2">| {role?.toUpperCase()}</span></h1>
         </div>
         
-                {(role === 'teacher' || role === 'admin') && (
+        {(role === 'teacher' || role === 'admin') && (
           <div className="flex flex-wrap bg-gray-100 p-1 rounded-lg gap-1">
             {role === 'admin' && (
               <button 
@@ -46,7 +47,13 @@ export default function Dashboard() {
               onClick={() => setActiveTab('tests')}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'tests' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
             >
-              Kho đề & Giao bài
+              Bài kiểm tra và thi online
+            </button>
+            <button 
+              onClick={() => setActiveTab('offline-tests')}
+              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'offline-tests' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+            >
+              Bài kiểm tra và thi offline
             </button>
             <button 
               onClick={() => setActiveTab('grading')}
@@ -60,8 +67,6 @@ export default function Dashboard() {
             >
               Sổ kết quả
             </button>
-            
-            
           </div>
         )}
 
@@ -75,6 +80,7 @@ export default function Dashboard() {
         {role === 'admin' && activeTab === 'admin' && <AdminDashboard />}
         {(role === 'teacher' || role === 'admin') && activeTab === 'curriculum' && <Curriculum />}
         {(role === 'teacher' || role === 'admin') && activeTab === 'tests' && <ManageTests />}
+        {(role === 'teacher' || role === 'admin') && activeTab === 'offline-tests' && <ManageOfflineTests />}
         {(role === 'teacher' || role === 'admin') && activeTab === 'grading' && <ManageSubmissions />}
         {(role === 'teacher' || role === 'admin') && activeTab === 'gradebook' && <Gradebook />}
         {role === 'student' && <StudentDashboard />}
