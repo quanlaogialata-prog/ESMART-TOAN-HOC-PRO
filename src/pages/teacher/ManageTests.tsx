@@ -1,11 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, getDocs, addDoc, where, deleteDoc, doc, updateDoc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { FileText, Plus, Upload, Clock, List, Calendar, X, Trash2, Eye, Pencil, ArrowLeft, Folder, FolderCheck, Layers, Shuffle, CheckCircle, Copy, Sparkles, Printer, FileCheck, ShieldCheck } from 'lucide-react';
+import { FileText, Plus, Upload, Clock, List, Calendar, X, Trash2, Eye, Pencil, ArrowLeft, Folder, FolderCheck, Layers, Shuffle, CheckCircle, Copy, Sparkles, Printer, FileCheck, ShieldCheck, LayoutGrid, FileSpreadsheet, Check, ChevronRight, BookOpen, Sliders, HelpCircle, Info, Users, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import MathText from '../../components/MathText';
 import html2pdf from 'html2pdf.js';
 import { generateTestVariants, TestVariant } from '../../utils/variantGenerator';
+import { CreateOnlineTestModal } from '../../components/teacher/CreateOnlineTestModal';
+import QuestionVisualRenderer from '../../components/common/QuestionVisualRenderer';
+import QuestionReferenceBadge from '../../components/common/QuestionReferenceBadge';
+import EditQuestionsModal from '../../components/teacher/EditQuestionsModal';
+import CancelAssignmentModal from '../../components/teacher/CancelAssignmentModal';
+import { QuestionItem } from '../../types/test';
+import { stripOptionPrefix } from '../../utils/gradeEngine';
 
 export default function ManageTests() {
   const { user, role } = useAuth();
@@ -96,7 +103,7 @@ export default function ManageTests() {
   };
 
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [creatingType, setCreatingType] = useState<'mcq' | 'essay'>('mcq');
+  const [creatingType, setCreatingType] = useState<'mcq' | 'essay' | 'mixed'>('mcq');
   const [newTitle, setNewTitle] = useState('');
   const [newDuration, setNewDuration] = useState('45');
   const [newGrade, setNewGrade] = useState('9');
@@ -135,7 +142,8 @@ export default function ManageTests() {
   const [deletingTestId, setDeletingTestId] = useState<string | null>(null);
   const [previewTest, setPreviewTest] = useState<any>(null);
   const [editingQuestionsTest, setEditingQuestionsTest] = useState<any>(null);
-  const [editingQuestionsList, setEditingQuestionsList] = useState<any[]>([]);
+  const [editingQuestionsList, setEditingQuestionsList] = useState<QuestionItem[]>([]);
+  const [isSavingQuestions, setIsSavingQuestions] = useState(false);
 
   const openEditQuestions = (test: any) => {
     setEditingQuestionsTest(test);
@@ -146,31 +154,51 @@ export default function ManageTests() {
     }
   };
 
-  const handleImageUploadForQuestion = (e: React.ChangeEvent<HTMLInputElement>, qIndex: number) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const newList = [...editingQuestionsList];
-      newList[qIndex] = { ...newList[qIndex], imageUrl: reader.result as string };
-      setEditingQuestionsList(newList);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const saveEditedQuestions = async () => {
+  const handleSaveQuestionsFromModal = async (updatedQuestions: QuestionItem[]) => {
     if (!editingQuestionsTest) return;
-    setSysMsg('Đang lưu thay đổi câu hỏi...');
+    setIsSavingQuestions(true);
+    setSysMsg('Đang lưu thay đổi câu hỏi & tham chiếu...');
     try {
       await updateDoc(doc(db, 'tests', editingQuestionsTest.id), {
-        questionsData: JSON.stringify(editingQuestionsList)
+        questionsData: JSON.stringify(updatedQuestions)
       });
       setSysMsg('Lưu câu hỏi thành công!');
       setEditingQuestionsTest(null);
-      loadData();
+      await loadData();
     } catch (error) {
       console.error(error);
       setSysError('Có lỗi khi lưu câu hỏi.');
+    } finally {
+      setIsSavingQuestions(false);
+    }
+  };
+
+  const [assignmentToCancel, setAssignmentToCancel] = useState<any | null>(null);
+  const [isCancellingAssignment, setIsCancellingAssignment] = useState<boolean>(false);
+
+  const handleCancelAssignment = async (assignmentId: string) => {
+    if (!assignmentId) return;
+    setIsCancellingAssignment(true);
+    setSysMsg('Đang hủy giao bài...');
+    try {
+      // 1. Delete all submissions associated with this assignment
+      const qSub = query(collection(db, 'submissions'), where('assignmentId', '==', assignmentId));
+      const subSnap = await getDocs(qSub);
+      const deletePromises = subSnap.docs.map(sDoc => deleteDoc(doc(db, 'submissions', sDoc.id)));
+
+      // 2. Delete the assignment document
+      deletePromises.push(deleteDoc(doc(db, 'assignments', assignmentId)));
+      await Promise.all(deletePromises);
+
+      const clsName = assignmentToCancel?.className || '';
+      setSysMsg(`Đã hủy giao bài cho lớp ${clsName} thành công!`);
+      setTimeout(() => setSysMsg(''), 4000);
+      setAssignmentToCancel(null);
+    } catch (err: any) {
+      console.error(err);
+      setSysError('Lỗi khi hủy giao bài: ' + (err?.message || 'Không thể xóa dữ liệu'));
+    } finally {
+      setIsCancellingAssignment(false);
     }
   };
 
@@ -191,37 +219,415 @@ export default function ManageTests() {
   };
 
   const [newFile, setNewFile] = useState<File | null>(null);
-
   const [newAnswerFile, setNewAnswerFile] = useState<File | null>(null);
   const [splitAnswers, setSplitAnswers] = useState(false);
 
-  const [autoGenType, setAutoGenType] = useState<'mcq' | 'essay' | 'mixed' | 'matrix'>('mcq');
+  // 3 Phương thức tạo đề online:
+  // 1. 'auto': Tạo đề thi tự động (AI & Ngân hàng đề)
+  // 2. 'upload': Tạo đề từ đề tải lên (PDF, DOCX, Ảnh -> Trích xuất trực tuyến)
+  // 3. 'matrix': Tạo đề theo ma trận có sẵn (Tải file hoặc chọn khung chuẩn)
+  const [onlineCreationMode, setOnlineCreationMode] = useState<'auto' | 'upload' | 'matrix'>('auto');
+
+  // 4 Hình thức đề thi trong mỗi phương thức:
+  // 1. 'mcq_3part': Trắc nghiệm 3 phần (Chuẩn Bộ GD&ĐT)
+  // 2. 'mcq_custom': Trắc nghiệm tùy biến (Chọn 1 hoặc 2 phần)
+  // 3. 'essay': Tự luận
+  // 4. 'mixed': Tổng hợp (Trắc nghiệm + Tự luận)
+  const [examFormat, setExamFormat] = useState<'mcq_3part' | 'mcq_custom' | 'essay' | 'mixed'>('mcq_3part');
+
+  // Ma trận có sẵn:
+  const [matrixSourceType, setMatrixSourceType] = useState<'preset' | 'file'>('preset');
+  const [selectedMatrixPreset, setSelectedMatrixPreset] = useState<string>('matrix_4321');
+  const [matrixConfig, setMatrixConfig] = useState<{
+    name: string;
+    levels: { recognize: number; understand: number; apply: number; highApply: number };
+    notes?: string;
+  }>({
+    name: 'Ma trận chuẩn GDPT (40% NB - 30% TH - 20% VD - 10% VDC)',
+    levels: { recognize: 40, understand: 30, apply: 20, highApply: 10 },
+    notes: 'Đảm bảo bao quát kiến thức và phân hóa học sinh theo chuẩn Bộ GD&ĐT'
+  });
+
+  // Mẫu gợi ý (Presets) đi kèm cho từng hình thức thi
+  const [activePresetId, setActivePresetId] = useState<string>('preset_3p_standard');
+
+  const formatPresets = {
+    mcq_3part: [
+      {
+        id: 'preset_3p_standard',
+        name: 'Chuẩn tốt nghiệp THPT (12 - 4 - 6)',
+        badge: 'Chuẩn Bộ GD&ĐT',
+        duration: '90',
+        p1: '12',
+        p2: '4',
+        p3: '6',
+        totalQuestions: 22,
+        points: '10 điểm (P.I: 3.0đ, P.II: 4.0đ, P.III: 3.0đ)',
+        desc: 'Cấu trúc định dạng mới nhất của Bộ GD&ĐT dành cho thi tốt nghiệp và khảo sát chất lượng'
+      },
+      {
+        id: 'preset_3p_period',
+        name: 'Kiểm tra định kỳ 45 phút (8 - 2 - 4)',
+        badge: 'Định kỳ',
+        duration: '45',
+        p1: '8',
+        p2: '2',
+        p3: '4',
+        totalQuestions: 14,
+        points: '10 điểm (P.I: 2.0đ, P.II: 4.0đ, P.III: 4.0đ)',
+        desc: 'Thiết kế cân đối cho 1 tiết học kiểm tra giữa kỳ hoặc cuối chương'
+      },
+      {
+        id: 'preset_3p_short',
+        name: 'Kiểm tra nhanh 15-20 phút (6 - 1 - 2)',
+        badge: '15 phút',
+        duration: '20',
+        p1: '6',
+        p2: '1',
+        p3: '2',
+        totalQuestions: 9,
+        points: '10 điểm (P.I: 3.0đ, P.II: 4.0đ, P.III: 3.0đ)',
+        desc: 'Kiểm tra đánh giá thường xuyên trên lớp nhanh chóng và hiệu quả'
+      },
+      {
+        id: 'preset_3p_review',
+        name: 'Ôn tập chuyên đề (10 - 2 - 3)',
+        badge: 'Chuyên đề',
+        duration: '35',
+        p1: '10',
+        p2: '2',
+        p3: '3',
+        totalQuestions: 15,
+        points: '10 điểm',
+        desc: 'Luyện tập củng cố tổng hợp theo từng chuyên đề kiến thức'
+      }
+    ],
+    mcq_custom: [
+      {
+        id: 'preset_custom_mcq20',
+        name: 'Chỉ Nhiều phương án (20 câu)',
+        badge: '1 Phần',
+        duration: '45',
+        enableP1: true, p1: '20',
+        enableP2: false, p2: '4',
+        enableP3: false, p3: '4',
+        totalQuestions: 20,
+        points: '10 điểm (0.5đ/câu)',
+        desc: '1 phần: 20 câu trắc nghiệm truyền thống 4 lựa chọn A, B, C, D'
+      },
+      {
+        id: 'preset_custom_mcq40',
+        name: 'Chỉ Nhiều phương án (40 câu)',
+        badge: '1 Phần',
+        duration: '50',
+        enableP1: true, p1: '40',
+        enableP2: false, p2: '4',
+        enableP3: false, p3: '4',
+        totalQuestions: 40,
+        points: '10 điểm (0.25đ/câu)',
+        desc: '1 phần: 40 câu trắc nghiệm 4 lựa chọn kiểm tra diện rộng'
+      },
+      {
+        id: 'preset_custom_p1_p2',
+        name: 'Nhiều PA + Đúng sai (12 + 4)',
+        badge: '2 Phần',
+        duration: '45',
+        enableP1: true, p1: '12',
+        enableP2: true, p2: '4',
+        enableP3: false, p3: '4',
+        totalQuestions: 16,
+        points: '10 điểm (Nhiều PA: 3.0đ + Đúng/Sai: 4.0đ + 3.0đ)',
+        desc: '2 phần: Kết hợp trắc nghiệm lựa chọn và trắc nghiệm Đúng/Sai 4 ý'
+      },
+      {
+        id: 'preset_custom_p1_p3',
+        name: 'Nhiều PA + Trả lời ngắn (12 + 6)',
+        badge: '2 Phần',
+        duration: '45',
+        enableP1: true, p1: '12',
+        enableP2: false, p2: '4',
+        enableP3: true, p3: '6',
+        totalQuestions: 18,
+        points: '10 điểm (Nhiều PA: 5.0đ + Trả lời ngắn: 5.0đ)',
+        desc: '2 phần: Kết hợp trắc nghiệm lựa chọn và trắc nghiệm điền kết quả'
+      },
+      {
+        id: 'preset_custom_p2_p3',
+        name: 'Đúng sai + Trả lời ngắn (4 + 6)',
+        badge: '2 Phần',
+        duration: '45',
+        enableP1: false, p1: '10',
+        enableP2: true, p2: '4',
+        enableP3: true, p3: '6',
+        totalQuestions: 10,
+        points: '10 điểm (Đúng/Sai: 4.0đ + Trả lời ngắn: 6.0đ)',
+        desc: '2 phần: Đòi hỏi tư duy lập luận và tính toán chính xác số học'
+      },
+      {
+        id: 'preset_custom_p3_only',
+        name: 'Chỉ Trả lời ngắn (10 câu)',
+        badge: '1 Phần',
+        duration: '45',
+        enableP1: false, p1: '10',
+        enableP2: false, p2: '4',
+        enableP3: true, p3: '10',
+        totalQuestions: 10,
+        points: '10 điểm (1.0đ/câu)',
+        desc: '1 phần: Học sinh tự giải và điền đáp số, chống hoàn toàn khoanh bừa'
+      }
+    ],
+    essay: [
+      {
+        id: 'preset_essay_period',
+        name: 'Kiểm tra định kỳ 1 tiết (3 bài)',
+        badge: '1 Tiết',
+        duration: '45',
+        essayCount: '3',
+        totalQuestions: 3,
+        points: '10 điểm (Bài 1: 3.0đ, Bài 2: 4.0đ, Bài 3: 3.0đ)',
+        desc: '3 bài toán tự luận: 1 bài cơ bản, 1 bài thông hiểu, 1 bài vận dụng có barem lời giải'
+      },
+      {
+        id: 'preset_essay_term',
+        name: 'Kiểm tra học kỳ (5 bài)',
+        badge: 'Học kỳ',
+        duration: '90',
+        essayCount: '5',
+        totalQuestions: 5,
+        points: '10 điểm (2.0đ/bài)',
+        desc: '5 bài toán tự luận bao quát toàn bộ nội dung chương trình học kỳ'
+      },
+      {
+        id: 'preset_essay_15m',
+        name: 'Kiểm tra nhanh 15 phút (2 bài)',
+        badge: '15 phút',
+        duration: '15',
+        essayCount: '2',
+        totalQuestions: 2,
+        points: '10 điểm (5.0đ/bài)',
+        desc: '2 bài tập rèn luyện kỹ năng biến đổi và trình bày lời giải toán'
+      },
+      {
+        id: 'preset_essay_advanced',
+        name: 'Khảo sát nâng cao / HSG (4 bài)',
+        badge: 'Nâng cao',
+        duration: '90',
+        essayCount: '4',
+        totalQuestions: 4,
+        points: '10 điểm (2.5đ/bài)',
+        desc: '4 bài toán tư duy phân hóa sâu, bài toán thực tế và bất đẳng thức/hình học'
+      }
+    ],
+    mixed: [
+      {
+        id: 'preset_mixed_70_30',
+        name: 'Chuẩn 70% TN + 30% Tự luận (14 TN + 2 TL)',
+        badge: '70% - 30%',
+        duration: '45',
+        mcqCount: '14',
+        essayCount: '2',
+        totalQuestions: 16,
+        points: '10 điểm (TN: 7.0đ - 0.5đ/câu + TL: 3.0đ - 1.5đ/bài)',
+        desc: 'Tỷ lệ vàng phổ biến nhất cho đề kiểm tra định kỳ 45-60 phút'
+      },
+      {
+        id: 'preset_mixed_50_50',
+        name: 'Chuẩn 50% TN + 50% Tự luận (10 TN + 3 TL)',
+        badge: '50% - 50%',
+        duration: '45',
+        mcqCount: '10',
+        essayCount: '3',
+        totalQuestions: 13,
+        points: '10 điểm (TN: 5.0đ - 0.5đ/câu + TL: 5.0đ)',
+        desc: 'Cân bằng giữa trắc nghiệm kiến thức và năng lực trình bày lập luận'
+      },
+      {
+        id: 'preset_mixed_60_40',
+        name: 'Chuẩn 60% TN + 40% Tự luận (12 TN + 2 TL)',
+        badge: '60% - 40%',
+        duration: '60',
+        mcqCount: '12',
+        essayCount: '2',
+        totalQuestions: 14,
+        points: '10 điểm (TN: 6.0đ + TL: 4.0đ)',
+        desc: 'Được nhiều trường sử dụng cho bài kiểm tra giữa học kỳ'
+      },
+      {
+        id: 'preset_mixed_80_20',
+        name: 'Chuẩn 80% TN + 20% Tự luận (16 TN + 1 TL)',
+        badge: '80% - 20%',
+        duration: '45',
+        mcqCount: '16',
+        essayCount: '1',
+        totalQuestions: 17,
+        points: '10 điểm (TN: 8.0đ - 0.5đ/câu + TL: 2.0đ bài phân hóa cao)',
+        desc: 'Kiểm tra diện rộng với 1 bài toán phân loại học sinh giỏi'
+      }
+    ]
+  };
+
+  const matrixPresets = [
+    {
+      id: 'matrix_4321',
+      name: 'Ma trận chuẩn GDPT (40% NB - 30% TH - 20% VD - 10% VDC)',
+      badge: 'Chuẩn 4-3-2-1',
+      recognize: 40,
+      understand: 30,
+      apply: 20,
+      highApply: 10,
+      desc: 'Phổ biến nhất cho đề kiểm tra định kỳ, giữa kỳ và thi học kỳ'
+    },
+    {
+      id: 'matrix_3331',
+      name: 'Ma trận đồng đều (30% NB - 30% TH - 30% VD - 10% VDC)',
+      badge: 'Đồng đều 3-3-3-1',
+      recognize: 30,
+      understand: 30,
+      apply: 30,
+      highApply: 10,
+      desc: 'Tăng cường câu hỏi vận dụng toán học vào đời sống thực tế'
+    },
+    {
+      id: 'matrix_5320',
+      name: 'Ma trận cơ bản (50% NB - 30% TH - 20% VD - 0% VDC)',
+      badge: 'Cơ bản 5-3-2-0',
+      recognize: 50,
+      understand: 30,
+      apply: 20,
+      highApply: 0,
+      desc: 'Phù hợp ôn tập đầu năm, củng cố kiến thức cho học sinh đại trà'
+    },
+    {
+      id: 'matrix_2332',
+      name: 'Ma trận nâng cao (20% NB - 30% TH - 30% VD - 20% VDC)',
+      badge: 'Phân hóa 2-3-3-2',
+      recognize: 20,
+      understand: 30,
+      apply: 30,
+      highApply: 20,
+      desc: 'Dành cho bài kiểm tra lớp chọn, khảo sát đánh giá phân hóa cao'
+    }
+  ];
+
+  const applyPreset = (p: any, format: 'mcq_3part' | 'mcq_custom' | 'essay' | 'mixed') => {
+    setActivePresetId(p.id);
+    setNewDuration(p.duration);
+    if (!newTitle || newTitle.startsWith('Đề ') || newTitle === '') {
+      setNewTitle(`Đề Toán Lớp ${newGrade} - ${p.name}`);
+    }
+
+    if (format === 'mcq_3part') {
+      setPart1Count(p.p1);
+      setPart2Count(p.p2);
+      setPart3Count(p.p3);
+    } else if (format === 'mcq_custom') {
+      setCustomPart1Enabled(Boolean(p.enableP1));
+      setCustomPart1Count(p.p1);
+      setCustomPart2Enabled(Boolean(p.enableP2));
+      setCustomPart2Count(p.p2);
+      setCustomPart3Enabled(Boolean(p.enableP3));
+      setCustomPart3Count(p.p3);
+    } else if (format === 'essay') {
+      setEssayCount(p.essayCount);
+    } else if (format === 'mixed') {
+      setMcqCount(p.mcqCount);
+      setEssayCount(p.essayCount);
+    }
+  };
+
+  const applyMatrixPreset = (mp: any) => {
+    setSelectedMatrixPreset(mp.id);
+    setMatrixConfig({
+      name: mp.name,
+      levels: {
+        recognize: mp.recognize,
+        understand: mp.understand,
+        apply: mp.apply,
+        highApply: mp.highApply
+      },
+      notes: mp.desc
+    });
+  };
+
+  const openCreateModal = (
+    mode: 'auto' | 'upload' | 'matrix' = 'auto', 
+    format: 'mcq_3part' | 'mcq_custom' | 'essay' | 'mixed' = 'mcq_3part',
+    presetId?: string
+  ) => {
+    setEditingTestId(null);
+    setOnlineCreationMode(mode);
+    setExamFormat(format);
+    setCreatingType(format === 'essay' ? 'essay' : (format === 'mixed' ? 'mixed' : 'mcq'));
+    setAutoGenType(mode === 'matrix' ? 'matrix' : format);
+    setNewFile(null);
+    setNewAnswerFile(null);
+    setMatrixFile(null);
+    setSplitAnswers(false);
+    setMatrixSourceType('preset');
+    setNewGrade(selectedGrade ? selectedGrade.toString() : '9');
+    setNewTopicId(selectedTopicId || '');
+    setCreateMultiVariant(false);
+    setVariantCount('4');
+    setCustomVariantCodes('101, 102, 103, 104');
+    setShuffleQuestions(true);
+    setShuffleOptions(true);
+
+    const presets = formatPresets[format] || [];
+    const selectedP = presetId ? presets.find(p => p.id === presetId) : presets[0];
+    if (selectedP) {
+      applyPreset(selectedP, format);
+    }
+    setShowCreateModal(true);
+  };
+
+  const [autoGenType, setAutoGenType] = useState<'mcq_3part' | 'mcq_custom' | 'mcq' | 'essay' | 'mixed' | 'matrix'>('mcq_3part');
   const [matrixFile, setMatrixFile] = useState<File | null>(null);
   const [mcqCount, setMcqCount] = useState('10');
   const [essayCount, setEssayCount] = useState('2');
+
+  // Trắc nghiệm 3 phần (Chuẩn Bộ GD&ĐT)
+  const [part1Count, setPart1Count] = useState('12'); // Nhiều phương án A, B, C, D
+  const [part2Count, setPart2Count] = useState('4');  // Đúng / Sai (ý a, b, c, d)
+  const [part3Count, setPart3Count] = useState('6');  // Trả lời ngắn
+
+  // Trắc nghiệm tùy biến (Chọn 1 hoặc 2 của trắc nghiệm 3 phần)
+  const [customPart1Enabled, setCustomPart1Enabled] = useState(true);
+  const [customPart1Count, setCustomPart1Count] = useState('10');
+  const [customPart2Enabled, setCustomPart2Enabled] = useState(false);
+  const [customPart2Count, setCustomPart2Count] = useState('4');
+  const [customPart3Enabled, setCustomPart3Enabled] = useState(false);
+  const [customPart3Count, setCustomPart3Count] = useState('4');
 
   const [showMakeOnlineModal, setShowMakeOnlineModal] = useState(false);
   const [makeOnlineTest, setMakeOnlineTest] = useState<any>(null);
   const [makeOnlineFile, setMakeOnlineFile] = useState<File | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
 
-  const createTest = async (type: 'mcq' | 'essay') => {
-    setEditingTestId(null);
-    setCreatingType(type);
-    setNewTitle('');
-    setNewDuration('45');
-    setNewGrade(selectedGrade ? selectedGrade.toString() : '9');
-    setNewTopicId(selectedTopicId || '');
-    setNewFile(null);
-    setAutoGenType('mcq');
-    setMcqCount('10');
-    setEssayCount('2');
-    setCreateMultiVariant(false);
-    setVariantCount('4');
-    setCustomVariantCodes('101, 102, 103, 104');
-    setShuffleQuestions(true);
-    setShuffleOptions(true);
-    setShowCreateModal(true);
+  const createTest = async (type: 'mcq' | 'essay', subType?: 'mcq_3part' | 'mcq_custom' | 'essay' | 'mixed' | 'matrix') => {
+    let mode: 'auto' | 'upload' | 'matrix' = 'auto';
+    let format: 'mcq_3part' | 'mcq_custom' | 'essay' | 'mixed' = 'mcq_3part';
+    
+    if (type === 'essay' && !subType) {
+      mode = 'upload';
+      format = 'essay';
+    } else if (subType === 'matrix') {
+      mode = 'matrix';
+      format = 'mcq_3part';
+    } else if (subType === 'essay') {
+      mode = 'auto';
+      format = 'essay';
+    } else if (subType === 'mixed') {
+      mode = 'auto';
+      format = 'mixed';
+    } else if (subType === 'mcq_custom') {
+      mode = 'auto';
+      format = 'mcq_custom';
+    } else {
+      mode = 'auto';
+      format = 'mcq_3part';
+    }
+    
+    openCreateModal(mode, format);
   };
 
   const handleEditTest = (test: any) => {
@@ -693,27 +1099,63 @@ export default function ManageTests() {
     
     return (
       <div className="mt-4 pt-4 border-t border-gray-100 text-sm">
-        <h4 className="font-semibold text-gray-700 mb-2">Lịch sử giao bài:</h4>
-        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="font-semibold text-gray-700 text-xs uppercase tracking-wider">Đang giao cho {tAssigns.length} lớp:</h4>
+        </div>
+        <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
           {tAssigns.map(a => {
             const classStudentsCount = studentsList.filter(s => s.className === a.className).length;
             const submittedCount = submissionsList.filter(s => s.assignmentId === a.id).length;
+            const isOverdue = a.dueDate ? new Date(a.dueDate).getTime() < Date.now() : false;
+            const canCancel = role === 'admin' || !a.classId || assignedClasses.includes(a.classId) || a.assignedBy === user?.uid;
+
             return (
-              <div key={a.id} className="flex flex-col gap-1 bg-gray-50 p-2 rounded-lg border border-gray-100">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-blue-700">Lớp {a.className}</span>
-                  <span className="text-xs font-medium text-gray-600 bg-white px-2 py-0.5 rounded-full border">Đã nộp: {submittedCount}/{classStudentsCount}</span>
+              <div key={a.id} className="flex flex-col gap-1.5 bg-gray-50/80 p-2.5 rounded-xl border border-gray-200 hover:border-gray-300 transition-colors">
+                <div className="flex justify-between items-center gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="font-bold text-blue-700 truncate">Lớp {a.className}</span>
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded border shrink-0 ${
+                      isOverdue 
+                        ? 'bg-rose-50 text-rose-700 border-rose-200' 
+                        : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    }`}>
+                      {isOverdue ? 'Hết hạn' : 'Đang mở'}
+                    </span>
+                  </div>
+                  <span className="text-xs font-semibold text-gray-600 bg-white px-2 py-0.5 rounded-full border border-gray-200 shrink-0">
+                    Đã nộp: {submittedCount}/{classStudentsCount}
+                  </span>
                 </div>
-                <div className="text-xs text-gray-500">
-                  <span className="block">Giao lúc: {new Date(a.assignedDate).toLocaleString('vi-VN')}</span>
-                  <span className="block text-red-600">Hạn: {new Date(a.dueDate).toLocaleString('vi-VN')}</span>
+
+                <div className="text-[11px] text-gray-500 space-y-0.5">
+                  <span className="block">Giao lúc: {new Date(a.assignedDate || a.createdAt).toLocaleString('vi-VN')}</span>
+                  <span className={`block font-medium ${isOverdue ? 'text-rose-600' : 'text-gray-600'}`}>
+                    Hạn: {new Date(a.dueDate).toLocaleString('vi-VN')}
+                  </span>
                 </div>
-                <button 
-                  onClick={() => exportGradebookForAssignment(a)}
-                  className="mt-1 w-full text-xs font-semibold bg-green-100 text-green-700 py-1.5 rounded hover:bg-green-200 transition-colors"
-                >
-                  Xuất PDF bảng điểm lớp {a.className}
-                </button>
+
+                <div className="mt-1 flex items-center gap-2 pt-1 border-t border-gray-200/60">
+                  <button 
+                    onClick={() => exportGradebookForAssignment(a)}
+                    className="flex-1 text-xs font-semibold bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 py-1.5 px-2 rounded-lg transition-colors flex items-center justify-center gap-1"
+                    title="Xuất bảng điểm PDF của lớp này"
+                  >
+                    <FileSpreadsheet size={13} />
+                    <span>Bảng điểm</span>
+                  </button>
+
+                  {canCancel && (
+                    <button 
+                      type="button"
+                      onClick={() => setAssignmentToCancel(a)}
+                      className="text-xs font-semibold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 py-1.5 px-2.5 rounded-lg transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                      title="Hủy giao bài kiểm tra này cho lớp"
+                    >
+                      <Trash2 size={13} />
+                      <span>Hủy giao</span>
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -737,6 +1179,33 @@ export default function ManageTests() {
     const validTopics = topics.filter(t => t.grade === gradeNum);
     let targetTopicId = newTopicId || (validTopics.length > 0 ? validTopics[0].id : `topic-fake-${gradeNum}`);
 
+    // Validation based on creation mode
+    if (onlineCreationMode === 'upload' && !newFile && !editingTestId) {
+      setSysError('Vui lòng chọn tệp đề bài tải lên từ máy tính (PDF, Word, Ảnh).');
+      setIsSaving(false);
+      return;
+    }
+
+    if (onlineCreationMode === 'matrix' && matrixSourceType === 'file' && !matrixFile && !editingTestId) {
+      setSysError('Vui lòng chọn tệp ma trận đề thi (Excel, Word, PDF hoặc Ảnh).');
+      setIsSaving(false);
+      return;
+    }
+
+    if (examFormat === 'mcq_custom') {
+      const selectedPartsCount = [customPart1Enabled, customPart2Enabled, customPart3Enabled].filter(Boolean).length;
+      if (selectedPartsCount === 0) {
+        setSysError('Vui lòng chọn ít nhất 1 phần trong cấu trúc trắc nghiệm tùy biến.');
+        setIsSaving(false);
+        return;
+      }
+      if (selectedPartsCount > 2) {
+        setSysError('Dạng trắc nghiệm tùy biến chỉ cho phép chọn 1 hoặc 2 phần. Nếu muốn tạo cả 3 phần, vui lòng chuyển sang dạng "Trắc nghiệm 3 phần (Chuẩn Bộ GD&ĐT)"!');
+        setIsSaving(false);
+        return;
+      }
+    }
+
     try {
       let finalFileUrl = "";
       let extractionFileUrl = "";
@@ -756,29 +1225,77 @@ export default function ManageTests() {
         }
       }
 
+      let resolvedType = 'mcq';
+      if (examFormat === 'essay') {
+        resolvedType = 'essay';
+      } else if (examFormat === 'mixed' || onlineCreationMode === 'matrix') {
+        resolvedType = 'mixed';
+      } else {
+        resolvedType = 'mcq';
+      }
       
       const testData: any = {
         title: newTitle,
-        type: creatingType === 'mcq' ? (autoGenType === 'matrix' ? 'mixed' : autoGenType) : 'essay',
+        type: resolvedType,
         durationMinutes: parseInt(newDuration, 10),
         topicId: targetTopicId,
-        grade: gradeNum
+        grade: gradeNum,
+        creationMode: onlineCreationMode,
+        examFormat: examFormat,
+        autoGenType: (onlineCreationMode === 'matrix' ? 'matrix' : examFormat),
+        formatType: examFormat,
+        activePresetId
       };
+
+      if (onlineCreationMode === 'matrix') {
+        testData.matrixSourceType = matrixSourceType;
+        if (matrixSourceType === 'preset') {
+          testData.matrixConfig = matrixConfig;
+        }
+      }
       
-      if (creatingType === 'mcq') {
-        testData.mcqCount = parseInt(mcqCount, 10) || 0;
-        testData.essayCount = parseInt(essayCount, 10) || 0;
+      if (onlineCreationMode !== 'upload') {
+        let computedMcqCount = 0;
+        if (examFormat === 'mcq_3part') {
+          const p1 = parseInt(part1Count, 10) || 12;
+          const p2 = parseInt(part2Count, 10) || 4;
+          const p3 = parseInt(part3Count, 10) || 6;
+          computedMcqCount = p1 + p2 + p3;
+          testData.part1Count = p1;
+          testData.part2Count = p2;
+          testData.part3Count = p3;
+        } else if (examFormat === 'mcq_custom') {
+          const p1 = customPart1Enabled ? (parseInt(customPart1Count, 10) || 0) : 0;
+          const p2 = customPart2Enabled ? (parseInt(customPart2Count, 10) || 0) : 0;
+          const p3 = customPart3Enabled ? (parseInt(customPart3Count, 10) || 0) : 0;
+          computedMcqCount = p1 + p2 + p3;
+          testData.customPartsConfig = {
+            enablePart1: customPart1Enabled,
+            part1Count: customPart1Count,
+            enablePart2: customPart2Enabled,
+            part2Count: customPart2Count,
+            enablePart3: customPart3Enabled,
+            part3Count: customPart3Count
+          };
+        } else if (examFormat === 'mixed') {
+          computedMcqCount = parseInt(mcqCount, 10) || 14;
+        } else {
+          computedMcqCount = parseInt(mcqCount, 10) || 0;
+        }
+
+        testData.mcqCount = computedMcqCount;
+        testData.essayCount = parseInt(essayCount, 10) || (examFormat === 'essay' ? 3 : (examFormat === 'mixed' ? 2 : 0));
         testData.isAutoGenerated = true;
-        if (autoGenType === 'matrix' && matrixFile) {
+        if (onlineCreationMode === 'matrix' && matrixFile) {
           testData.matrixFileName = matrixFile.name;
         }
 
         if (!editingTestId) {
-          setSysMsg('Đang dùng AI tạo đề tự động... Vui lòng chờ...');
+          setSysMsg(onlineCreationMode === 'matrix' ? 'Đang dùng AI tạo đề theo ma trận... Vui lòng chờ...' : 'Đang dùng AI tạo đề tự động... Vui lòng chờ...');
           
           let matrixFileDataUrl = "";
           let mimeType = "";
-          if (autoGenType === 'matrix' && matrixFile) {
+          if (onlineCreationMode === 'matrix' && matrixFile) {
             matrixFileDataUrl = await new Promise<string>((resolve, reject) => {
               const reader = new FileReader();
               reader.onload = () => resolve(reader.result as string);
@@ -795,9 +1312,22 @@ export default function ManageTests() {
               body: JSON.stringify({
                 title: newTitle,
                 grade: gradeNum,
-                autoGenType,
+                autoGenType: (onlineCreationMode === 'matrix' ? 'matrix' : examFormat),
+                formatType: examFormat,
+                matrixConfig: (onlineCreationMode === 'matrix' && matrixSourceType === 'preset' ? matrixConfig : undefined),
                 mcqCount: testData.mcqCount,
                 essayCount: testData.essayCount,
+                part1Count,
+                part2Count,
+                part3Count,
+                customPartsConfig: {
+                  enablePart1: customPart1Enabled,
+                  part1Count: customPart1Count,
+                  enablePart2: customPart2Enabled,
+                  part2Count: customPart2Count,
+                  enablePart3: customPart3Enabled,
+                  part3Count: customPart3Count
+                },
                 matrixFileDataUrl,
                 mimeType
               })
@@ -1364,18 +1894,33 @@ export default function ManageTests() {
           <p className="text-sm text-gray-500 mt-1">Quản lý và giao đề trắc nghiệm, tự luận theo khối lớp</p>
         </div>
         {(role === 'admin' || role === 'teacher') && (
-          <div className="flex gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
             <button 
-              onClick={() => createTest('mcq')}
-              className="flex items-center gap-2 bg-blue-50 text-blue-700 px-4 py-2 rounded-lg font-medium hover:bg-blue-100 transition-colors"
+              type="button"
+              onClick={() => openCreateModal('auto', 'mcq_3part')}
+              className="flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-700 px-4 py-2.5 rounded-xl font-semibold shadow-sm shadow-blue-200 transition-all text-sm"
+              title="Tạo đề thi tự động bằng AI & Ngân hàng đề: Trắc nghiệm 3 phần, tùy biến, tự luận hoặc tổng hợp"
             >
-              <List size={18} /> Tạo đề tự động
+              <Sparkles size={17} />
+              <span>Tạo đề thi tự động</span>
             </button>
             <button 
-              onClick={() => createTest('essay')}
-              className="flex items-center gap-2 bg-purple-50 text-purple-700 px-4 py-2 rounded-lg font-medium hover:bg-purple-100 transition-colors"
+              type="button"
+              onClick={() => openCreateModal('upload', 'mcq_3part')}
+              className="flex items-center gap-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-4 py-2.5 rounded-xl font-semibold transition-all text-sm"
+              title="Tạo đề online từ tệp đề tải lên (PDF, Word, Ảnh): AI tự động trích xuất thành đề tương tác"
             >
-              <Upload size={18} /> Tải đề lên
+              <Upload size={17} className="text-indigo-600" />
+              <span>Tạo đề từ đề tải lên</span>
+            </button>
+            <button 
+              type="button"
+              onClick={() => openCreateModal('matrix', 'mcq_3part')}
+              className="flex items-center gap-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 px-3.5 py-2.5 rounded-xl font-semibold transition-all text-sm"
+              title="Tạo đề theo ma trận có sẵn: Khung ma trận chuẩn Bộ GD&ĐT hoặc tệp ma trận của trường"
+            >
+              <LayoutGrid size={17} className="text-emerald-600" />
+              <span>Tạo đề theo ma trận</span>
             </button>
           </div>
         )}
@@ -1539,17 +2084,32 @@ export default function ManageTests() {
                         <p className="text-xs text-gray-500">Khối {selectedGrade} • Tổng cộng {topicTests.length} đề kiểm tra</p>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setNewGrade(selectedGrade.toString());
-                        setNewTopicId(topic.id === 'general' ? '' : topic.id);
-                        createTest('mcq');
-                      }}
-                      className="self-start sm:self-auto flex items-center gap-1.5 text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
-                    >
-                      <Plus size={14} /> Thêm đề vào chủ đề này
-                    </button>
+                    <div className="flex items-center gap-2 self-start sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewGrade(selectedGrade.toString());
+                          setNewTopicId(topic.id === 'general' ? '' : topic.id);
+                          createTest('mcq', 'mcq_3part');
+                        }}
+                        className="flex items-center gap-1.5 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg transition-colors"
+                        title="Tạo đề trắc nghiệm 3 phần cho chủ đề này"
+                      >
+                        <Sparkles size={14} className="text-blue-600" /> + Đề TN 3 phần
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewGrade(selectedGrade.toString());
+                          setNewTopicId(topic.id === 'general' ? '' : topic.id);
+                          createTest('mcq', 'mcq_custom');
+                        }}
+                        className="flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-3 py-1.5 rounded-lg transition-colors"
+                        title="Tạo đề trắc nghiệm tùy biến (1 hoặc 2 phần) cho chủ đề này"
+                      >
+                        <List size={14} className="text-indigo-600" /> + Đề TN tùy biến
+                      </button>
+                    </div>
                   </div>
 
                   {/* 2 Folders per Topic */}
@@ -1644,9 +2204,47 @@ export default function ManageTests() {
                   {assigningTest.title}
                 </div>
               </div>
+
+              {/* Classes already assigned this test */}
+              {(() => {
+                const assignedToClasses = assignmentsList.filter(a => a.testId === assigningTest.id);
+                if (assignedToClasses.length === 0) return null;
+                return (
+                  <div className="bg-amber-50/60 border border-amber-200/80 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                        <Users size={14} className="text-amber-700" />
+                        Đã giao cho {assignedToClasses.length} lớp:
+                      </span>
+                    </div>
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-0.5">
+                      {assignedToClasses.map(a => {
+                        const classStudentsCount = studentsList.filter(s => s.className === a.className).length;
+                        const submittedCount = submissionsList.filter(s => s.assignmentId === a.id).length;
+                        return (
+                          <div key={a.id} className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-amber-200 text-xs">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="font-bold text-blue-700">Lớp {a.className}</span>
+                              <span className="text-[11px] text-gray-500">({submittedCount}/{classStudentsCount} đã nộp)</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setAssignmentToCancel(a)}
+                              className="text-rose-600 hover:text-rose-800 font-bold hover:underline flex items-center gap-1 py-0.5 px-1.5 rounded hover:bg-rose-50 transition-colors"
+                              title="Hủy giao cho lớp này"
+                            >
+                              <Trash2 size={12} /> Hủy giao
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Lớp nhận bài</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Giao thêm cho lớp</label>
                 <select 
                   required
                   value={selectedClassId}
@@ -1817,415 +2415,139 @@ export default function ManageTests() {
         </div>
       )}
 
-      {/* Create Test Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setShowCreateModal(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center gap-3 p-4 border-b border-gray-100 bg-gray-50 shrink-0 rounded-t-2xl">
-              <button type="button" onClick={() => setShowCreateModal(false)} className="text-gray-500 hover:text-gray-800 flex items-center gap-1 font-medium bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm transition-colors">
-                <ArrowLeft size={18} /> Trở lại
-              </button>
-              <h2 className="text-lg font-bold text-gray-800 flex-1 truncate">
-                {editingTestId ? 'Chỉnh sửa đề kiểm tra' : (creatingType === 'mcq' ? 'Tạo đề tự động' : 'Tải đề lên')}
-              </h2>
-            </div>
-            <form onSubmit={handleCreateTest} className="p-6 space-y-4 overflow-y-auto">
-              {sysError && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{sysError}</div>}
-              {sysMsg && <div className="p-3 bg-green-50 text-green-600 rounded-lg text-sm">{sysMsg}</div>}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tên đề kiểm tra</label>
-                <input
-                  type="text"
-                  required
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder="VD: Đề kiểm tra 1 tiết chương 1"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
-              
-              <div className="flex gap-4">
-                <div className="flex-1">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Thời gian (phút)</label>
-                  <input
-                    type="number"
-                    required
-                    min="1"
-                    value={newDuration}
-                    onChange={(e) => setNewDuration(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  />
-                </div>
-                <div className="flex-1">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Khối lớp</label>
-                  <select
-                    value={newGrade}
-                    onChange={(e) => setNewGrade(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  >
-                    <option value="6">Khối 6</option>
-                    <option value="7">Khối 7</option>
-                    <option value="8">Khối 8</option>
-                    <option value="9">Khối 9</option>
-                    <option value="10">Khối 10</option>
-                    <option value="11">Khối 11</option>
-                    <option value="12">Khối 12</option>
-                  </select>
-                </div>
-              </div>
+      {/* Create Online Test Modal */}
+      <CreateOnlineTestModal
+        show={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSubmit={handleCreateTest}
+        editingTestId={editingTestId}
+        onlineCreationMode={onlineCreationMode}
+        setOnlineCreationMode={setOnlineCreationMode}
+        examFormat={examFormat}
+        setExamFormat={setExamFormat}
+        autoGenType={autoGenType}
+        setAutoGenType={setAutoGenType}
+        matrixSourceType={matrixSourceType}
+        setMatrixSourceType={setMatrixSourceType}
+        matrixConfig={matrixConfig}
+        setMatrixConfig={setMatrixConfig}
+        selectedMatrixPreset={selectedMatrixPreset}
+        setSelectedMatrixPreset={setSelectedMatrixPreset}
+        matrixFile={matrixFile}
+        setMatrixFile={setMatrixFile}
+        activePresetId={activePresetId}
+        setActivePresetId={setActivePresetId}
+        formatPresets={formatPresets}
+        matrixPresets={matrixPresets}
+        applyPreset={applyPreset}
+        applyMatrixPreset={applyMatrixPreset}
+        newTitle={newTitle}
+        setNewTitle={setNewTitle}
+        newDuration={newDuration}
+        setNewDuration={setNewDuration}
+        newGrade={newGrade}
+        setNewGrade={setNewGrade}
+        newTopicId={newTopicId}
+        setNewTopicId={setNewTopicId}
+        topics={topics}
+        part1Count={part1Count}
+        setPart1Count={setPart1Count}
+        part2Count={part2Count}
+        setPart2Count={setPart2Count}
+        part3Count={part3Count}
+        setPart3Count={setPart3Count}
+        customPart1Enabled={customPart1Enabled}
+        setCustomPart1Enabled={setCustomPart1Enabled}
+        customPart1Count={customPart1Count}
+        setCustomPart1Count={setCustomPart1Count}
+        customPart2Enabled={customPart2Enabled}
+        setCustomPart2Enabled={setCustomPart2Enabled}
+        customPart2Count={customPart2Count}
+        setCustomPart2Count={setCustomPart2Count}
+        customPart3Enabled={customPart3Enabled}
+        setCustomPart3Enabled={setCustomPart3Enabled}
+        customPart3Count={customPart3Count}
+        setCustomPart3Count={setCustomPart3Count}
+        mcqCount={mcqCount}
+        setMcqCount={setMcqCount}
+        essayCount={essayCount}
+        setEssayCount={setEssayCount}
+        newFile={newFile}
+        setNewFile={setNewFile}
+        newAnswerFile={newAnswerFile}
+        setNewAnswerFile={setNewAnswerFile}
+        splitAnswers={splitAnswers}
+        setSplitAnswers={setSplitAnswers}
+        createMultiVariant={createMultiVariant}
+        setCreateMultiVariant={setCreateMultiVariant}
+        createVariantMethod={createVariantMethod}
+        setCreateVariantMethod={setCreateVariantMethod}
+        customVariantCodes={customVariantCodes}
+        setCustomVariantCodes={setCustomVariantCodes}
+        shuffleQuestions={shuffleQuestions}
+        setShuffleQuestions={setShuffleQuestions}
+        shuffleOptions={shuffleOptions}
+        setShuffleOptions={setShuffleOptions}
+        isSaving={isSaving}
+        sysError={sysError}
+        setSysError={setSysError}
+        sysMsg={sysMsg}
+      />
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Chủ đề / Chương</label>
-                <select
-                  value={newTopicId}
-                  onChange={(e) => setNewTopicId(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                >
-                  <option value="">-- Chọn chủ đề thuộc khối {newGrade} --</option>
-                  {topics.filter(t => t.grade === parseInt(newGrade, 10)).map(t => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              
-              {creatingType === 'mcq' && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Dạng đề</label>
-                    <select
-                      value={autoGenType}
-                      onChange={(e) => setAutoGenType(e.target.value as any)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                    >
-                      <option value="mcq">Trắc nghiệm</option>
-                      <option value="essay">Tự luận</option>
-                      <option value="mixed">Tổng hợp (Trắc nghiệm & Tự luận)</option>
-                      <option value="matrix">Soạn theo ma trận có sẵn</option>
-                    </select>
-                  </div>
-                  
-                  <div className="flex gap-4">
-                    {(autoGenType === 'mcq' || autoGenType === 'mixed') && (
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Số câu trắc nghiệm</label>
-                        <input
-                          type="number"
-                          min="1"
-                          value={mcqCount}
-                          onChange={(e) => setMcqCount(e.target.value)}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-                    )}
-                    {(autoGenType === 'essay' || autoGenType === 'mixed') && (
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Số câu tự luận</label>
-                        <input
-                          type="number"
-                          min="1"
-                          value={essayCount}
-                          onChange={(e) => setEssayCount(e.target.value)}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-                    )}
-                  </div>
-                  
-                  {autoGenType === 'matrix' && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Tải lên ma trận đề thi (Excel, PDF, Word, Ảnh...)</label>
-                      <input
-                        type="file"
-                        onChange={(e) => setMatrixFile(e.target.files ? e.target.files[0] : null)}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                        accept=".xlsx,.xls,.pdf,.doc,.docx,.png,.jpg,.jpeg"
-                        required
-                      />
-                    </div>
-                  )}
-
-                  {/* Multi-variant Creation Settings */}
-                  <div className="p-4 bg-indigo-50/60 rounded-xl border border-indigo-100 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          id="createMultiVariant"
-                          checked={createMultiVariant}
-                          onChange={(e) => setCreateMultiVariant(e.target.checked)}
-                          className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
-                        />
-                        <label htmlFor="createMultiVariant" className="text-sm font-bold text-indigo-950 cursor-pointer flex items-center gap-1.5">
-                          <Layers size={16} className="text-indigo-600" />
-                          Tạo nhiều mã đề thi
-                        </label>
-                      </div>
-                      {createMultiVariant && (
-                        <span className="text-[11px] font-extrabold bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded-full">
-                          Bật
-                        </span>
-                      )}
-                    </div>
-
-                    {createMultiVariant && (
-                      <div className="space-y-3 pt-2 border-t border-indigo-200/60">
-                        {/* Phương thức tạo mã đề */}
-                        <div>
-                          <label className="block text-xs font-bold text-indigo-900 mb-1.5">
-                            Phương thức sinh mã đề:
-                          </label>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setCreateVariantMethod('isomorphic')}
-                              className={`p-2.5 rounded-xl border text-left text-xs transition-all flex flex-col gap-1 ${
-                                createVariantMethod === 'isomorphic'
-                                  ? 'bg-amber-50/90 border-amber-400 text-amber-950 shadow-2xs'
-                                  : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
-                              }`}
-                            >
-                              <span className="font-bold flex items-center gap-1.5 text-amber-900">
-                                <Sparkles size={13} className="text-amber-600" />
-                                Đổi số liệu (Mã đề tương tự)
-                              </span>
-                              <span className="text-[11px] text-gray-500">
-                                Giữ nguyên dạng bài & cấu trúc, AI đổi số liệu và tự tính lại đáp án
-                              </span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => setCreateVariantMethod('shuffle')}
-                              className={`p-2.5 rounded-xl border text-left text-xs transition-all flex flex-col gap-1 ${
-                                createVariantMethod === 'shuffle'
-                                  ? 'bg-indigo-50/90 border-indigo-400 text-indigo-950 shadow-2xs'
-                                  : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
-                              }`}
-                            >
-                              <span className="font-bold flex items-center gap-1.5 text-indigo-900">
-                                <Shuffle size={13} className="text-indigo-600" />
-                                Đảo câu hỏi & phương án
-                              </span>
-                              <span className="text-[11px] text-gray-500">
-                                Giữ nguyên 100% nội dung, chỉ xáo trộn thứ tự câu và đáp án A, B, C, D
-                              </span>
-                            </button>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-xs font-bold text-indigo-900 mb-1">
-                            Các mã đề cần sinh (phân cách bởi dấu phẩy):
-                          </label>
-                          <div className="flex gap-2 items-center">
-                            <input
-                              type="text"
-                              value={customVariantCodes}
-                              onChange={(e) => setCustomVariantCodes(e.target.value)}
-                              placeholder="101, 102, 103, 104"
-                              className="flex-1 px-3 py-1.5 bg-white border border-indigo-200 rounded-lg text-sm text-indigo-900 font-bold outline-none focus:ring-2 focus:ring-indigo-500"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setCustomVariantCodes('101, 102, 103, 104')}
-                              className="text-xs font-bold px-2.5 py-1.5 bg-white border border-indigo-200 rounded-lg text-indigo-700 hover:bg-indigo-50"
-                            >
-                              4 mã
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setCustomVariantCodes('201, 202, 203, 204, 205, 206')}
-                              className="text-xs font-bold px-2.5 py-1.5 bg-white border border-indigo-200 rounded-lg text-indigo-700 hover:bg-indigo-50"
-                            >
-                              6 mã
-                            </button>
-                          </div>
-                        </div>
-
-                        {createVariantMethod === 'shuffle' && (
-                          <div className="flex flex-wrap gap-4 pt-1">
-                            <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={shuffleQuestions}
-                                onChange={(e) => setShuffleQuestions(e.target.checked)}
-                                className="w-3.5 h-3.5 text-indigo-600 rounded border-gray-300"
-                              />
-                              <span>Xáo trộn thứ tự câu hỏi</span>
-                            </label>
-                            <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={shuffleOptions}
-                                onChange={(e) => setShuffleOptions(e.target.checked)}
-                                className="w-3.5 h-3.5 text-indigo-600 rounded border-gray-300"
-                              />
-                              <span>Xáo trộn thứ tự đáp án A, B, C, D</span>
-                            </label>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              
-              {creatingType === 'essay' && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Tệp ĐỀ BÀI (PDF, Word, Ảnh...)</label>
-                    <input
-                      type="file"
-                      onChange={(e) => setNewFile(e.target.files ? e.target.files[0] : null)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                      accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">Chọn tệp đề bài từ máy tính của bạn.</p>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <input 
-                      type="checkbox" 
-                      id="splitAnswers"
-                      checked={splitAnswers}
-                      onChange={(e) => setSplitAnswers(e.target.checked)}
-                      className="w-4 h-4 text-blue-600 rounded border-gray-300"
-                    />
-                    <label htmlFor="splitAnswers" className="text-sm font-medium text-gray-700 cursor-pointer">
-                      Tệp này chứa CẢ ĐỀ VÀ ĐÁP ÁN (Hệ thống tự động tách)
-                    </label>
-                  </div>
-
-                  {!splitAnswers && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Tệp ĐÁP ÁN (Biểu điểm/lời giải) - Không bắt buộc</label>
-                      <input
-                        type="file"
-                        onChange={(e) => setNewAnswerFile(e.target.files ? e.target.files[0] : null)}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100"
-                        accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">Học sinh chỉ thấy file này SAU KHI nộp bài. Nếu bỏ trống, hệ thống sẽ dùng AI để sinh đáp án từ đề bài.</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="pt-4 flex gap-3 justify-end border-t border-gray-100">
-                <button 
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  disabled={isSaving}
-                  className={`px-6 py-2.5 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl font-bold transition-colors shadow-sm ${isSaving ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  Đóng
-                </button>
-                <button 
-                  type="submit"
-                  disabled={isSaving}
-                  className={`px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg font-medium transition-colors ${isSaving ? 'opacity-50 cursor-not-allowed flex items-center gap-2' : ''}`}
-                >
-                  {isSaving ? (
-                    <>
-                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                      Đang xử lý...
-                    </>
-                  ) : editingTestId ? 'Lưu thay đổi' : 'Xác nhận tạo'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {/* Comprehensive Edit Questions Modal with Visuals & Reference Content */}
+      {editingQuestionsTest && (
+        <EditQuestionsModal
+          testTitle={editingQuestionsTest.title || 'Đề kiểm tra'}
+          initialQuestions={editingQuestionsList}
+          isOpen={Boolean(editingQuestionsTest)}
+          onClose={() => setEditingQuestionsTest(null)}
+          onSave={handleSaveQuestionsFromModal}
+          isSaving={isSavingQuestions}
+        />
       )}
 
-      {/* Edit Questions Modal */}
-      {editingQuestionsTest && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]" onClick={() => setEditingQuestionsTest(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] shadow-xl flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center gap-3 p-4 border-b border-gray-100 bg-gray-50 shrink-0 rounded-t-2xl">
-              <button onClick={() => setEditingQuestionsTest(null)} className="text-gray-500 hover:text-gray-800 flex items-center gap-1 font-medium bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm transition-colors">
-                <ArrowLeft size={18} /> Trở lại
-              </button>
-              <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2 flex-1 truncate">
-                <Pencil size={20} className="text-blue-500" />
-                Chỉnh sửa câu hỏi: {editingQuestionsTest.title}
-              </h2>
-            </div>
-            
-            <div className="p-6 overflow-y-auto bg-gray-50/50 flex-1 space-y-6">
-              {editingQuestionsList.length > 0 ? (
-                editingQuestionsList.map((q: any, idx: number) => (
-                  <div key={idx} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                    <p className="font-bold text-gray-800 mb-3">Câu {idx + 1}: <span className="font-normal"><MathText content={q.question} /></span></p>
-                    
-                    {/* Image display and upload */}
-                    <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
-                      <label className="block text-sm font-bold text-gray-700 mb-2">Hình vẽ đính kèm cho câu này (Tuỳ chọn)</label>
-                      {q.imageUrl && (
-                        <div className="mb-3 relative inline-block">
-                          <img src={q.imageUrl} alt={`Hình vẽ câu ${idx + 1}`} className="max-h-40 rounded border border-gray-300" />
-                          <button 
-                            onClick={() => {
-                              const newList = [...editingQuestionsList];
-                              delete newList[idx].imageUrl;
-                              setEditingQuestionsList(newList);
-                            }}
-                            className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600"
-                            title="Xóa ảnh"
-                          >
-                            <X size={14} />
-                          </button>
-                        </div>
-                      )}
-                      <div>
-                        <input 
-                          type="file" 
-                          accept="image/*"
-                          onChange={(e) => handleImageUploadForQuestion(e, idx)}
-                          className="text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                        />
-                      </div>
-                    </div>
-
-                  </div>
-                ))
-              ) : (
-                <div className="text-center py-12 text-gray-500">Không có dữ liệu câu hỏi.</div>
-              )}
-            </div>
-            
-            <div className="p-6 border-t border-gray-100 bg-white flex justify-end gap-3 shrink-0">
-              <button 
-                onClick={() => setEditingQuestionsTest(null)}
-                className="px-6 py-2 rounded-xl font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
-              >
-                Hủy
-              </button>
-              <button 
-                onClick={saveEditedQuestions}
-                className="px-6 py-2 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-md shadow-blue-200"
-              >
-                Lưu câu hỏi
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Cancel Assignment Modal */}
+      {assignmentToCancel && (
+        <CancelAssignmentModal
+          isOpen={Boolean(assignmentToCancel)}
+          onClose={() => setAssignmentToCancel(null)}
+          assignment={assignmentToCancel}
+          submissionCount={submissionsList.filter(s => s.assignmentId === assignmentToCancel.id).length}
+          studentCount={studentsList.filter(s => s.className === assignmentToCancel.className).length}
+          onConfirmCancel={handleCancelAssignment}
+          isProcessing={isCancellingAssignment}
+        />
       )}
 
       {/* Preview Modal */}
       {showPreviewModal && previewTest && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] shadow-xl overflow-hidden flex flex-col">
-            <div className="flex justify-between items-center p-6 border-b border-gray-100 bg-gray-50 shrink-0">
-              <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-                <FileText size={24} className="text-blue-500" />
-                Xem trước: {previewTest.title}
-              </h2>
-              <button onClick={() => setShowPreviewModal(false)} className="text-gray-400 hover:text-gray-700">
-                <X size={24} />
-              </button>
+          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] shadow-xl overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center p-4 sm:p-5 border-b border-gray-100 bg-gray-50 shrink-0">
+              <div className="min-w-0 flex-1 pr-3">
+                <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2 truncate">
+                  <FileText size={20} className="text-blue-500 shrink-0" />
+                  Xem trước: {previewTest.title}
+                </h2>
+              </div>
+              
+              <div className="flex items-center gap-2 shrink-0">
+                {previewTest.questionsData && getParsedQuestions(previewTest.questionsData).length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowPreviewModal(false);
+                      openEditQuestions(previewTest);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                  >
+                    <Pencil size={13} /> Chỉnh sửa đề này
+                  </button>
+                )}
+                <button onClick={() => setShowPreviewModal(false)} className="text-gray-400 hover:text-gray-700 p-1 rounded-lg">
+                  <X size={20} />
+                </button>
+              </div>
             </div>
             
             <div className="p-6 overflow-y-auto bg-gray-50/50 flex-1">
@@ -2244,30 +2566,96 @@ export default function ManageTests() {
                   <img src={previewTest.fileUrl} alt="Bản gốc" className="max-w-full h-auto mx-auto rounded-lg border border-gray-100" />
                 </div>
               )}
-              
-
 
               {(previewTest.type === 'mcq' || previewTest.type === 'mixed') && (
                 <div className="space-y-6">
                   {getParsedQuestions(previewTest.questionsData).length > 0 ? (
                     getParsedQuestions(previewTest.questionsData).map((q: any, idx: number) => (
-                      <div key={idx} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                        <p className="font-bold text-gray-800 mb-3">Câu {idx + 1}: <span className="font-normal"><MathText content={q.question} /></span></p>
-                        {q.imageUrl && (
-                          <div className="mb-4 pl-4">
-                            <img src={q.imageUrl} alt={`Hình vẽ câu ${idx + 1}`} className="max-w-full h-auto max-h-64 rounded-lg border border-gray-200" />
+                      <div key={idx} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="font-bold text-gray-800 leading-snug flex-1">
+                            Câu {idx + 1}: <span className="font-normal"><MathText content={q.question} /></span>
+                          </p>
+                          {q.type === 'tf' && (
+                            <span className="text-[11px] font-bold bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded-full shrink-0">
+                              Đúng / Sai
+                            </span>
+                          )}
+                          {q.type === 'short' && (
+                            <span className="text-[11px] font-bold bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full shrink-0">
+                              Trả lời ngắn
+                            </span>
+                          )}
+                          {(!q.type || q.type === 'mcq') && (
+                            <span className="text-[11px] font-bold bg-blue-50 text-blue-700 px-2.5 py-0.5 rounded-full shrink-0">
+                              Nhiều lựa chọn
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Visual Figure / Diagram / Table / Image */}
+                        <QuestionVisualRenderer
+                          figureType={q.figureType}
+                          figureSvg={q.figureSvg}
+                          figureTable={q.figureTable}
+                          figureDescription={q.figureDescription}
+                          imageUrl={q.imageUrl}
+                        />
+
+                        {/* Pedagogical Reference & Teacher Variation Guide */}
+                        {q.reference && (
+                          <QuestionReferenceBadge reference={q.reference} />
+                        )}
+
+                        {q.type === 'tf' ? (
+                          <div className="space-y-2 pl-4">
+                            {q.options?.map((opt: string, optIdx: number) => {
+                              const label = ['a', 'b', 'c', 'd'][optIdx] || String.fromCharCode(97 + optIdx);
+                              const cleanText = stripOptionPrefix(opt);
+                              return (
+                                <div key={optIdx} className="flex items-center gap-3 p-2 rounded-lg bg-gray-50 border border-gray-200">
+                                  <div className="w-6 h-6 rounded-full bg-amber-100 text-amber-900 flex items-center justify-center text-xs font-bold shrink-0">
+                                    {label})
+                                  </div>
+                                  <span className="text-gray-700 flex-1"><MathText content={cleanText} /></span>
+                                </div>
+                              );
+                            })}
+                            {q.correctAnswer && (
+                              <div className="mt-2 text-xs font-semibold text-amber-900 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">
+                                Đáp án đúng: {q.correctAnswer}
+                              </div>
+                            )}
+                          </div>
+                        ) : q.type === 'short' ? (
+                          <div className="pl-4 space-y-2">
+                            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs font-semibold text-emerald-900">
+                              Đáp số / Kết quả: <span className="font-bold underline">{q.correctAnswer || '(Chưa có)'}</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-2 pl-4">
+                            {q.options?.map((opt: string, optIdx: number) => (
+                              <div key={optIdx} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-colors">
+                                <div className="w-6 h-6 rounded-full border-2 border-gray-300 flex items-center justify-center text-xs font-bold text-gray-500 shrink-0">
+                                  {String.fromCharCode(65 + optIdx)}
+                                </div>
+                                <span className="text-gray-700 flex-1"><MathText content={stripOptionPrefix(opt)} /></span>
+                              </div>
+                            ))}
+                            {q.correctAnswer && (
+                              <div className="mt-2 text-xs font-semibold text-blue-900 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200">
+                                Đáp án: {q.correctAnswer}
+                              </div>
+                            )}
                           </div>
                         )}
-                        <div className="space-y-2 pl-4">
-                          {q.options?.map((opt: string, optIdx: number) => (
-                            <div key={optIdx} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-colors">
-                              <div className="w-6 h-6 rounded-full border-2 border-gray-300 flex items-center justify-center text-xs font-bold text-gray-500 shrink-0">
-                                {String.fromCharCode(65 + optIdx)}
-                              </div>
-                              <span className="text-gray-700 flex-1"><MathText content={typeof opt === 'string' ? opt.replace(/^[a-dA-D][\.\)]\s*/, '') : opt} /></span>
-                            </div>
-                          ))}
-                        </div>
+
+                        {q.explanation && (
+                          <div className="mt-3 pl-4 text-xs text-gray-600 bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                            <span className="font-bold text-gray-700">Lời giải chi tiết:</span> <MathText content={q.explanation} />
+                          </div>
+                        )}
                       </div>
                     ))
                   ) : (
@@ -2874,6 +3262,22 @@ export default function ManageTests() {
                                 <MathText content={q.question || ''} />
                               </div>
 
+                              {/* Visual Figure or Table */}
+                              <QuestionVisualRenderer
+                                figureType={q.figureType}
+                                figureSvg={q.figureSvg}
+                                figureTable={q.figureTable}
+                                figureDescription={q.figureDescription}
+                                imageUrl={q.imageUrl}
+                              />
+
+                              {/* Reference & Variation Guide */}
+                              {q.reference && (
+                                <div className="mb-3">
+                                  <QuestionReferenceBadge reference={q.reference} />
+                                </div>
+                              )}
+
                               {Array.isArray(q.options) && q.options.length > 0 && (
                                 <div className="space-y-1.5 mb-3">
                                   {q.options.map((opt: string, optIdx: number) => {
@@ -2899,7 +3303,7 @@ export default function ManageTests() {
                                           {optLetter}
                                         </span>
                                         <div className="flex-1 pt-0.5">
-                                          <MathText content={opt.replace(/^[A-Da-d][\.\:\)]\s*/, '')} />
+                                          <MathText content={stripOptionPrefix(opt)} />
                                         </div>
                                         {isCorrect && (
                                           <CheckCircle size={14} className="text-emerald-600 shrink-0 mt-0.5" />

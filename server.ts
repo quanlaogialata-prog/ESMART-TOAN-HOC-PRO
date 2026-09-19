@@ -19,18 +19,19 @@ function formatError(error: any) {
   if (msg.includes('PERMISSION_DENIED') || msg.includes('403') || msg.includes('UNAUTHENTICATED') || msg.includes('401')) {
     return 'API Key không có quyền truy cập hoặc đã bị vô hiệu hóa. Vui lòng kiểm tra lại API Key trong phần Cài đặt.';
   }
+  if (msg.includes('timed out')) {
+    return 'Quá trình tạo đề toán chi tiết mất nhiều thời gian hơn dự kiến do khối lượng câu hỏi và công thức lớn. Vui lòng nhấn tạo lại hoặc thử tạo với số lượng câu hỏi phù hợp.';
+  }
   return msg;
 }
 
 const FALLBACK_MODELS = [
-  "gemini-3.5-flash-lite",
-  "gemini-flash-lite-latest",
-  "gemini-3.6-flash",
   "gemini-3.8-flash",
   "gemini-3.1-flash-lite",
+  "gemini-3.1-pro-preview",
 ];
 
-async function generateContentWithRetry(ai: any, params: any, maxAttempts = 5) {
+async function generateContentWithRetry(ai: any, params: any, maxAttempts = 3) {
   const requestedModel = params.model || FALLBACK_MODELS[0];
   const candidateModels = [
     requestedModel,
@@ -45,10 +46,10 @@ async function generateContentWithRetry(ai: any, params: any, maxAttempts = 5) {
     const currentParams = { ...params, model: currentModel };
     
     try {
-      // 18s per-call timeout to guarantee response before proxy disconnect
+      // 90s per-call timeout to allow complete generation of 20-40 math questions with LaTeX & explanations
       const generatePromise = ai.models.generateContent(currentParams);
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error(`Model ${currentModel} timed out after 18s`)), 18000)
+        setTimeout(() => reject(new Error(`Model ${currentModel} timed out after 90s`)), 90000)
       );
       return await Promise.race([generatePromise, timeoutPromise]);
     } catch (e: any) {
@@ -68,8 +69,8 @@ async function generateContentWithRetry(ai: any, params: any, maxAttempts = 5) {
       const nextModel = candidateModels[modelIndex % candidateModels.length];
       console.warn(`[Gemini] ${currentModel} failed (${errMsg.slice(0, 80)}). Switching to fallback model: ${nextModel} (Attempt ${attempt + 1}/${maxAttempts})`);
 
-      // Very brief delay (400ms) before trying the next fallback model
-      await new Promise(r => setTimeout(r, 400));
+      // Very brief delay (500ms) before trying the next fallback model
+      await new Promise(r => setTimeout(r, 500));
     }
   }
 
@@ -78,30 +79,212 @@ async function generateContentWithRetry(ai: any, params: any, maxAttempts = 5) {
 
 function safeParseJsonArray(raw: string): any[] {
   if (!raw) return [];
-  const start = raw.indexOf("[");
-  const end = raw.lastIndexOf("]");
-  if (start === -1 || end === -1 || end <= start) return [];
 
-  const candidate = raw.slice(start, end + 1);
+  // 1. Clean markdown code fences if present
+  let text = raw.trim();
+  text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+  // Try direct parse
   try {
-    return JSON.parse(candidate);
-  } catch (e) {
+    const direct = JSON.parse(text);
+    if (Array.isArray(direct)) return direct;
+  } catch (e) {}
+
+  // 2. Find outermost array bounds [ ... ]
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
+  if (start !== -1 && end > start) {
+    const candidate = text.slice(start, end + 1);
     try {
-      // 1. First attempt: escape solitary backslashes that are not followed by " or another \
-      const fixed = candidate.replace(/(?<!\\)\\(?!["\\])/g, "\\\\");
-      return JSON.parse(fixed);
-    } catch (e2) {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (e) {
       try {
-        // 2. Second attempt: handle unescaped LaTeX backslashes before letters
-        let fixed2 = candidate.replace(/\\([a-zA-Z])/g, "\\\\$1");
-        fixed2 = fixed2.replace(/\\([^"\\/])/g, "\\\\$1");
-        return JSON.parse(fixed2);
-      } catch (e3) {
-        console.warn("Failed to parse JSON array from AI output");
-        return [];
+        // Fix unescaped solitary backslashes before letters or LaTeX commands
+        const fixed = candidate.replace(/(?<!\\)\\(?!["\\/bfnrtu])/g, "\\\\");
+        const parsed = JSON.parse(fixed);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e2) {
+        try {
+          let fixed2 = candidate.replace(/\\([a-zA-Z])/g, "\\\\$1");
+          fixed2 = fixed2.replace(/\\([^"\\/])/g, "\\\\$1");
+          const parsed = JSON.parse(fixed2);
+          if (Array.isArray(parsed)) return parsed;
+        } catch (e3) {}
       }
     }
   }
+
+  // 3. Resilient fallback extractor:
+  // If the array was truncated mid-way or has syntax errors in one question,
+  // extract every well-formed JSON question object {...} individually so no completed questions are lost.
+  const extracted: any[] = [];
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+  let objStart = -1;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (char === '\\') {
+      escapeNext = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (!inString) {
+      if (char === '{') {
+        if (depth === 0) objStart = i;
+        depth++;
+      } else if (char === '}') {
+        depth--;
+        if (depth === 0 && objStart !== -1) {
+          const objStr = text.slice(objStart, i + 1);
+          try {
+            const item = JSON.parse(objStr);
+            if (item && (item.question || item.type || item.id)) {
+              extracted.push(item);
+            }
+          } catch (objErr) {
+            try {
+              const fixedObj = objStr.replace(/(?<!\\)\\(?!["\\/bfnrtu])/g, "\\\\");
+              const item = JSON.parse(fixedObj);
+              if (item && (item.question || item.type || item.id)) {
+                extracted.push(item);
+              }
+            } catch (objErr2) {}
+          }
+          objStart = -1;
+        }
+      }
+    }
+  }
+
+  return extracted;
+}
+
+function sanitizeMathString(text: string): string {
+  if (!text || typeof text !== 'string') return text;
+  let s = text.trim();
+
+  // Sửa lỗi "u_2 = 3$." hoặc "u_2 = 3$" có $ cuối nhưng mất $ đầu
+  s = s.replace(/^([a-dA-D0-9][\.\)]\s*)?([^\$]+)\$\.?\s*$/, (_m, prefix, body) => {
+    const p = prefix || '';
+    return `${p}$${body.trim()}$`;
+  });
+
+  // Sửa lỗi "$something" thiếu $ cuối
+  if (/^\$[^\$]+$/.test(s)) {
+    s = `${s}$`;
+  }
+
+  // Tự động bọc $ cho các phương án toán thuần túy như "A. 3x^2 - 3", "3x^2 - 3", "u_2 = 3"
+  const hasVietnamese = /[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]/i.test(s);
+  if (!s.includes('$') && !hasVietnamese) {
+    const isMath = /\^|_[0-9a-zA-Z]|\\(frac|sqrt|vec|infty|alpha|beta|cdot|pi)|=|f'\(|y'/.test(s)
+      || (/^[+\-]?[0-9a-zA-Z\s+\-*/()]+$/.test(s) && /[a-zA-Z]/.test(s) && /[+\-*/]/.test(s));
+    if (isMath) {
+      const prefixMatch = s.match(/^([a-dA-D0-9][\.\)]\s*)/);
+      if (prefixMatch) {
+        const prefix = prefixMatch[1];
+        const rest = s.slice(prefix.length).trim();
+        s = `${prefix}$${rest}$`;
+      } else {
+        s = `$${s}$`;
+      }
+    }
+  }
+
+  return s;
+}
+
+/**
+ * Ensures that only questions that explicitly provide data via a table or figure in the question statement
+ * have a figure or table attached. If a question does NOT mention/provide a table or figure, figureType is forced to 'none'.
+ * Đồng thời chuẩn hóa công thức toán trong phương án và câu hỏi.
+ */
+function sanitizeQuestionFigures(questions: any[]): any[] {
+  if (!Array.isArray(questions)) return [];
+
+  const tableKeywordsRegex = /(bảng\s*(biến\s*thiên|xét\s*dấu|số\s*liệu|tần\s*số|phân\s*bố|phân\s*phối|thống\s*kê|ghép\s*nhóm|dưới\s*đây|sau|bên|giá\s*trị|đã\s*cho)?|trong\s*bảng|ở\s*bảng|theo\s*bảng|từ\s*bảng|quan\s*sát\s*bảng|bảng)/i;
+  const figureKeywordsRegex = /(hình\s*(vẽ|bên|dưới|sau|minh\s*họa)?|như\s*hình|trong\s*hình|ở\s*hình|đồ\s*thị|đường\s*cong|biểu\s*đồ|sơ\s*đồ|phần\s*(gạch|tô\s*đậm))/i;
+
+  return questions.map(q => {
+    if (!q || typeof q !== 'object') return q;
+
+    let figureType = q.figureType || 'none';
+    let figureSvg = typeof q.figureSvg === 'string' ? q.figureSvg : '';
+    let figureTable = '';
+
+    // Handle string or object table format safely
+    if (typeof q.figureTable === 'string') {
+      figureTable = q.figureTable;
+    } else if (q.figureTable && typeof q.figureTable === 'object') {
+      if (Array.isArray(q.figureTable.rows)) {
+        const headers = Array.isArray(q.figureTable.headers) ? q.figureTable.headers : [];
+        let md = '';
+        if (headers.length > 0) {
+          md += '| ' + headers.join(' | ') + ' |\n';
+          md += '| ' + headers.map(() => '---').join(' | ') + ' |\n';
+        }
+        q.figureTable.rows.forEach((r: any) => {
+          if (Array.isArray(r)) md += '| ' + r.join(' | ') + ' |\n';
+        });
+        figureTable = md;
+      } else {
+        figureTable = JSON.stringify(q.figureTable);
+      }
+    }
+
+    let figureDescription = typeof q.figureDescription === 'string' ? q.figureDescription : '';
+    const stemText = (q.question || '') + ' ' + (Array.isArray(q.options) ? q.options.join(' ') : '');
+
+    if (figureType === 'table') {
+      const hasTableRef = tableKeywordsRegex.test(stemText);
+      const hasContent = figureTable.trim().length > 0;
+      if (!hasTableRef || !hasContent) {
+        figureType = 'none';
+        figureTable = '';
+        figureDescription = '';
+      }
+    } else if (figureType === 'svg') {
+      const hasFigureRef = figureKeywordsRegex.test(stemText);
+      const isValidSvg = figureSvg.trim().startsWith('<svg');
+      if (!hasFigureRef || !isValidSvg) {
+        figureType = 'none';
+        figureSvg = '';
+        figureDescription = '';
+      }
+    } else {
+      figureType = 'none';
+      figureSvg = '';
+      figureTable = '';
+      figureDescription = '';
+    }
+
+    // Chuẩn hóa và làm sạch công thức toán cho options và question
+    let cleanedOptions = q.options;
+    if (Array.isArray(q.options)) {
+      cleanedOptions = q.options.map((opt: any) => typeof opt === 'string' ? sanitizeMathString(opt) : opt);
+    }
+    let cleanedQuestion = typeof q.question === 'string' ? sanitizeMathString(q.question) : q.question;
+
+    return {
+      ...q,
+      question: cleanedQuestion,
+      options: cleanedOptions,
+      figureType,
+      figureSvg: figureType === 'svg' ? figureSvg : '',
+      figureTable: figureType === 'table' ? figureTable : '',
+      figureDescription: figureType !== 'none' ? figureDescription : ''
+    };
+  });
 }
 
 async function startServer() {
@@ -143,7 +326,7 @@ CRITICAL REQUIREMENT: Do NOT output JSON. Output your response using EXACTLY the
 [/ANSWERS]`;
 
       const response = await generateContentWithRetry(ai, {
-          model: "gemini-3.5-flash-lite",
+          model: "gemini-3.8-flash",
           contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
         });
 
@@ -256,7 +439,7 @@ Output exactly a JSON object in this format (no markdown code blocks, just raw J
       parts.push({ text: prompt });
 
       const response = await generateContentWithRetry(ai, {
-        model: "gemini-3.5-flash-lite",
+        model: "gemini-3.8-flash",
         contents: [{ role: "user", parts: parts }]
       });
 
@@ -276,7 +459,19 @@ Output exactly a JSON object in this format (no markdown code blocks, just raw J
 
   app.post("/api/generate-test", async (req, res) => {
     try {
-      const { title, grade, autoGenType, mcqCount, essayCount, matrixFileDataUrl, mimeType } = req.body;
+      const { 
+        title, 
+        grade, 
+        autoGenType, 
+        mcqCount, 
+        essayCount, 
+        matrixFileDataUrl, 
+        mimeType,
+        part1Count,
+        part2Count,
+        part3Count,
+        customPartsConfig
+      } = req.body;
       const apiKeyHeader = req.headers['x-gemini-api-key'];
       const apiKey = (Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader) || process.env.GEMINI_API_KEY_CUSTOM || process.env.GEMINI_API_KEY;
 
@@ -286,44 +481,252 @@ Output exactly a JSON object in this format (no markdown code blocks, just raw J
         apiKey: apiKey,
         httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
       });
-      let prompt = `You are an expert curriculum designer and teacher. Please generate a K-12 exam test for grade ${grade} with the title: "${title}".`;
-      
-      if (autoGenType === 'mcq') {
-        prompt += `\nPlease generate exactly ${mcqCount} multiple-choice questions (MCQ).`;
+      let prompt = `Bạn là chuyên gia giáo dục và biên soạn đề thi môn Toán chất lượng cao theo chuẩn chương trình GDPT mới.
+Hãy tạo một đề kiểm tra / đề thi môn Toán lớp ${grade} với tiêu đề: "${title}".`;
+
+      const formatType = req.body.formatType || autoGenType;
+      const matrixConfig = req.body.matrixConfig;
+
+      if (autoGenType === 'matrix') {
+        prompt += `\nĐỀ THI ĐƯỢC THIẾT KẾ THEO MA TRẬN ĐỀ THI:`;
+        if (matrixConfig) {
+          prompt += `
+MA TRẬN NĂNG LỰC & MỨC ĐỘ NHẬN THỨC:
+- Tên khung ma trận: ${matrixConfig.name || 'Khung ma trận chuẩn Bộ GD&ĐT'}
+- Tỉ lệ phân bổ mức độ:
+  * Nhận biết: ${matrixConfig.levels?.recognize || '40'}%
+  * Thông hiểu: ${matrixConfig.levels?.understand || '30'}%
+  * Vận dụng: ${matrixConfig.levels?.apply || '20'}%
+  * Vận dụng cao: ${matrixConfig.levels?.highApply || '10'}%
+${matrixConfig.notes ? `- Ghi chú ma trận: ${matrixConfig.notes}` : ''}`;
+        }
+
+        if (formatType === 'mcq_3part') {
+          const p1 = parseInt(part1Count, 10) || 12;
+          const p2 = parseInt(part2Count, 10) || 4;
+          const p3 = parseInt(part3Count, 10) || 6;
+          prompt += `
+HÌNH THỨC ĐỀ THI THEO MA TRẬN: TRẮC NGHIỆM 3 PHẦN (CHUẨN BỘ GD&ĐT):
+1. PHẦN I: ${p1} câu Trắc nghiệm 4 lựa chọn (A, B, C, D), "type": "mcq", 0.25 điểm/câu. Các câu hỏi phân bổ từ Nhận biết đến Thông hiểu.
+2. PHẦN II: ${p2} câu Trắc nghiệm Đúng/Sai (mỗi câu 4 ý a, b, c, d), "type": "tf", 1.0 điểm/câu. Mức độ Thông hiểu và Vận dụng. "correctAnswer": "a-Đ, b-S, c-Đ, d-S".
+3. PHẦN III: ${p3} câu Trắc nghiệm Trả lời ngắn, "type": "short", 0.5 điểm/câu. Mức độ Vận dụng và Vận dụng cao (học sinh điền đáp số số học/biểu thức ngắn).
+`;
+        } else if (formatType === 'mcq_custom') {
+          const enableP1 = customPartsConfig?.enablePart1 !== false && customPartsConfig?.enablePart1 !== undefined ? customPartsConfig.enablePart1 : true;
+          const p1 = parseInt(customPartsConfig?.part1Count, 10) || 10;
+          const enableP2 = Boolean(customPartsConfig?.enablePart2);
+          const p2 = parseInt(customPartsConfig?.part2Count, 10) || 4;
+          const enableP3 = Boolean(customPartsConfig?.enablePart3);
+          const p3 = parseInt(customPartsConfig?.part3Count, 10) || 4;
+          prompt += `
+HÌNH THỨC ĐỀ THI THEO MA TRẬN: TRẮC NGHIỆM TÙY BIẾN:
+${enableP1 ? `- ${p1} câu Trắc nghiệm 4 lựa chọn ("type": "mcq", 4 phương án A,B,C,D, "correctAnswer": "A"/"B"/"C"/"D")` : ''}
+${enableP2 ? `- ${p2} câu Trắc nghiệm Đúng/Sai ("type": "tf", 4 ý a,b,c,d, "correctAnswer": "a-Đ, b-S, c-Đ, d-S")` : ''}
+${enableP3 ? `- ${p3} câu Trắc nghiệm Trả lời ngắn ("type": "short", học sinh điền đáp số, không có options)` : ''}
+`;
+        } else if (formatType === 'essay') {
+          const eCount = parseInt(essayCount, 10) || 3;
+          prompt += `
+HÌNH THỨC ĐỀ THI THEO MA TRẬN: TỰ LUẬN (${eCount} bài toán tự luận):
+- "type": "essay"
+- Phân bổ theo các mức độ nhận thức: Nhận biết - Thông hiểu (câu 1, 2), Vận dụng (câu 3), Vận dụng cao (câu cuối).
+- Kèm thang điểm chi tiết cho từng câu trong "points" (tổng điểm 10 điểm) và barem giải chi tiết từng bước trong "explanation".
+`;
+        } else if (formatType === 'mixed') {
+          const mCount = parseInt(mcqCount, 10) || 14;
+          const eCount = parseInt(essayCount, 10) || 2;
+          prompt += `
+HÌNH THỨC ĐỀ THI THEO MA TRẬN: TỔNG HỢP (TRẮC NGHIỆM KẾT HỢP TỰ LUẬN):
+- Phần Trắc nghiệm: ${mCount} câu trắc nghiệm khách quan ("type": "mcq", 4 lựa chọn A, B, C, D).
+- Phần Tự luận: ${eCount} bài toán tự luận ("type": "essay") có lời giải chi tiết và barem điểm từng bước.
+`;
+        } else {
+          prompt += `\nHãy tạo đề thi bám sát tuyệt đối ma trận được cung cấp trong tài liệu hoặc cấu hình.`;
+        }
+      } else if (autoGenType === 'mcq_3part') {
+        const p1 = parseInt(part1Count, 10) || 12;
+        const p2 = parseInt(part2Count, 10) || 4;
+        const p3 = parseInt(part3Count, 10) || 6;
+        prompt += `
+CẤU TRÚC ĐỀ THI: ĐỀ TRẮC NGHIỆM 3 PHẦN (CHUẨN ĐỊNH DẠNG MỚI BỘ GIÁO DỤC & ĐÀO TẠO):
+Hãy tạo chính xác các câu hỏi theo 3 phần sau:
+
+1. PHẦN I: TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN
+- Số lượng: Đúng chính xác ${p1} câu.
+- "type": "mcq"
+- Mỗi câu có đúng 4 phương án A, B, C, D (được ghi rõ "A. ...", "B. ...", "C. ...", "D. ...") trong mảng "options". Chỉ có 1 phương án đúng.
+- "correctAnswer": "A", "B", "C", hoặc "D".
+- Điểm ("points"): 0.25 điểm / câu.
+
+2. PHẦN II: TRẮC NGHIỆM ĐÚNG SAI
+- Số lượng: Đúng chính xác ${p2} câu.
+- "type": "tf"
+- Mỗi câu gồm 1 nội dung bài toán kèm 4 ý khẳng định a), b), c), d) trong mảng "options" ("a) ...", "b) ...", "c) ...", "d) ..."). Học sinh phải xác định từng ý là Đúng hoặc Sai.
+- "correctAnswer": "a-Đ, b-S, c-Đ, d-S" (hoặc kết quả đúng/sai tương ứng cho 4 ý).
+- Điểm ("points"): 1.0 điểm / câu.
+
+3. PHẦN III: TRẮC NGHIỆM TRẢ LỜI NGẮN
+- Số lượng: Đúng chính xác ${p3} câu.
+- "type": "short"
+- Câu hỏi yêu cầu học sinh tính toán và điền đáp số/kết quả toán học (không có phương án lựa chọn, mảng "options": []).
+- "correctAnswer": Đáp số số học hoặc biểu thức ngắn gọn (ví dụ: "12", "-3/4", "5.5").
+- Điểm ("points"): 0.5 điểm / câu.
+`;
+      } else if (autoGenType === 'mcq_custom') {
+        const enableP1 = customPartsConfig?.enablePart1 !== false && customPartsConfig?.enablePart1 !== undefined ? customPartsConfig.enablePart1 : true;
+        const p1 = parseInt(customPartsConfig?.part1Count, 10) || 10;
+        const enableP2 = Boolean(customPartsConfig?.enablePart2);
+        const p2 = parseInt(customPartsConfig?.part2Count, 10) || 4;
+        const enableP3 = Boolean(customPartsConfig?.enablePart3);
+        const p3 = parseInt(customPartsConfig?.part3Count, 10) || 4;
+
+        prompt += `
+CẤU TRÚC ĐỀ THI: ĐỀ TRẮC NGHIỆM TÙY BIẾN THEO CÁC PHẦN ĐƯỢC CHỌN:
+Chỉ tạo các câu hỏi thuộc các phần sau theo đúng yêu cầu:
+`;
+        if (enableP1) {
+          prompt += `
+- PHẦN TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN:
+  * Số lượng: Đúng chính xác ${p1} câu.
+  * "type": "mcq"
+  * 4 phương án A, B, C, D trong mảng "options" ("A. ...", "B. ...", "C. ...", "D. ...").
+  * "correctAnswer": "A", "B", "C", hoặc "D".
+  * "points": 0.25 (hoặc tỷ lệ phù hợp).
+`;
+        }
+        if (enableP2) {
+          prompt += `
+- PHẦN TRẮC NGHIỆM ĐÚNG SAI:
+  * Số lượng: Đúng chính xác ${p2} câu.
+  * "type": "tf"
+  * 4 ý a), b), c), d) trong mảng "options". Học sinh xác định Đúng hoặc Sai cho mỗi ý.
+  * "correctAnswer": "a-Đ, b-S, c-Đ, d-S".
+  * "points": 1.0 (hoặc tỷ lệ phù hợp).
+`;
+        }
+        if (enableP3) {
+          prompt += `
+- PHẦN TRẮC NGHIỆM TRẢ LỜI NGẮN:
+  * Số lượng: Đúng chính xác ${p3} câu.
+  * "type": "short"
+  * Học sinh tính toán và điền đáp số kết quả toán học (mảng "options": []).
+  * "correctAnswer": Giá trị số hoặc biểu thức ngắn gọn (ví dụ: "15", "-2/3").
+  * "points": 0.5 (hoặc tỷ lệ phù hợp).
+`;
+        }
+      } else if (autoGenType === 'mcq') {
+        prompt += `\nPlease generate exactly ${mcqCount || 10} multiple-choice questions (MCQ) with 4 options A, B, C, D.`;
       } else if (autoGenType === 'essay') {
-        prompt += `\nPlease generate exactly ${essayCount} essay questions.`;
+        const eCount = parseInt(essayCount, 10) || 3;
+        prompt += `
+CẤU TRÚC ĐỀ THI TỰ LUẬN:
+Hãy tạo đúng ${eCount} bài toán tự luận toán học chất lượng cao ("type": "essay").
+- Đề bài rõ ràng, mạch lạc, có tính phân loại học sinh tốt.
+- "options": []
+- "points": Thang điểm từng bài (ví dụ bài 1: 3.0đ, bài 2: 4.0đ, bài 3: 3.0đ).
+- "correctAnswer": Kết quả tóm tắt hoặc đáp số chính.
+- "explanation": Lời giải chi tiết từng bước (step-by-step) và barem điểm chấm cho từng ý nhỏ để giáo viên và học sinh đối chiếu.
+`;
       } else if (autoGenType === 'mixed') {
-        prompt += `\nPlease generate exactly ${mcqCount} multiple-choice questions AND ${essayCount} essay questions.`;
-      } else if (autoGenType === 'matrix') {
-        prompt += `\nPlease generate questions strictly following the provided exam matrix/blueprint document.`;
+        const mCount = parseInt(mcqCount, 10) || 12;
+        const eCount = parseInt(essayCount, 10) || 2;
+        prompt += `
+CẤU TRÚC ĐỀ THI TỔNG HỢP (KẾT HỢP TRẮC NGHIỆM VÀ TỰ LUẬN):
+1. PHẦN I: TRẮC NGHIỆM KHÁCH QUAN (${mCount} câu):
+   - "type": "mcq"
+   - Mỗi câu 4 phương án A, B, C, D trong "options", 1 đáp án đúng ("correctAnswer": "A"/"B"/"C"/"D").
+   - "points": ${(7.0 / mCount).toFixed(2)} điểm / câu (tổng khoảng 7.0 điểm).
+2. PHẦN II: TỰ LUẬN (${eCount} bài toán):
+   - "type": "essay"
+   - Bài toán tự luận rèn luyện kỹ năng giải toán, phân hóa tư duy ("options": []).
+   - "points": ${(3.0 / eCount).toFixed(1)} điểm / bài (tổng 3.0 điểm).
+   - "explanation": Hướng dẫn giải chi tiết từng bước và thang điểm biểu điểm.
+`;
       }
 
-      prompt += `\nCRITICAL REQUIREMENT:
+      prompt += `\nCRITICAL REQUIREMENT - CẤU TRÚC VÀ QUY CHUẨN ĐẦU RA BẮT BUỘC:
+*** YÊU CẦU BẮT BUỘC VỀ SỐ LƯỢNG VÀ ĐẦY ĐỦ 100% CÁC PHẦN (TUYỆT ĐỐI KHÔNG ĐƯỢC THIẾU CÂU HOẶC THIẾU PHẦN) ***
+1. BẮT BUỘC PHẢI TẠO ĐỦ 100% TẤT CẢ CÁC PHẦN ĐÃ YÊU CẦU Ở TRÊN. Tuyệt đối không được bỏ dở hay dừng giữa chừng.
+   - Nếu là đề trắc nghiệm 3 phần (hoặc đề tùy biến), mảng JSON PHẢI CHỨA ĐẦY ĐỦ TỪNG PHẦN THEO THỨ TỰ:
+     * Toàn bộ câu của PHẦN I ("type": "mcq", đủ 4 options A, B, C, D)
+     * Toàn bộ câu của PHẦN II ("type": "tf", đủ 4 ý a, b, c, d)
+     * Toàn bộ câu của PHẦN III ("type": "short", điền đáp số số học/ngắn)
+   - TUYỆT ĐỐI KHÔNG ĐƯỢC chỉ sinh Phần I mà bỏ quên Phần II hoặc Phần III!
+2. Để đảm bảo mô hình tạo trọn vẹn toàn bộ các câu hỏi mà không bị ngắt quãng dung lượng:
+   - "explanation": Viết lời giải chi tiết chuẩn xác nhưng súc tích, đi thẳng vào các bước giải cốt lõi, công thức và đáp số. Tránh diễn giải lan man dài dòng.
+   - "reference": Viết tóm tắt ngắn gọn 1-2 dòng cho mỗi trường.
+
 For each question, output an object in a JSON array with the following fields:
 - "id": A unique string ID (e.g., "q1", "q2")
 - "type": "mcq" (for multiple choice), "tf" (for true/false), "short" (for short fill-in-the-blank), or "essay" (for long answer)
 - "question": The full text of the question in Vietnamese. IMPORTANT: Any math formulas, variables, and vectors MUST be wrapped in LaTeX delimiters: use $...$ for inline math and $$...$$ for block math. Example: $\\overrightarrow{AB}$, $\\frac{a}{b}$, $\\sqrt{x}$, $90^\\circ$.
-- "options": An array of strings for MCQ choices (A, B, C, D). Math formulas and vectors here MUST also be wrapped in $...$ or $$...$$, e.g., "$\\overrightarrow{AB} + \\overrightarrow{AD} = \\overrightarrow{AC}$".
+- "options": An array of strings for MCQ choices (A, B, C, D) or TF sub-statements (a, b, c, d). QUY TẮC CÔNG THỨC TOÁN: MỌI biểu thức toán, lũy thừa, chỉ số dưới (ví dụ: "$3x^2 - 3$", "$u_2 = 3$") BẮT BUỘC PHẢI ĐƯỢC BỌC TRONG $...$. TUYỆT ĐỐI KHÔNG ĐƯỢC ghi "3x^2 - 3" thiếu $ hoặc "u_2 = 3$." (thiếu dấu $ mở đầu hoặc thừa dấu chấm sau $). Viết chuẩn: "A. $3x^2 - 3$", "B. $3x^2 + 3$" hoặc "a) $u_2 = 3$", "b) $u_3 = 7$".
 - "correctAnswer": The correct answer text.
-- "points": A number (default to 1 or 2).
-- "explanation": A detailed step-by-step explanation (lời giải chi tiết) in Vietnamese for the question. Math formulas and vectors MUST be wrapped in LaTeX delimiters: use $...$ for inline math and $$...$$ for block math.
+- "points": A number (e.g., 0.25 cho MCQ, 1.0 cho TF, 0.5 cho Short).
+- "explanation": A concise, step-by-step mathematical explanation (lời giải chi tiết) in Vietnamese with LaTeX formulas.
 
-CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST be properly escaped with double backslash (e.g. \\\\overrightarrow, \\\\frac, \\\\sqrt, \\\\cdot, \\\\alpha). Format your output EXACTLY as a valid JSON array without any markdown formatting.`;
+*** NGUYÊN TẮC BẮT BUỘC VỀ HÌNH VẼ & BẢNG BIỂU MINH HỌA (QUAN TRỌNG NHẤT) ***
+1. CHỈ CÂU HỎI NÀO TRONG ĐỀ BÀI CÓ CHO BẢNG HOẶC CHO HÌNH VẼ TRONG GIẢ THIẾT thì mới cung cấp hình vẽ hoặc bảng biểu minh họa ("figureType": "svg" hoặc "table"):
+   - Ví dụ các câu CẦN hình/bảng:
+     * "Cho hàm số $y=f(x)$ có bảng biến thiên như hình sau..." -> Cần bảng biến thiên ("figureType": "table")
+     * "Đường cong trong hình vẽ bên là đồ thị của hàm số nào dưới đây?" -> Cần đồ thị Oxy vector SVG ("figureType": "svg")
+     * "Cho bảng tần số ghép nhóm sau..." -> Cần bảng dữ liệu ("figureType": "table")
+     * "Cho hình chóp / hình lăng trụ ... có các kích thước như hình vẽ bên..." -> Cần hình vẽ vector SVG ("figureType": "svg")
+2. CÂU HỎI NÀO KHÔNG CHO DỮ LIỆU BẢNG HOẶC HÌNH VẼ TRONG ĐỀ BÀI (tức là đề bài thuần câu chữ, công thức, học sinh phải tự nháp, tự tư duy vẽ hình hoặc tính toán) THÌ TUYỆT ĐỐI KHÔNG ĐƯỢC VẼ SẴN:
+   - Ví dụ các câu KHÔNG ĐƯỢC VẼ SẴN:
+     * "Cho hình chóp $S.ABCD$ có đáy $ABCD$ là hình bình hành, $SA \perp (ABCD)$... Tính khoảng cách..." -> Đây là bài tập học sinh tự vẽ hình, đề bài KHÔNG nói "như hình vẽ bên" -> BẮT BUỘC đặt: "figureType": "none", "figureSvg": "", "figureTable": "", "figureDescription": "".
+     * Các bài tìm cực trị, tính nguyên hàm, tích phân, giải phương trình, phương trình mặt phẳng trong không gian Oxyz, xác suất... mà đề bài không đề cập hình vẽ/bảng -> BẮT BUỘC đặt: "figureType": "none".
+
+Cấu hình trường hình vẽ / bảng:
+- "figureType": "none" (mặc định nếu đề không cho hình/bảng), "svg" (nếu đề bài cho đồ thị hoặc hình vẽ), "table" (nếu đề bài cho bảng biến thiên hoặc bảng số liệu)
+- "figureSvg": (Chỉ khi figureType === "svg") Chuỗi mã SVG vector hoàn chỉnh, hợp lệ, tự chứa, viewBox="0 0 380 250", nét vẽ rõ ràng (#0f172a, stroke-width="2"), nét khuất đứt đoạn (stroke-dasharray="5,4"), nhãn chữ cái (A, B, C, S, O, x, y...) bằng thẻ <text>.
+- "figureTable": (Chỉ khi figureType === "table") Bảng Markdown thể hiện Bảng biến thiên hàm số hoặc Bảng tần số ghép nhóm.
+  * Với BẢNG BIẾN THIÊN:
+    - Hàng 1 là $x$, Hàng 2 là $y'$ hoặc $f'(x)$, Hàng 3 là $y$ hoặc $f(x)$.
+    - MỌI ký hiệu toán học trong bảng (như $-\\infty$, $+\\infty$, $\\nearrow$, $\\searrow$, $+$, $-$, $0$) BẮT BUỘC PHẢI BỌC TRONG DẤU $ (ví dụ: "$-\\infty$", "$+\\infty$", "$\\nearrow$", "$\\searrow$", "$+$", "$-$", "$0$").
+    - Nếu hàm số không xác định / tiệm cận đứng tại điểm nào thì dùng "$||$" để thể hiện 2 gạch không xác định.
+    - Tuyệt đối KHÔNG viết '\\nearrow' thô mà không bọc trong $.
+  * Với BẢNG SỐ LIỆU / TẦN SỐ GHÉP NHÓM: Dòng tiêu đề và các ô có công thức hoặc khoảng giá trị toán học bọc trong dấu $.
+- "figureDescription": Chú thích ngắn gọn (Ví dụ: "Đồ thị hàm số $y=f(x)$", "Bảng biến thiên của hàm số $y=f(x)$").
+
+*** BẮT BUỘC VỀ NỘI DUNG THAM CHIẾU ĐỂ GIÁO VIÊN SỬA ĐỀ (PEDAGOGICAL REFERENCE) ***
+Mỗi câu hỏi PHẢI CÓ trường "reference" là một object chứa thông tin tham chiếu chuẩn chương trình GDPT giúp giáo viên hiểu rõ và sửa đề dễ dàng:
+- "reference": {
+    "topic": "Chủ đề kiến thức tham chiếu (Ví dụ: Ứng dụng đạo hàm để khảo sát hàm số)",
+    "curriculumLesson": "Bài học SGK tham chiếu (Ví dụ: SGK Toán 12 - Chương 1: Bài 1 - Tính đơn điệu của hàm số)",
+    "cognitiveLevel": "Nhận biết" | "Thông hiểu" | "Vận dụng" | "Vận dụng cao",
+    "competency": "Năng lực toán học mục tiêu (Tư duy và lập luận toán học / Giải quyết vấn đề toán học)",
+    "coreKnowledge": "Công thức cốt lõi, định lý trọng tâm",
+    "variationGuide": "Hướng dẫn ngắn gọn cho giáo viên cách đổi số liệu tương đương"
+  }
+
+CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST be properly escaped with double backslash (e.g. \\\\overrightarrow, \\\\frac, \\\\sqrt, \\\\cdot, \\\\alpha, \\\\nearrow). Format your output EXACTLY as a valid JSON array without any markdown formatting.`;
 
       let response;
+      const genConfig = {
+        maxOutputTokens: 20000,
+        temperature: 0.3
+      };
+
       if (autoGenType === 'matrix' && matrixFileDataUrl) {
         const base64Data = matrixFileDataUrl.split(',')[1];
         response = await generateContentWithRetry(ai, {
-          model: "gemini-3.5-flash-lite",
-          contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
+          model: "gemini-3.8-flash",
+          contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }],
+          config: genConfig
         });
       } else {
-        response = await generateContentWithRetry(ai, { model: "gemini-3.5-flash-lite", contents: prompt });
+        response = await generateContentWithRetry(ai, {
+          model: "gemini-3.8-flash",
+          contents: prompt,
+          config: genConfig
+        });
       }
 
       let responseText = response.text || "[]";
       let parsed = safeParseJsonArray(responseText);
-      res.json(parsed);
+      let sanitized = sanitizeQuestionFigures(parsed);
+      res.json(sanitized);
     } catch (error: any) {
       res.status(500).json({ error: "Failed to generate test", details: formatError(error) });
     }
@@ -371,7 +774,7 @@ For each question, output an object in a JSON array with the following fields:
 Output valid JSON array only, without markdown fences. Escaping backslashes for LaTeX (\\\\frac, \\\\sqrt, \\\\vec).`;
 
       const response = await generateContentWithRetry(ai, {
-          model: "gemini-3.5-flash-lite",
+          model: "gemini-3.8-flash",
           contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
         });
 
@@ -409,7 +812,12 @@ Output valid JSON array only, without markdown fences. Escaping backslashes for 
         options: Array.isArray(q.options) ? q.options : [],
         correctAnswer: q.correctAnswer,
         points: q.points || 1,
-        explanation: q.explanation || ''
+        explanation: q.explanation || '',
+        figureType: q.figureType || 'none',
+        figureSvg: q.figureSvg || '',
+        figureTable: q.figureTable || '',
+        figureDescription: q.figureDescription || '',
+        reference: q.reference || null
       }));
 
       const prompt = `Bạn là chuyên gia ra đề thi môn Toán và kiểm tra đánh giá chất lượng cao.
@@ -421,12 +829,17 @@ YÊU CẦU CỐT LÕI (BẮT BUỘC TUÂN THỦ 100%):
    - Câu thứ i trong mã đề mới phải tương ứng hoàn toàn với câu thứ i trong đề gốc về: dạng toán, phương pháp giải, mức độ nhận thức (nhận biết, thông hiểu, vận dụng, vận dụng cao), và kiểu câu hỏi (trắc nghiệm 4 lựa chọn 'mcq', đúng/sai 'tf', điền đáp án ngắn 'short', hoặc tự luận 'essay').
 2. THAY ĐỔI SỐ LIỆU TOÁN HỌC (ISOMORPHIC / PARALLEL QUESTIONS):
    - Thay đổi các thông số, hệ số phương trình, độ dài, số đo góc, tọa độ, số liệu trong đề bài sao cho hợp lý, đẹp về mặt toán học (tránh ra nghiệm số quá xấu/vô lý) nhưng đảm bảo học sinh không thể chép số liệu hoặc chép đáp án từ mã đề gốc.
-3. TÍNH TOÁN LẠI ĐÁP ÁN ĐÚNG VÀ PHƯƠNG ÁN NHIỄU CHÍNH XÁC:
+3. HÌNH VẼ, BẢNG BIỂU VÀ NỘI DUNG THAM CHIẾU:
+   - CHỈ CÂU HỎI NÀO CÓ CHO BẢNG HOẶC CHO HÌNH VẼ Ở ĐỀ BÀI thì mới có bảng hoặc hình vẽ:
+     * Nếu câu hỏi gốc có cho hình vẽ SVG ("figureType": "svg") hoặc bảng biểu ("figureType": "table"), hãy giữ nguyên hoặc cập nhật số liệu/nhãn tương ứng trong "figureSvg" / "figureTable" và "figureDescription".
+     * Nếu câu hỏi gốc KHÔNG cho hình vẽ hoặc bảng biểu ("figureType": "none" hoặc rỗng), câu hỏi mới tương tự cũng TUYỆT ĐỐI KHÔNG ĐƯỢC tự ý vẽ sẵn hình hoặc bảng, BẮT BUỘC đặt: "figureType": "none", "figureSvg": "", "figureTable": "", "figureDescription": "".
+   - Giữ nguyên và cập nhật trường "reference" (gồm topic, curriculumLesson, cognitiveLevel, competency, coreKnowledge, và variationGuide phù hợp với mã đề mới).
+4. TÍNH TOÁN LẠI ĐÁP ÁN ĐÚNG VÀ PHƯƠNG ÁN NHIỄU CHÍNH XÁC:
    - Với số liệu mới, giải và tính toán chính xác đáp án đúng.
    - Với câu trắc nghiệm (mcq), tạo 4 phương án A, B, C, D mới tương ứng (1 đáp án đúng và 3 phương án gây nhiễu hợp lý dựa trên các lỗi học sinh thường gặp). Trường "correctAnswer" phải ghi rõ ký tự đáp án đúng mới (ví dụ: "A", "B", "C", hoặc "D") hoặc khớp với nội dung đáp án đúng mới.
-4. LỜI GIẢI CHI TIẾT MỚI:
+5. LỜI GIẢI CHI TIẾT MỚI:
    - Cung cấp lời giải chi tiết (explanation) từng bước tương ứng với số liệu mới của câu hỏi này bằng tiếng Việt.
-5. ĐỊNH DẠNG CÔNG THỨC TOÁN (LATEX):
+6. ĐỊNH DẠNG CÔNG THỨC TOÁN (LATEX):
    - Toàn bộ công thức toán, biến số, ký hiệu vector phải được kẹp trong cặp dấu $...$ (nội dòng) hoặc $$...$$ (khối). Ví dụ: $x^2 - 5x + 6 = 0$, $\\overrightarrow{AB}$, $\\frac{a}{b}$, $\\sqrt{2}$.
    - Chú ý: Vì xuất ra JSON, các dấu gạch chéo ngược trong LaTeX phải escape cẩn thận: \\\\frac, \\\\sqrt, \\\\alpha, \\\\vec, v.v.
 
@@ -443,13 +856,25 @@ Xuất ra DUY NHẤT một mảng JSON các câu hỏi của Mã đề ${targetC
     "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
     "correctAnswer": "A",
     "points": 1,
-    "explanation": "Lời giải chi tiết với số liệu mới..."
+    "explanation": "Lời giải chi tiết với số liệu mới...",
+    "figureType": "svg" | "table" | "none",
+    "figureSvg": "<svg ...>...</svg>",
+    "figureTable": "| x | ... |",
+    "figureDescription": "Mô tả hình/bảng...",
+    "reference": {
+      "topic": "...",
+      "curriculumLesson": "...",
+      "cognitiveLevel": "...",
+      "competency": "...",
+      "coreKnowledge": "...",
+      "variationGuide": "..."
+    }
   }
 ]
 TUYỆT ĐỐI KHÔNG thêm bất kỳ văn bản giải thích hay markdown codeblock nào ngoài mảng JSON này.`;
 
       const response = await generateContentWithRetry(ai, {
-        model: "gemini-3.5-flash-lite",
+        model: "gemini-3.8-flash",
         contents: prompt
       });
 
@@ -460,7 +885,9 @@ TUYỆT ĐỐI KHÔNG thêm bất kỳ văn bản giải thích hay markdown cod
         throw new Error("Không thể phân tích dữ liệu câu hỏi được sinh từ AI.");
       }
 
-      const cleanedQuestions = parsed.map((q: any, idx: number) => {
+      const sanitized = sanitizeQuestionFigures(parsed);
+
+      const cleanedQuestions = sanitized.map((q: any, idx: number) => {
         const origQ = baseQuestions[idx] || {};
         let options = Array.isArray(q.options) ? q.options : [];
         let correctAnswer = q.correctAnswer;

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { doc, getDoc, collection, addDoc, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, collection, addDoc, query, where, getDocs, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Clock, CheckCircle, AlertCircle, FileText, Upload, ArrowLeft, PenTool, Image, X } from 'lucide-react';
+import { Clock, CheckCircle, AlertCircle, FileText, Upload, ArrowLeft, PenTool, Image, X, Check } from 'lucide-react';
 import DrawingPad from '../../components/DrawingPad';
 import MathText from '../../components/MathText';
+import QuestionVisualRenderer from '../../components/common/QuestionVisualRenderer';
+import { gradeQuestion, resolveMcqLetter, parseTfSubAnswers, cleanOptionText, stripOptionPrefix } from '../../utils/gradeEngine';
 
 export default function DoAssignment() {
   const { assignmentId } = useParams();
@@ -47,6 +49,7 @@ export default function DoAssignment() {
       if (!assignmentId) return;
 
       let existingSub: any = null;
+      let existingSubId: string | null = null;
 
       // Check existing submission
       if (user?.email) {
@@ -54,6 +57,7 @@ export default function DoAssignment() {
         const subSnap = await getDocs(subQ);
         if (!subSnap.empty) {
           existingSub = subSnap.docs[0].data();
+          existingSubId = subSnap.docs[0].id;
           setSubmitted(true);
           setResult(existingSub);
           if (existingSub.variantCode) {
@@ -62,9 +66,12 @@ export default function DoAssignment() {
           
           // Pre-fill answers from submission
           const prevAnswers: any = {};
+          if (existingSub.answers) {
+            Object.assign(prevAnswers, existingSub.answers);
+          }
           if (existingSub.feedback) {
             existingSub.feedback.forEach((fb: any) => {
-              if (fb.studentAnswer) {
+              if (fb.studentAnswer && !prevAnswers[fb.questionId]) {
                 prevAnswers[fb.questionId] = fb.studentAnswer;
               }
             });
@@ -147,6 +154,68 @@ export default function DoAssignment() {
           type: (q.type || 'mcq').toString().toLowerCase().trim()
         }));
         setQuestions(parsedQuestions);
+
+        // Auto-correct any legacy grading mismatches for existing submission
+        if (existingSub && existingSubId && Array.isArray(parsedQuestions) && parsedQuestions.length > 0) {
+          let needsUpdate = false;
+          let newTotalScore = 0;
+          let newMcqScore = 0;
+          let newEssayScore = 0;
+          const updatedFeedback = [...(existingSub.feedback || [])];
+
+          parsedQuestions.forEach((q: any, idx: number) => {
+            const oldFb = updatedFeedback[idx] || {};
+            const stAns = oldFb.studentAnswer ?? existingSub.answers?.[q.id] ?? '';
+
+            if (q.type !== 'essay') {
+              const freshGrade = gradeQuestion(q, stAns);
+              if (oldFb.score !== freshGrade.score || oldFb.feedback !== freshGrade.feedback) {
+                needsUpdate = true;
+              }
+              updatedFeedback[idx] = {
+                ...oldFb,
+                questionId: q.id,
+                question: q.question || '',
+                type: q.type,
+                options: q.options || [],
+                studentAnswer: stAns,
+                score: freshGrade.score,
+                maxScore: freshGrade.maxScore,
+                feedback: freshGrade.feedback,
+                correctAnswer: freshGrade.correctAnswerDisplay || q.correctAnswer || '',
+                explanation: q.explanation || oldFb.explanation || ''
+              };
+              newMcqScore += freshGrade.score;
+              newTotalScore += freshGrade.score;
+            } else {
+              const eScore = Number(oldFb.score || 0);
+              newEssayScore += eScore;
+              newTotalScore += eScore;
+            }
+          });
+
+          if (needsUpdate) {
+            existingSub = {
+              ...existingSub,
+              score: Math.round(newTotalScore * 100) / 100,
+              mcqScore: Math.round(newMcqScore * 100) / 100,
+              essayScore: Math.round(newEssayScore * 100) / 100,
+              feedback: updatedFeedback
+            };
+            setResult(existingSub);
+            try {
+              await updateDoc(doc(db, 'submissions', existingSubId), {
+                score: existingSub.score,
+                mcqScore: existingSub.mcqScore,
+                essayScore: existingSub.essayScore,
+                feedback: existingSub.feedback
+              });
+              console.log('Submission score auto-corrected with test key.');
+            } catch (errSync) {
+              console.warn('Sync existing submission error:', errSync);
+            }
+          }
+        }
       }
       setLoading(false);
     } catch (err) {
@@ -157,6 +226,18 @@ export default function DoAssignment() {
 
   const handleAnswerChange = (qId: string, value: string) => {
     setAnswers(prev => ({ ...prev, [qId]: value }));
+  };
+
+  const handleTfSubAnswerChange = (qId: string, subKey: string, val: 'Đ' | 'S') => {
+    setAnswers(prev => {
+      const current = parseTfSubAnswers(prev[qId] || '');
+      current[subKey.toLowerCase()] = val;
+      const strVal = ['a', 'b', 'c', 'd']
+        .filter(k => current[k])
+        .map(k => `${k}-${current[k]}`)
+        .join(', ');
+      return { ...prev, [qId]: strVal };
+    });
   };
 
   const handleFileChange = (qId: string, file: File | null) => {
@@ -226,31 +307,25 @@ export default function DoAssignment() {
     const feedback: any[] = [];
 
     for (const q of questions) {
-      const pts = Number(q.points) || 1;
+      const qType = (q.type || 'mcq').toString().toLowerCase().trim();
+      const pts = Number(q.points) || (qType === 'mcq' ? 0.25 : qType === 'tf' ? 1.0 : qType === 'short' ? 0.5 : 1.0);
       maxScore += pts;
       let qScore = 0;
       let qFeedback = '';
       let fileDataUrl = '';
+      let evaluatedDetails: any = null;
+      let correctAnswerDisplay = (q.correctAnswer || '').toString().trim();
       
       const studentAns = answers[q.id] || '';
 
-      if (q.type === 'mcq' || q.type === 'tf') {
+      if (qType === 'mcq' || qType === 'tf' || qType === 'short') {
         mcqMax += pts;
-        if (studentAns === q.correctAnswer) {
-          qScore = pts;
-          qFeedback = 'Chính xác';
-        } else {
-          qFeedback = `Sai. Đáp án đúng là: ${q.correctAnswer}`;
-        }
-      } else if (q.type === 'short') {
-        mcqMax += pts;
-        if (studentAns.toLowerCase().trim() === (q.correctAnswer || '').toLowerCase().trim()) {
-          qScore = pts;
-          qFeedback = 'Chính xác';
-        } else {
-          qFeedback = `Sai. Đáp án đúng là: ${q.correctAnswer}`;
-        }
-      } else if (q.type === 'essay') {
+        const res = gradeQuestion(q, studentAns);
+        qScore = res.score;
+        qFeedback = res.feedback;
+        evaluatedDetails = res.details || null;
+        correctAnswerDisplay = res.correctAnswerDisplay || correctAnswerDisplay;
+      } else if (qType === 'essay') {
         essayMax += pts;
         // AI Auto-grading
         if (studentAns.length > 0 || fileAnswers[q.id]) {
@@ -290,17 +365,17 @@ export default function DoAssignment() {
                 qScore = pts * 0.5;
                 qFeedback = 'Hệ thống AI không phản hồi điểm số. Cần giáo viên chấm lại.';
              }
-          } catch (e) {
+          } catch (e: any) {
              console.error('Error auto grading:', e);
              qScore = 0;
-             qFeedback = 'Lỗi kết nối AI: ' + (e.message || e);
+             qFeedback = 'Lỗi kết nối AI: ' + (e?.message || e);
           }
         } else {
           qFeedback = 'Không có bài làm.';
         }
       }
 
-      if (q.type === 'essay') {
+      if (qType === 'essay') {
         essayScore += qScore;
       } else {
         mcqScore += qScore;
@@ -309,19 +384,19 @@ export default function DoAssignment() {
       feedback.push({
         questionId: q.id,
         question: q.question || "",
+        type: qType,
+        options: q.options || [],
         studentAnswer: studentAns,
+        correctAnswer: correctAnswerDisplay,
         hasFile: !!fileAnswers[q.id],
         fileDataUrl,
-        score: qScore,
-        maxScore: q.points || 1,
+        score: Math.round(qScore * 100) / 100,
+        maxScore: pts,
         feedback: qFeedback,
-        explanation: q.explanation || ""
+        explanation: q.explanation || "",
+        details: evaluatedDetails
       });
     }
-
-
-
-    
 
     const submissionData = {
       assignmentId,
@@ -329,13 +404,14 @@ export default function DoAssignment() {
       studentEmail: user?.email || "",
       variantCode: assignedVariantCode || "",
       submittedAt: new Date().toISOString(),
-      score: totalScore,
-      maxScore,
-      mcqScore,
-      mcqMax,
-      essayScore,
-      essayMax,
+      score: Math.round(totalScore * 100) / 100,
+      maxScore: Math.round(maxScore * 100) / 100,
+      mcqScore: Math.round(mcqScore * 100) / 100,
+      mcqMax: Math.round(mcqMax * 100) / 100,
+      essayScore: Math.round(essayScore * 100) / 100,
+      essayMax: Math.round(essayMax * 100) / 100,
       feedback,
+      answers,
       timeSpent: test.durationMinutes * 60 - timeLeft
     };
 
@@ -508,57 +584,139 @@ export default function DoAssignment() {
                 </span>
               </div>
               
-              {q.imageUrl && (
-                <div className="mb-6 mt-2">
-                  <img src={q.imageUrl} alt={`Hình vẽ câu ${index + 1}`} className="max-w-full h-auto max-h-96 rounded-lg border border-gray-200" />
-                </div>
-              )}
+              {/* Visual Figure / Diagram / Table / Image */}
+              <QuestionVisualRenderer
+                figureType={q.figureType}
+                figureSvg={q.figureSvg}
+                figureTable={q.figureTable}
+                figureDescription={q.figureDescription}
+                imageUrl={q.imageUrl}
+              />
 
               {/* Trắc nghiệm 4 lựa chọn */}
               {q.type === 'mcq' && (
                 <div className="space-y-3 mt-4">
-                  {(Array.isArray(q.options) ? q.options : ['A', 'B', 'C', 'D']).map((opt: string, i: number) => (
-                    <label key={i} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
-                      answers[q.id] === opt 
-                        ? 'bg-blue-50 border-blue-300' 
-                        : 'border-gray-200 hover:bg-gray-50'
-                    } ${submitted ? 'pointer-events-none' : ''}`}>
-                      <input 
-                        type="radio" 
-                        name={`q-${q.id}`} 
-                        value={opt}
-                        checked={answers[q.id] === opt}
-                        onChange={() => handleAnswerChange(q.id, opt)}
-                        className="w-4 h-4 text-blue-600"
-                        disabled={submitted}
-                      />
-                      <span className="font-medium text-gray-700"><MathText content={opt} /></span>
-                    </label>
-                  ))}
+                  {(Array.isArray(q.options) ? q.options : ['A', 'B', 'C', 'D']).map((opt: string, i: number) => {
+                    const optLetter = String.fromCharCode(65 + i);
+                    const currentLetter = resolveMcqLetter(answers[q.id], q.options).letter;
+                    const isChecked = currentLetter === optLetter || answers[q.id] === optLetter || answers[q.id] === opt;
+                    const cleanText = stripOptionPrefix(opt);
+
+                    return (
+                      <label 
+                        key={i} 
+                        className={`flex items-start gap-3.5 p-3.5 rounded-xl border cursor-pointer transition-all ${
+                          isChecked 
+                            ? 'bg-blue-50/80 border-blue-400 shadow-xs' 
+                            : 'border-gray-200 hover:bg-gray-50/80'
+                        } ${submitted ? 'pointer-events-none' : ''}`}
+                      >
+                        <input 
+                          type="radio" 
+                          name={`q-${q.id}`} 
+                          value={optLetter}
+                          checked={isChecked}
+                          onChange={() => handleAnswerChange(q.id, optLetter)}
+                          className="mt-1 w-4 h-4 text-blue-600 shrink-0"
+                          disabled={submitted}
+                        />
+                        <div className="flex items-start gap-2.5 flex-1">
+                          <span className={`font-bold text-xs px-2 py-0.5 rounded shrink-0 ${isChecked ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
+                            {optLetter}
+                          </span>
+                          <div className="font-medium text-gray-800 leading-relaxed text-sm pt-0.5">
+                            <MathText content={cleanText || opt} />
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
                 </div>
               )}
 
               {/* Trắc nghiệm đúng/sai */}
               {q.type === 'tf' && (
-                <div className="flex gap-4 mt-4">
-                  {['Đúng', 'Sai'].map((opt) => (
-                    <label key={opt} className={`flex-1 flex items-center justify-center gap-2 p-4 rounded-xl border cursor-pointer transition-colors ${
-                      answers[q.id] === opt 
-                        ? 'bg-blue-50 border-blue-300' 
-                        : 'border-gray-200 hover:bg-gray-50'
-                    } ${submitted ? 'pointer-events-none' : ''}`}>
-                      <input 
-                        type="radio" 
-                        name={`q-${q.id}`} 
-                        value={opt}
-                        checked={answers[q.id] === opt}
-                        onChange={() => handleAnswerChange(q.id, opt)}
-                        className="w-4 h-4 text-blue-600"
-                        disabled={submitted}
-                      />
-                      <span className="font-bold text-gray-700"><MathText content={opt} /></span>
-                    </label>
-                  ))}
+                <div className="mt-4 space-y-3">
+                  {Array.isArray(q.options) && q.options.length > 1 ? (
+                    <div className="space-y-2.5">
+                      <p className="text-xs text-gray-500 font-medium italic mb-2">
+                        Chọn Đúng (Đ) hoặc Sai (S) cho từng ý dưới đây:
+                      </p>
+                      {q.options.slice(0, 4).map((opt: string, optIdx: number) => {
+                        const subKey = ['a', 'b', 'c', 'd'][optIdx];
+                        const subMap = parseTfSubAnswers(answers[q.id] || '');
+                        const curVal = subMap[subKey];
+                        const cleanSub = stripOptionPrefix(opt);
+
+                        return (
+                          <div 
+                            key={optIdx} 
+                            className="p-3.5 rounded-xl border border-gray-200 bg-gray-50/40 hover:bg-gray-50 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                          >
+                            <div className="flex items-start gap-2.5 flex-1">
+                              <span className="font-bold text-blue-700 uppercase bg-blue-100/90 px-2 py-0.5 rounded text-xs shrink-0 mt-0.5">
+                                {subKey})
+                              </span>
+                              <div className="text-gray-800 text-sm font-medium leading-relaxed">
+                                <MathText content={cleanSub || opt} />
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                              <button
+                                type="button"
+                                disabled={submitted}
+                                onClick={() => handleTfSubAnswerChange(q.id, subKey, 'Đ')}
+                                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border ${
+                                  curVal === 'Đ'
+                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-emerald-50 hover:text-emerald-700'
+                                } ${submitted ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'}`}
+                              >
+                                <Check size={14} /> Đúng
+                              </button>
+                              <button
+                                type="button"
+                                disabled={submitted}
+                                onClick={() => handleTfSubAnswerChange(q.id, subKey, 'S')}
+                                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border ${
+                                  curVal === 'S'
+                                    ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-rose-50 hover:text-rose-700'
+                                } ${submitted ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'}`}
+                              >
+                                <X size={14} /> Sai
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="flex gap-4">
+                      {['Đúng', 'Sai'].map((opt) => {
+                        const optVal = opt === 'Đúng' ? 'Đ' : 'S';
+                        const isChecked = answers[q.id] === opt || answers[q.id] === optVal;
+                        return (
+                          <label key={opt} className={`flex-1 flex items-center justify-center gap-2 p-3.5 rounded-xl border cursor-pointer transition-colors ${
+                            isChecked 
+                              ? 'bg-blue-50 border-blue-400 font-bold text-blue-700' 
+                              : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                          } ${submitted ? 'pointer-events-none' : ''}`}>
+                            <input 
+                              type="radio" 
+                              name={`q-${q.id}`} 
+                              value={opt}
+                              checked={isChecked}
+                              onChange={() => handleAnswerChange(q.id, opt)}
+                              className="w-4 h-4 text-blue-600"
+                              disabled={submitted}
+                            />
+                            <span className="font-bold"><MathText content={opt} /></span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -569,10 +727,13 @@ export default function DoAssignment() {
                     type="text" 
                     value={answers[q.id] || ''}
                     onChange={(e) => handleAnswerChange(q.id, e.target.value)}
-                    placeholder="Nhập câu trả lời của bạn..."
-                    className="w-full p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                    placeholder="Nhập kết quả hoặc đáp số (ví dụ: 3.5, 3,5 hoặc -1/2)..."
+                    className="w-full p-3.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-gray-800 font-medium text-sm"
                     disabled={submitted}
                   />
+                  <p className="text-xs text-gray-500 mt-1.5">
+                    * Định dạng số thập phân có thể dùng dấu phẩy (,) hoặc chấm (.), phân số dạng a/b.
+                  </p>
                 </div>
               )}
 
@@ -649,18 +810,56 @@ export default function DoAssignment() {
 
               {/* Feedback after submission */}
               {submitted && result?.feedback?.[index] && (
-                <div className={`mt-4 p-4 rounded-xl flex gap-3 ${result.feedback[index].score === result.feedback[index].maxScore ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+                <div className={`mt-4 p-4 rounded-xl flex gap-3.5 border ${
+                  result.feedback[index].score === result.feedback[index].maxScore 
+                    ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900' 
+                    : result.feedback[index].score > 0 
+                      ? 'bg-amber-50/80 border-amber-200 text-amber-900' 
+                      : 'bg-rose-50/80 border-rose-200 text-rose-900'
+                }`}>
                   {result.feedback[index].score === result.feedback[index].maxScore ? (
-                    <CheckCircle size={20} className="mt-0.5 shrink-0" />
+                    <CheckCircle size={22} className="mt-0.5 shrink-0 text-emerald-600" />
+                  ) : result.feedback[index].score > 0 ? (
+                    <CheckCircle size={22} className="mt-0.5 shrink-0 text-amber-600" />
                   ) : (
-                    <AlertCircle size={20} className="mt-0.5 shrink-0" />
+                    <AlertCircle size={22} className="mt-0.5 shrink-0 text-rose-600" />
                   )}
-                  <div>
-                    <p className="font-bold">Điểm: {result.feedback[index].score} / {result.feedback[index].maxScore}</p>
-                    <div className="text-sm mt-1"><MathText content={result.feedback[index].feedback} /></div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <p className="font-bold text-sm">
+                        Điểm: <span className="text-base">{result.feedback[index].score}</span> / {result.feedback[index].maxScore}
+                      </p>
+                      {result.feedback[index].score === result.feedback[index].maxScore ? (
+                        <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          Chính xác
+                        </span>
+                      ) : result.feedback[index].score > 0 ? (
+                        <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                          Đúng một phần
+                        </span>
+                      ) : (
+                        <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                          Chưa đúng
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-sm mt-1.5 leading-relaxed font-medium">
+                      <MathText content={result.feedback[index].feedback} />
+                    </div>
+
+                    {result.feedback[index].correctAnswer && (
+                      <div className="mt-2 text-xs font-semibold text-gray-700 bg-white/80 p-2 rounded-lg border border-gray-200">
+                        <span className="text-gray-500">Đáp án chuẩn: </span>
+                        <span className="text-blue-700 font-bold">
+                          <MathText content={result.feedback[index].correctAnswer} />
+                        </span>
+                      </div>
+                    )}
+
                     {result.feedback[index].explanation && (
-                      <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-900">
-                        <p className="font-bold mb-1">Lời giải chi tiết:</p>
+                      <div className="mt-3 p-3 bg-white/90 border border-blue-200 rounded-lg text-blue-950 text-xs sm:text-sm">
+                        <p className="font-bold mb-1 text-blue-800">Lời giải chi tiết:</p>
                         <MathText content={result.feedback[index].explanation} />
                       </div>
                     )}

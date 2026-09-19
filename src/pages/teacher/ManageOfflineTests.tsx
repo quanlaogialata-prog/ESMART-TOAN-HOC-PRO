@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import MathText from '../../components/MathText';
 import { generateTestVariants, TestVariant, groupQuestionsByExamStructure, detectQuestionType, QuestionType, ExamSection } from '../../utils/variantGenerator';
+import { stripOptionPrefix } from '../../utils/gradeEngine';
 
 interface OfflineTest {
   id: string;
@@ -189,7 +190,7 @@ function ExamPaperContent({ test, variant }: { test: OfflineTest; variant: TestV
                       }`}>
                         {opts.map((opt: string, oIdx: number) => {
                           const letter = String.fromCharCode(65 + oIdx);
-                          const cleanText = (opt || '').replace(/^[A-Da-d][\.\:\)]\s*/, '');
+                          const cleanText = stripOptionPrefix(opt || '');
                           return (
                             <div key={oIdx} className="flex items-start gap-1">
                               <span className="font-bold">{letter}.</span>
@@ -212,7 +213,7 @@ function ExamPaperContent({ test, variant }: { test: OfflineTest; variant: TestV
                         </div>
                         {opts.map((opt: string, oIdx: number) => {
                           const letter = ['a', 'b', 'c', 'd', 'e'][oIdx] || `${oIdx + 1}`;
-                          const cleanText = (opt || '').replace(/^[a-eA-E][\.\:\)]\s*/, '');
+                          const cleanText = stripOptionPrefix(opt || '');
                           return (
                             <div key={oIdx} className="flex items-center border-b border-gray-300 last:border-0 py-1.5 px-2.5 bg-white">
                               <span className="font-bold mr-1.5 text-gray-900">{letter})</span>
