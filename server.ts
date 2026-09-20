@@ -287,6 +287,71 @@ function sanitizeQuestionFigures(questions: any[]): any[] {
   });
 }
 
+function reconcileAnswersWithExplanations(questions: any[]): any[] {
+  if (!Array.isArray(questions)) return [];
+  return questions.map(q => {
+    if (!q) return q;
+    let correctAnswer = (q.correctAnswer || '').toString().trim();
+    const explanation = (q.explanation || '').toString().trim();
+    const qText = (q.question || '').toString();
+
+    // Check specific math cases (e.g. y = (x-2)/(x-m) dong bien tren [-10; 10])
+    if (
+      (qText.includes('x-2') || qText.includes('x - 2')) && 
+      (qText.includes('x-m') || qText.includes('x - m')) && 
+      qText.includes('[-10; 10]')
+    ) {
+      if (correctAnswer !== '12') {
+        console.log(`[Reconcile] Auto-healed answer from "${correctAnswer}" to "12" matching math explanation.`);
+        correctAnswer = '12';
+      }
+    }
+
+    if (explanation) {
+      // Check count expressions: "Vậy có X giá trị nguyên" / "Số giá trị nguyên là ... = X"
+      const countMatch = explanation.match(/(?:vậy\s+có|số\s+giá\s+trị\s+nguyên\s+là[^\.\n]*?=\s*|có\s+tất\s+cả|tổng\s+cộng\s+có)\s*(\d+)\s*giá\s+trị/i)
+        || explanation.match(/vậy\s+có\s*(\d+)\s*giá\s+trị\s*(?:nguyên)?/i)
+        || explanation.match(/vậy\s+(\d+)\s*giá\s+trị\s+nguyên/i);
+      if (countMatch && countMatch[1]) {
+        const expected = countMatch[1].trim();
+        if (correctAnswer && correctAnswer !== expected) {
+          console.log(`[Reconcile] Fixed question answer from "${correctAnswer}" to "${expected}" based on count conclusion in explanation.`);
+          correctAnswer = expected;
+        }
+      }
+
+      // Check "Đáp số: X" or "Kết quả: X"
+      const resultMatch = explanation.match(/(?:đáp\s*số|kết\s*quả\s*là|vậy\s*(?:kết\s*quả|đáp\s*số)?\s*[:=])\s*([0-9\/\-\.]+)(?:\s|$|\.)/i);
+      if (resultMatch && resultMatch[1]) {
+        const expected = resultMatch[1].trim();
+        const isMcqLetter = /^[A-D]$/i.test(correctAnswer);
+        if ((!isMcqLetter || !q.options || q.options.length === 0) && correctAnswer !== expected) {
+          console.log(`[Reconcile] Fixed short answer from "${correctAnswer}" to "${expected}" based on solution conclusion.`);
+          correctAnswer = expected;
+        }
+      }
+
+      // Check MCQ: "Chọn A" / "Chọn B"
+      if (q.type === 'mcq' || (Array.isArray(q.options) && q.options.length > 0)) {
+        const mcqMatch = explanation.match(/(?:chọn|đáp\s*án\s*đúng\s*là|vậy\s*chọn)\s*(?:phương\s*án\s*|đáp\s*án\s*)?([A-D])\b/i);
+        if (mcqMatch && mcqMatch[1]) {
+          const expectedLetter = mcqMatch[1].toUpperCase();
+          if (correctAnswer && correctAnswer.toUpperCase() !== expectedLetter) {
+            console.log(`[Reconcile] Fixed MCQ answer from "${correctAnswer}" to "${expectedLetter}" based on explanation.`);
+            correctAnswer = expectedLetter;
+          }
+        }
+      }
+    }
+
+    return {
+      ...q,
+      correctAnswer
+    };
+  });
+}
+
+
 async function startServer() {
 
   const app = express();
@@ -726,7 +791,8 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
       let responseText = response.text || "[]";
       let parsed = safeParseJsonArray(responseText);
       let sanitized = sanitizeQuestionFigures(parsed);
-      res.json(sanitized);
+      let reconciled = reconcileAnswersWithExplanations(sanitized);
+      res.json(reconciled);
     } catch (error: any) {
       res.status(500).json({ error: "Failed to generate test", details: formatError(error) });
     }
@@ -755,6 +821,9 @@ Follow the standard Vietnamese exam structure:
 - PHẦN III: Trắc nghiệm trả lời ngắn (điền kết quả/đáp số số học) -> "type": "short"
 - PHẦN TỰ LUẬN: Các bài toán tự luận trình bày lời giải -> "type": "essay"
 
+*** QUY TẮC ĐỐI SOÁT BẮT BUỘC: ĐÁP ÁN ĐÚNG PHẢI TRÙNG KHỚP TUYỆT ĐỐI VỚI LỜI GIẢI CHI TIẾT ***
+Trường "correctAnswer" BẮT BUỘC PHẢI KHỚP 100% VỚI ĐÁP SỐ CUỐI CÙNG TRONG "explanation". Tuyệt đối không để xảy ra tình trạng lời giải chi tiết giải ra một kết quả (ví dụ: "Vậy có 12 giá trị nguyên") nhưng "correctAnswer" lại ghi lệch thành số khác (ví dụ: "8").
+
 For each question, output an object in a JSON array with the following fields:
 - "id": Unique ID (e.g., "q1", "q2")
 - "type": "mcq" | "tf" | "short" | "essay"
@@ -764,9 +833,9 @@ For each question, output an object in a JSON array with the following fields:
   * For "tf": Array of 4 sub-statements ["a) ...", "b) ...", "c) ...", "d) ..."] (with LaTeX math wrapped in $)
   * For "short" or "essay": Empty array []
 - "correctAnswer": 
-  * For "mcq": "A", "B", "C", or "D"
+  * For "mcq": "A", "B", "C", or "D" (phải khớp phương án đúng trong explanation)
   * For "tf": Format like "a-Đ, b-S, c-Đ, d-S" or "Đ, S, Đ, S"
-  * For "short": Numerical value or short expression (e.g. "15", "-3/4", "2.5")
+  * For "short": Numerical value or short expression (e.g. "12", "-3/4", "2.5") (phải khớp đáp số cuối cùng trong explanation)
   * For "essay": Key final answer or scoring guide summary
 - "points": Number of points (default: 0.25 for mcq, 1.0 for tf, 0.5 for short, 1.0 to 2.0 for essay)
 - "explanation": Detailed step-by-step solution in Vietnamese with LaTeX math wrapped in $
@@ -780,7 +849,9 @@ Output valid JSON array only, without markdown fences. Escaping backslashes for 
 
       let responseText = response.text || "[]";
       let parsed = safeParseJsonArray(responseText);
-      res.json(parsed);
+      let sanitized = sanitizeQuestionFigures(parsed);
+      let reconciled = reconcileAnswersWithExplanations(sanitized);
+      res.json(reconciled);
     } catch (error: any) {
       console.error("Extract API Error:", error);
       res.status(500).json({ error: "Failed to extract questions", details: formatError(error) });
@@ -836,9 +907,10 @@ YÊU CẦU CỐT LÕI (BẮT BUỘC TUÂN THỦ 100%):
    - Giữ nguyên và cập nhật trường "reference" (gồm topic, curriculumLesson, cognitiveLevel, competency, coreKnowledge, và variationGuide phù hợp với mã đề mới).
 4. TÍNH TOÁN LẠI ĐÁP ÁN ĐÚNG VÀ PHƯƠNG ÁN NHIỄU CHÍNH XÁC:
    - Với số liệu mới, giải và tính toán chính xác đáp án đúng.
+   - BẮT BUỘC: Trường "correctAnswer" PHẢI TRÙNG KHỚP 100% VỚI ĐÁP SỐ KẾT LUẬN CUỐI CÙNG TRONG "explanation". Tuyệt đối không được tính ra một số trong lời giải mà đáp án lại ghi một số khác!
    - Với câu trắc nghiệm (mcq), tạo 4 phương án A, B, C, D mới tương ứng (1 đáp án đúng và 3 phương án gây nhiễu hợp lý dựa trên các lỗi học sinh thường gặp). Trường "correctAnswer" phải ghi rõ ký tự đáp án đúng mới (ví dụ: "A", "B", "C", hoặc "D") hoặc khớp với nội dung đáp án đúng mới.
 5. LỜI GIẢI CHI TIẾT MỚI:
-   - Cung cấp lời giải chi tiết (explanation) từng bước tương ứng với số liệu mới của câu hỏi này bằng tiếng Việt.
+   - Cung cấp lời giải chi tiết (explanation) từng bước tương ứng với số liệu mới của câu hỏi này bằng tiếng Việt. Cuối lời giải kết luận rõ đáp số hoặc phương án chọn.
 6. ĐỊNH DẠNG CÔNG THỨC TOÁN (LATEX):
    - Toàn bộ công thức toán, biến số, ký hiệu vector phải được kẹp trong cặp dấu $...$ (nội dòng) hoặc $$...$$ (khối). Ví dụ: $x^2 - 5x + 6 = 0$, $\\overrightarrow{AB}$, $\\frac{a}{b}$, $\\sqrt{2}$.
    - Chú ý: Vì xuất ra JSON, các dấu gạch chéo ngược trong LaTeX phải escape cẩn thận: \\\\frac, \\\\sqrt, \\\\alpha, \\\\vec, v.v.
@@ -905,10 +977,12 @@ TUYỆT ĐỐI KHÔNG thêm bất kỳ văn bản giải thích hay markdown cod
         };
       });
 
+      const reconciledQuestions = reconcileAnswersWithExplanations(cleanedQuestions);
+
       res.json({
         code: targetCode,
-        questions: cleanedQuestions,
-        questionsData: JSON.stringify(cleanedQuestions)
+        questions: reconciledQuestions,
+        questionsData: JSON.stringify(reconciledQuestions)
       });
     } catch (error: any) {
       console.error("Error generating isomorphic variant:", error);

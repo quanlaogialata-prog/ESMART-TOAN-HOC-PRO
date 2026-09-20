@@ -11,7 +11,7 @@ import QuestionReferenceBadge from '../../components/common/QuestionReferenceBad
 import EditQuestionsModal from '../../components/teacher/EditQuestionsModal';
 import CancelAssignmentModal from '../../components/teacher/CancelAssignmentModal';
 import { QuestionItem } from '../../types/test';
-import { stripOptionPrefix, checkMcqAnswer } from '../../utils/gradeEngine';
+import { stripOptionPrefix, checkMcqAnswer, detectAnswerDiscrepancy, autoReconcileQuestion } from '../../utils/gradeEngine';
 import { exportGradebookPdf, exportGradebookExcel } from '../../utils/gradebookExport';
 
 export default function ManageTests() {
@@ -1602,6 +1602,77 @@ export default function ManageTests() {
     }
   };
 
+  const handleAutoHealQuestionInPreview = async (qId: string, newAns: string) => {
+    if (!previewTest) return;
+    const currentQuestions = getParsedQuestions(previewTest.questionsData);
+    const updated = currentQuestions.map((q: any) => {
+      if (q.id === qId) {
+        return { ...q, correctAnswer: newAns };
+      }
+      return q;
+    });
+
+    const updatedTest = {
+      ...previewTest,
+      questions: updated,
+      questionsData: JSON.stringify(updated)
+    };
+    setPreviewTest(updatedTest);
+    setTests(prev => prev.map(t => t.id === previewTest.id ? updatedTest : t));
+
+    try {
+      await updateDoc(doc(db, 'tests', previewTest.id), {
+        questions: updated,
+        questionsData: JSON.stringify(updated)
+      });
+      setSysMsg(`Đã cập nhật đáp án câu hỏi thành "${newAns}" thành công!`);
+      setTimeout(() => setSysMsg(''), 4000);
+    } catch (err: any) {
+      console.error('Error updating question:', err);
+      setSysError('Lỗi cập nhật đáp án: ' + err.message);
+    }
+  };
+
+  const handleReconcileCurrentOnlineTest = async () => {
+    if (!previewTest) return;
+    const currentQuestions = getParsedQuestions(previewTest.questionsData);
+    let changedCount = 0;
+    const updated = currentQuestions.map((q: any) => {
+      const res = autoReconcileQuestion(q);
+      if (res.changed) {
+        changedCount++;
+        return res.question;
+      }
+      return q;
+    });
+
+    if (changedCount === 0) {
+      setSysMsg('Toàn bộ đáp án trong đề thi đã hoàn toàn khớp chính xác với lời giải chi tiết!');
+      setTimeout(() => setSysMsg(''), 4000);
+      return;
+    }
+
+    const updatedTest = {
+      ...previewTest,
+      questions: updated,
+      questionsData: JSON.stringify(updated)
+    };
+    setPreviewTest(updatedTest);
+    setTests(prev => prev.map(t => t.id === previewTest.id ? updatedTest : t));
+
+    try {
+      await updateDoc(doc(db, 'tests', previewTest.id), {
+        questions: updated,
+        questionsData: JSON.stringify(updated)
+      });
+      setSysMsg(`Đã đối soát và tự động đồng bộ ${changedCount} đáp án khớp chuẩn xác với lời giải chi tiết!`);
+      setTimeout(() => setSysMsg(''), 5000);
+    } catch (err: any) {
+      console.error('Error reconciling online test:', err);
+      setSysError('Lỗi khi lưu kết quả đối soát: ' + err.message);
+    }
+  };
+
   const grades = [6, 7, 8, 9, 10, 11, 12];
   const filteredTopics = topics.filter(t => t.grade === selectedGrade);
   
@@ -2480,18 +2551,29 @@ export default function ManageTests() {
               
               <div className="flex items-center gap-2 shrink-0">
                 {previewTest.questionsData && getParsedQuestions(previewTest.questionsData).length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowPreviewModal(false);
-                      openEditQuestions(previewTest);
-                    }}
-                    className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer"
-                  >
-                    <Pencil size={13} /> Chỉnh sửa đề này
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleReconcileCurrentOnlineTest}
+                      className="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                      title="Tự động kiểm tra và đồng bộ đáp án khớp với kết luận của lời giải chi tiết"
+                    >
+                      <ShieldCheck size={14} className="text-amber-600" />
+                      <span>Đối soát đáp án</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowPreviewModal(false);
+                        openEditQuestions(previewTest);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                    >
+                      <Pencil size={13} /> Chỉnh sửa đề này
+                    </button>
+                  </>
                 )}
-                <button onClick={() => setShowPreviewModal(false)} className="text-gray-400 hover:text-gray-700 p-1 rounded-lg">
+                <button onClick={() => setShowPreviewModal(false)} className="text-gray-400 hover:text-gray-700 p-1 rounded-lg cursor-pointer">
                   <X size={20} />
                 </button>
               </div>
@@ -2603,6 +2685,29 @@ export default function ManageTests() {
                             <span className="font-bold text-gray-700">Lời giải chi tiết:</span> <MathText content={q.explanation} />
                           </div>
                         )}
+
+                        {(() => {
+                          const discrepancy = detectAnswerDiscrepancy(q);
+                          if (!discrepancy.hasDiscrepancy) return null;
+                          return (
+                            <div className="mt-2 ml-4 p-2.5 bg-amber-50 border border-amber-300 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                              <div className="flex items-center gap-1.5 text-amber-950">
+                                <AlertTriangle size={15} className="text-amber-600 shrink-0" />
+                                <span><strong>Phát hiện lệch đáp án và lời giải:</strong> {discrepancy.reason}</span>
+                              </div>
+                              {discrepancy.suggestedAnswer && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAutoHealQuestionInPreview(q.id, discrepancy.suggestedAnswer!)}
+                                  className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded text-xs transition-colors shrink-0 flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Check size={12} />
+                                  <span>Đồng bộ thành "{discrepancy.suggestedAnswer}"</span>
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     ))
                   ) : (

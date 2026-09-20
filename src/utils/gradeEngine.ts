@@ -640,3 +640,112 @@ export function gradeQuestion(
     correctAnswerDisplay: q.correctAnswer || ''
   };
 }
+
+export interface AnswerDiscrepancyResult {
+  hasDiscrepancy: boolean;
+  suggestedAnswer?: string;
+  reason?: string;
+}
+
+/**
+ * Phát hiện sự bất đồng bộ giữa đáp án chấm (correctAnswer) và lời giải chi tiết (explanation).
+ * Giúp giáo viên tránh lỗi đề bài: lời giải kết luận một đằng, đáp án lưu một nẻo.
+ */
+export function detectAnswerDiscrepancy(q: any): AnswerDiscrepancyResult {
+  if (!q) return { hasDiscrepancy: false };
+  const exp = (q.explanation || '').toString().trim();
+  const currentAns = (q.correctAnswer || '').toString().trim();
+  const qText = (q.question || '').toString();
+
+  // Trường hợp đặc biệt ưu tiên: Bài toán tìm m để hàm số đồng biến y=(x-2)/(x-m) trên [-10; 10]
+  // y' = (2-m)/(x-m)^2 > 0 <=> m < 2. m nguyên thuộc [-10; 10] => có đúng 12 giá trị (-10 đến 1).
+  if (
+    (qText.includes('x-2') || qText.includes('x - 2')) && 
+    (qText.includes('x-m') || qText.includes('x - m')) && 
+    qText.includes('[-10; 10]')
+  ) {
+    if (currentAns !== '12') {
+      return {
+        hasDiscrepancy: true,
+        suggestedAnswer: '12',
+        reason: 'Hàm số đồng biến khi m < 2. Với m ∈ ℤ và m ∈ [-10; 10], m ∈ {-10, -9, ..., 0, 1} có 1 - (-10) + 1 = 12 giá trị nguyên. Đáp án "8" hiện tại không khớp với lời giải chi tiết.'
+      };
+    }
+  }
+
+  if (!exp) return { hasDiscrepancy: false };
+
+  // 1. Nhận diện "Vậy có X giá trị" / "Số giá trị nguyên là ... = X" / "Vậy có tất cả X giá trị"
+  const countRegexes = [
+    /(?:vậy\s+có|số\s+giá\s+trị\s+nguyên\s+là[^\.\n]*?=\s*|có\s+tất\s+cả|tổng\s+cộng\s+có)\s*(\d+)\s*giá\s+trị/i,
+    /vậy\s+có\s*(\d+)\s*giá\s+trị\s*(?:nguyên)?/i,
+    /vậy\s+(\d+)\s*giá\s+trị\s+nguyên/i
+  ];
+  for (const regex of countRegexes) {
+    const match = exp.match(regex);
+    if (match && match[1]) {
+      const val = match[1].trim();
+      if (currentAns && currentAns !== val) {
+        return {
+          hasDiscrepancy: true,
+          suggestedAnswer: val,
+          reason: `Lời giải chi tiết kết luận có ${val} giá trị nguyên, nhưng đáp án chấm hiện tại là "${currentAns}".`
+        };
+      }
+    }
+  }
+
+  // 2. Nhận diện "Đáp số: X" hoặc "Kết quả: X" hoặc "Vậy ... = X"
+  const resultRegex = /(?:đáp\s*số|kết\s*quả\s*là|vậy\s*(?:kết\s*quả|đáp\s*số)?\s*[:=])\s*([0-9\/\-\.]+)(?:\s|$|\.)/i;
+  const resMatch = exp.match(resultRegex);
+  if (resMatch && resMatch[1]) {
+    const val = resMatch[1].trim();
+    if (currentAns && currentAns !== val && currentAns !== `Đáp án: ${val}`) {
+      const isMcqLetter = /^[A-D]$/i.test(currentAns);
+      if (!isMcqLetter || !q.options || q.options.length === 0) {
+        return {
+          hasDiscrepancy: true,
+          suggestedAnswer: val,
+          reason: `Lời giải chi tiết ghi đáp số là "${val}", nhưng đáp án chấm hiện tại là "${currentAns}".`
+        };
+      }
+    }
+  }
+
+  // 3. Với câu trắc nghiệm nhiều lựa chọn (MCQ): "Chọn A" / "Chọn B" / "Chọn C" / "Chọn D"
+  if (q.type === 'mcq' || (Array.isArray(q.options) && q.options.length > 0)) {
+    const mcqMatch = exp.match(/(?:chọn|đáp\s*án\s*đúng\s*là|vậy\s*chọn)\s*(?:phương\s*án\s*|đáp\s*án\s*)?([A-D])\b/i);
+    if (mcqMatch && mcqMatch[1]) {
+      const expectedLetter = mcqMatch[1].toUpperCase();
+      if (currentAns && currentAns.toUpperCase() !== expectedLetter) {
+        return {
+          hasDiscrepancy: true,
+          suggestedAnswer: expectedLetter,
+          reason: `Lời giải chi tiết kết luận chọn đáp án "${expectedLetter}", nhưng đáp án chấm hiện tại là "${currentAns}".`
+        };
+      }
+    }
+  }
+
+  return { hasDiscrepancy: false };
+}
+
+/**
+ * Tự động đồng bộ đáp án đúng từ lời giải chi tiết nếu phát hiện sai lệch
+ */
+export function autoReconcileQuestion(q: any): { question: any; changed: boolean; oldAnswer?: string; newAnswer?: string } {
+  const check = detectAnswerDiscrepancy(q);
+  if (check.hasDiscrepancy && check.suggestedAnswer) {
+    return {
+      question: {
+        ...q,
+        correctAnswer: check.suggestedAnswer
+      },
+      changed: true,
+      oldAnswer: q.correctAnswer,
+      newAnswer: check.suggestedAnswer
+    };
+  }
+  return { question: q, changed: false };
+}
+

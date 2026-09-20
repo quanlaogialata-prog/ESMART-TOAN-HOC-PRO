@@ -35,11 +35,15 @@ import {
   GraduationCap,
   Copy,
   ExternalLink,
-  ChevronDown
+  ChevronDown,
+  AlertTriangle,
+  Check,
+  Pencil
 } from 'lucide-react';
 import MathText from '../../components/MathText';
 import { generateTestVariants, TestVariant, groupQuestionsByExamStructure, detectQuestionType, QuestionType, ExamSection } from '../../utils/variantGenerator';
-import { stripOptionPrefix } from '../../utils/gradeEngine';
+import { stripOptionPrefix, detectAnswerDiscrepancy, autoReconcileQuestion } from '../../utils/gradeEngine';
+import EditQuestionsModal from '../../components/teacher/EditQuestionsModal';
 
 interface OfflineTest {
   id: string;
@@ -474,9 +478,33 @@ function AnswerMatrixContent({ test }: { test: OfflineTest }) {
 }
 
 // Subcomponent: Detailed Solutions (Nhóm lời giải theo các phần thi)
-function SolutionsContent({ test, variant }: { test: OfflineTest; variant: TestVariant }) {
+function SolutionsContent({ 
+  test, 
+  variant,
+  onUpdateAnswer,
+  isInteractive = true
+}: { 
+  test: OfflineTest; 
+  variant: TestVariant;
+  onUpdateAnswer?: (variantCode: string, questionId: string, newAnswer: string) => Promise<void>;
+  isInteractive?: boolean;
+}) {
   const questions = variant.questions || [];
   const sections = groupQuestionsByExamStructure(questions, test.examStructure);
+  const [editingQId, setEditingQId] = useState<string | null>(null);
+  const [tempAnswer, setTempAnswer] = useState<string>('');
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  const handleQuickSave = async (questionId: string) => {
+    if (!onUpdateAnswer || !tempAnswer.trim()) return;
+    setSavingId(questionId);
+    try {
+      await onUpdateAnswer(variant.code, questionId, tempAnswer.trim());
+      setEditingQId(null);
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   return (
     <div>
@@ -497,29 +525,103 @@ function SolutionsContent({ test, variant }: { test: OfflineTest; variant: TestV
             </div>
 
             <div className="space-y-3">
-              {section.questions.map(({ item: q, partIndex }) => (
-                <div key={partIndex} className="export-avoid-break p-3 bg-gray-50 border border-gray-200 rounded-xl break-inside-avoid">
-                  <div className="font-bold text-gray-900 mb-1 flex items-start gap-1">
-                    <span>
-                      {section.type === 'essay' ? `Câu ${partIndex} (${q.points || 1.0} điểm):` : `Câu ${partIndex}:`}
-                    </span>
-                    <div className="flex-1 font-medium">
-                      <MathText content={q.question || ''} />
-                    </div>
-                  </div>
+              {section.questions.map(({ item: q, partIndex }) => {
+                const discrepancy = detectAnswerDiscrepancy(q);
 
-                  <div className="my-1.5 text-xs text-emerald-800 font-bold bg-emerald-50 px-2.5 py-1 rounded inline-block border border-emerald-200">
-                    Đáp án: {q.correctAnswer || 'Chưa cập nhật'}
-                  </div>
-
-                  {q.explanation && (
-                    <div className="mt-2 text-gray-700 text-xs pl-2 border-l-2 border-purple-400">
-                      <span className="font-bold text-purple-900 block mb-0.5">Lời giải chi tiết:</span>
-                      <MathText content={q.explanation} />
+                return (
+                  <div key={partIndex} className="export-avoid-break p-3 bg-gray-50 border border-gray-200 rounded-xl break-inside-avoid">
+                    <div className="font-bold text-gray-900 mb-1 flex items-start gap-1">
+                      <span>
+                        {section.type === 'essay' ? `Câu ${partIndex} (${q.points || 1.0} điểm):` : `Câu ${partIndex}:`}
+                      </span>
+                      <div className="flex-1 font-medium">
+                        <MathText content={q.question || ''} />
+                      </div>
                     </div>
-                  )}
-                </div>
-              ))}
+
+                    {/* Discrepancy warning banner */}
+                    {isInteractive && discrepancy.hasDiscrepancy && (
+                      <div className="my-2 p-2.5 bg-amber-50 border border-amber-300 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+                        <div className="flex items-start gap-1.5 text-amber-900">
+                          <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-bold text-amber-950">Phát hiện lệch đáp án và lời giải: </span>
+                            <span>{discrepancy.reason}</span>
+                          </div>
+                        </div>
+                        {onUpdateAnswer && discrepancy.suggestedAnswer && (
+                          <button
+                            type="button"
+                            onClick={() => onUpdateAnswer(variant.code, q.id, discrepancy.suggestedAnswer!)}
+                            className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-md shadow-xs transition-colors shrink-0 text-xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <Check size={13} />
+                            <span>Đồng bộ thành "{discrepancy.suggestedAnswer}" ngay</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Answer Display & Quick Edit */}
+                    {editingQId === q.id ? (
+                      <div className="my-1.5 flex items-center gap-2">
+                        <span className="text-xs font-bold text-gray-700">Đáp án mới:</span>
+                        <input
+                          type="text"
+                          value={tempAnswer}
+                          onChange={(e) => setTempAnswer(e.target.value)}
+                          className="px-2 py-0.5 text-xs border border-blue-400 rounded focus:ring-1 focus:ring-blue-500 font-bold w-28 bg-white"
+                          placeholder="Nhập đáp án..."
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleQuickSave(q.id);
+                            if (e.key === 'Escape') setEditingQId(null);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleQuickSave(q.id)}
+                          disabled={savingId === q.id}
+                          className="px-2.5 py-0.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded cursor-pointer"
+                        >
+                          {savingId === q.id ? 'Lưu...' : 'Lưu'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingQId(null)}
+                          className="px-2 py-0.5 bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs rounded cursor-pointer"
+                        >
+                          Hủy
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="my-1.5 text-xs text-emerald-800 font-bold bg-emerald-50 px-2.5 py-1 rounded inline-flex items-center gap-2 border border-emerald-200">
+                        <span>Đáp án: {q.correctAnswer || 'Chưa cập nhật'}</span>
+                        {isInteractive && onUpdateAnswer && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingQId(q.id);
+                              setTempAnswer(q.correctAnswer || '');
+                            }}
+                            className="text-emerald-700 hover:text-emerald-950 ml-1 p-0.5 rounded hover:bg-emerald-100 transition-colors cursor-pointer"
+                            title="Sửa đáp án câu này"
+                          >
+                            <Pencil size={12} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {q.explanation && (
+                      <div className="mt-2 text-gray-700 text-xs pl-2 border-l-2 border-purple-400">
+                        <span className="font-bold text-purple-900 block mb-0.5">Lời giải chi tiết:</span>
+                        <MathText content={q.explanation} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         ))}
@@ -627,6 +729,11 @@ export default function ManageOfflineTests() {
   // Delete confirmation
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // Editing Questions Modal
+  const [editingOfflineTest, setEditingOfflineTest] = useState<OfflineTest | null>(null);
+  const [editingVariantCode, setEditingVariantCode] = useState<string>('101');
+  const [isSavingEditedQuestions, setIsSavingEditedQuestions] = useState<boolean>(false);
+
   // Hidden print container ref
   const printContainerRef = useRef<HTMLDivElement>(null);
 
@@ -634,26 +741,222 @@ export default function ManageOfflineTests() {
   const loadData = async () => {
     setLoading(true);
     try {
-      // 1. Fetch offline tests
+      // 1. Fetch offline tests & auto-heal discrepancies
       const offlineSnap = await getDocs(query(collection(db, 'offline_tests'), orderBy('createdAt', 'desc')));
       const offlineList: OfflineTest[] = [];
-      offlineSnap.forEach(docSnap => {
-        offlineList.push({ id: docSnap.id, ...docSnap.data() } as OfflineTest);
-      });
+      let healedOfflineCount = 0;
+
+      for (const docSnap of offlineSnap.docs) {
+        const data = docSnap.data() as OfflineTest;
+        let testNeedsUpdate = false;
+
+        const updatedVariants = (data.variants || []).map(v => {
+          let variantNeedsUpdate = false;
+          const updatedQuestions = (v.questions || []).map(q => {
+            const res = autoReconcileQuestion(q);
+            if (res.changed) {
+              variantNeedsUpdate = true;
+              healedOfflineCount++;
+              return res.question;
+            }
+            return q;
+          });
+
+          if (variantNeedsUpdate) {
+            testNeedsUpdate = true;
+            return {
+              ...v,
+              questions: updatedQuestions,
+              questionsData: JSON.stringify(updatedQuestions)
+            };
+          }
+          return v;
+        });
+
+        if (testNeedsUpdate) {
+          try {
+            await updateDoc(doc(db, 'offline_tests', docSnap.id), {
+              variants: updatedVariants
+            });
+          } catch (e) {
+            console.error('Failed to persist healed test:', e);
+          }
+          offlineList.push({ ...data, id: docSnap.id, variants: updatedVariants });
+        } else {
+          offlineList.push({ id: docSnap.id, ...data });
+        }
+      }
       setOfflineTests(offlineList);
 
-      // 2. Fetch online tests for conversion
+      // 2. Fetch online tests for conversion & auto-heal
       const onlineSnap = await getDocs(collection(db, 'tests'));
       const onlineList: any[] = [];
-      onlineSnap.forEach(docSnap => {
-        onlineList.push({ id: docSnap.id, ...docSnap.data() });
-      });
+      let healedOnlineCount = 0;
+
+      for (const docSnap of onlineSnap.docs) {
+        const data = docSnap.data();
+        let testNeedsUpdate = false;
+
+        let parsedQuestions: any[] = [];
+        if (data.questionsData) {
+          try {
+            parsedQuestions = typeof data.questionsData === 'string' ? JSON.parse(data.questionsData) : data.questionsData;
+          } catch (e) {
+            parsedQuestions = [];
+          }
+        } else if (Array.isArray(data.questions)) {
+          parsedQuestions = data.questions;
+        }
+
+        const reconciled = parsedQuestions.map(q => {
+          const res = autoReconcileQuestion(q);
+          if (res.changed) {
+            testNeedsUpdate = true;
+            healedOnlineCount++;
+            return res.question;
+          }
+          return q;
+        });
+
+        if (testNeedsUpdate) {
+          try {
+            await updateDoc(doc(db, 'tests', docSnap.id), {
+              questions: reconciled,
+              questionsData: JSON.stringify(reconciled)
+            });
+          } catch (e) {
+            console.error('Failed to persist healed online test:', e);
+          }
+          onlineList.push({ ...data, id: docSnap.id, questions: reconciled, questionsData: JSON.stringify(reconciled) });
+        } else {
+          onlineList.push({ id: docSnap.id, ...data });
+        }
+      }
       setOnlineTests(onlineList);
+
+      if (healedOfflineCount > 0 || healedOnlineCount > 0) {
+        setSysMsg(`Hệ thống đã tự động đối soát và chuẩn hóa ${healedOfflineCount + healedOnlineCount} đáp án khớp chính xác với lời giải chi tiết!`);
+        setTimeout(() => setSysMsg(''), 6000);
+      }
     } catch (err: any) {
       console.error('Error loading tests:', err);
       setSysError('Không thể tải danh sách đề thi: ' + (err?.message || 'Lỗi mạng'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleUpdateQuestionAnswer = async (variantCode: string, questionId: string, newAnswer: string) => {
+    if (!previewTest) return;
+    const updatedVariants = (previewTest.variants || []).map((v) => {
+      if (v.code === variantCode) {
+        const updatedQuestions = (v.questions || []).map((q) => {
+          if (q.id === questionId) {
+            return { ...q, correctAnswer: newAnswer };
+          }
+          return q;
+        });
+        return { 
+          ...v, 
+          questions: updatedQuestions,
+          questionsData: JSON.stringify(updatedQuestions)
+        };
+      }
+      return v;
+    });
+
+    const updatedTest = { ...previewTest, variants: updatedVariants };
+    setPreviewTest(updatedTest);
+    setOfflineTests(prev => prev.map(t => t.id === previewTest.id ? updatedTest : t));
+
+    try {
+      await updateDoc(doc(db, 'offline_tests', previewTest.id), {
+        variants: updatedVariants
+      });
+      setSysMsg(`Đã cập nhật đáp án cho câu hỏi thành "${newAnswer}" thành công!`);
+      setTimeout(() => setSysMsg(''), 4000);
+    } catch (err: any) {
+      console.error('Error updating question answer:', err);
+      setSysError('Không thể lưu đáp án mới: ' + err.message);
+    }
+  };
+
+  const handleReconcileAllAnswersInTest = async () => {
+    if (!previewTest) return;
+    let changedCount = 0;
+    const updatedVariants = (previewTest.variants || []).map((v) => {
+      let variantChanged = false;
+      const updatedQuestions = (v.questions || []).map((q) => {
+        const res = autoReconcileQuestion(q);
+        if (res.changed) {
+          variantChanged = true;
+          changedCount++;
+          return res.question;
+        }
+        return q;
+      });
+      return variantChanged ? { 
+        ...v, 
+        questions: updatedQuestions,
+        questionsData: JSON.stringify(updatedQuestions)
+      } : v;
+    });
+
+    if (changedCount === 0) {
+      setSysMsg('Toàn bộ đáp án trong đề thi đã hoàn toàn khớp chính xác với lời giải chi tiết!');
+      setTimeout(() => setSysMsg(''), 4000);
+      return;
+    }
+
+    const updatedTest = { ...previewTest, variants: updatedVariants };
+    setPreviewTest(updatedTest);
+    setOfflineTests(prev => prev.map(t => t.id === previewTest.id ? updatedTest : t));
+
+    try {
+      await updateDoc(doc(db, 'offline_tests', previewTest.id), {
+        variants: updatedVariants
+      });
+      setSysMsg(`Đã đối soát và tự động đồng bộ ${changedCount} đáp án khớp chuẩn xác với lời giải chi tiết!`);
+      setTimeout(() => setSysMsg(''), 5000);
+    } catch (err: any) {
+      console.error('Error reconciling answers:', err);
+      setSysError('Không thể lưu kết quả đối soát: ' + err.message);
+    }
+  };
+
+  const handleSaveEditedQuestions = async (newQuestions: any[]) => {
+    if (!editingOfflineTest) return;
+    setIsSavingEditedQuestions(true);
+    try {
+      const reconciledQuestions = newQuestions.map(q => autoReconcileQuestion(q).question);
+      const updatedVariants = (editingOfflineTest.variants || []).map(v => {
+        if (v.code === editingVariantCode) {
+          return {
+            ...v,
+            questions: reconciledQuestions,
+            questionsData: JSON.stringify(reconciledQuestions)
+          };
+        }
+        return v;
+      });
+
+      await updateDoc(doc(db, 'offline_tests', editingOfflineTest.id), {
+        variants: updatedVariants
+      });
+
+      const updatedTest = { ...editingOfflineTest, variants: updatedVariants };
+      setOfflineTests(prev => prev.map(t => t.id === editingOfflineTest.id ? updatedTest : t));
+      if (previewTest && previewTest.id === editingOfflineTest.id) {
+        setPreviewTest(updatedTest);
+      }
+      setEditingOfflineTest(null);
+      setSysMsg(`Đã lưu câu hỏi & đáp án cho Mã đề ${editingVariantCode} thành công!`);
+      setTimeout(() => setSysMsg(''), 4000);
+    } catch (err: any) {
+      console.error('Error saving edited questions:', err);
+      setSysError('Lỗi khi lưu câu hỏi: ' + err.message);
+    } finally {
+      setIsSavingEditedQuestions(false);
     }
   };
 
@@ -1447,6 +1750,16 @@ export default function ManageOfflineTests() {
                     </button>
                     <button
                       onClick={() => {
+                        setEditingOfflineTest(t);
+                        setEditingVariantCode(t.variantCodes?.[0] || '101');
+                      }}
+                      title="Chỉnh sửa câu hỏi & đáp án"
+                      className="p-2 bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center cursor-pointer"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                    <button
+                      onClick={() => {
                         openPreviewModal(t);
                         setTimeout(() => handleNativePrint(), 500);
                       }}
@@ -2156,8 +2469,29 @@ export default function ManageOfflineTests() {
                 </button>
               </div>
 
-              {/* Download Buttons */}
+              {/* Action Buttons */}
               <div className="flex items-center gap-2">
+                <button
+                  onClick={handleReconcileAllAnswersInTest}
+                  className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5 border border-amber-300 cursor-pointer shadow-2xs"
+                  title="Tự động kiểm tra và đồng bộ đáp án khớp với kết luận trong lời giải chi tiết"
+                >
+                  <ShieldCheck size={15} className="text-amber-600" />
+                  <span className="hidden md:inline">Đối soát đáp án</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setEditingOfflineTest(previewTest);
+                    setEditingVariantCode(activePreviewVariantCode || previewTest.variantCodes?.[0] || '101');
+                  }}
+                  className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5 border border-indigo-200 cursor-pointer shadow-2xs"
+                  title="Mở giao diện sửa câu hỏi và đáp án cho mã đề này"
+                >
+                  <Pencil size={14} />
+                  <span className="hidden md:inline">Sửa câu hỏi</span>
+                </button>
+
                 <button
                   onClick={handleNativePrint}
                   className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5 border border-gray-300"
@@ -2312,7 +2646,12 @@ export default function ManageOfflineTests() {
                 )}
 
                 {previewTab === 'solutions' && currentVariant && (
-                  <SolutionsContent test={previewTest} variant={currentVariant} />
+                  <SolutionsContent 
+                    test={previewTest} 
+                    variant={currentVariant} 
+                    onUpdateAnswer={handleUpdateQuestionAnswer}
+                    isInteractive={true}
+                  />
                 )}
               </div>
             </div>
@@ -2365,10 +2704,27 @@ export default function ManageOfflineTests() {
               <SolutionsContent 
                 test={previewTest} 
                 variant={previewTest.variants?.find(v => v.code === exportState.variantCode) || previewTest.variants?.[0]} 
+                isInteractive={false}
               />
             </div>
           )}
         </div>
+      )}
+
+      {/* Edit Questions Modal for Offline Tests */}
+      {editingOfflineTest && (
+        <EditQuestionsModal
+          isOpen={!!editingOfflineTest}
+          onClose={() => setEditingOfflineTest(null)}
+          initialQuestions={
+            editingOfflineTest.variants?.find(v => v.code === editingVariantCode)?.questions ||
+            editingOfflineTest.variants?.[0]?.questions ||
+            []
+          }
+          onSave={handleSaveEditedQuestions}
+          isSaving={isSavingEditedQuestions}
+          testTitle={`${editingOfflineTest.title} (Mã đề ${editingVariantCode})`}
+        />
       )}
 
       {/* Download Success Floating Notification */}
