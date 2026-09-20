@@ -225,7 +225,7 @@ export default function ManageSubmissions() {
 
         questionsList.forEach((q: any, idx: number) => {
           const oldFb = updatedFeedback[idx] || {};
-          const stAns = oldFb.studentAnswer ?? sub.answers?.[q.id] ?? '';
+          const stAns = oldFb.studentAnswer ?? sub.answers?.[q.id] ?? sub.answers?.[`q${idx}`] ?? sub.answers?.[idx] ?? '';
 
           if (q.type !== 'essay') {
             const fresh = gradeQuestion(q, stAns);
@@ -311,7 +311,7 @@ export default function ManageSubmissions() {
       const newEditData = [...editData];
       questionsList.forEach((q: any, idx: number) => {
         const curItem = newEditData[idx] || {};
-        const stAns = curItem.studentAnswer ?? selectedSubmission.answers?.[q.id] ?? '';
+        const stAns = curItem.studentAnswer ?? selectedSubmission.answers?.[q.id] ?? selectedSubmission.answers?.[`q${idx}`] ?? selectedSubmission.answers?.[idx] ?? '';
 
         if (q.type !== 'essay') {
           const evaluated = gradeQuestion(q, stAns);

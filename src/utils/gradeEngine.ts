@@ -91,13 +91,58 @@ export function stripOptionPrefix(text: string | null | undefined): string {
  */
 export function cleanOptionText(text: string | null | undefined): string {
   if (!text) return '';
-  return text
-    .toString()
-    .trim()
-    .replace(/^([a-dA-D0-9][\.\)]|\([a-dA-D0-9]\))\s*/, '')
+  return stripOptionPrefix(text)
     .replace(/\$/g, '')
     .replace(/[.,;:]+$/, '')
     .trim();
+}
+
+/**
+ * Chuẩn hóa biểu thức toán học thành dạng chuẩn (canonical) để so sánh giá trị tương đương:
+ * - Bỏ tiền tố phương án A., B., a), b)...
+ * - Bỏ $ và $$
+ * - Chuẩn hóa phân số: \frac{a}{b}, \dfrac{a}{b} -> (a)/(b)
+ * - Chuẩn hóa căn: \sqrt{a} -> sqrt(a)
+ * - Chuẩn hóa dấu nhân: \cdot, \times, * -> *
+ * - Chuẩn hóa dấu phẩy thập phân: 3,5 -> 3.5
+ * - Bỏ ngoặc nhọn: ^{2} -> ^2
+ * - Bỏ toàn bộ khoảng trắng và chữ hoa
+ */
+export function canonicalMathText(text: string | null | undefined): string {
+  if (!text) return '';
+  let str = text.toString().trim();
+
+  // 1. Loại bỏ tiền tố phương án A., B., a), b)...
+  str = stripOptionPrefix(str);
+
+  // 2. Bỏ dấu $ và $$
+  str = str.replace(/\$/g, '').trim();
+
+  // 3. Chuẩn hóa phân số LaTeX
+  str = str.replace(/\\d?frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/g, '($1)/($2)');
+
+  // 4. Chuẩn hóa căn thức
+  str = str.replace(/\\sqrt\s*\{([^{}]+)\}/g, 'sqrt($1)');
+  str = str.replace(/\\sqrt\s*(\d+)/g, 'sqrt($1)');
+
+  // 5. Chuẩn hóa dấu nhân, vector
+  str = str.replace(/\\cdot|\\times/g, '*');
+  str = str.replace(/\\vec\s*\{?([a-zA-Z]+)\}?/g, 'vec($1)');
+
+  // 6. Bỏ cặp ngoặc nhọn xung quanh số mũ / chỉ số
+  str = str.replace(/\^\{([^{}]+)\}/g, '^$1');
+  str = str.replace(/_\{([^{}]+)\}/g, '_$1');
+
+  // 7. Chuẩn hóa số thập phân: ví dụ 3,5 -> 3.5
+  str = str.replace(/(\d+),(\d+)/g, '$1.$2');
+
+  // 8. Bỏ dấu chấm, phẩy, chấm phẩy cuối chuỗi
+  str = str.replace(/[.,;:]+$/, '');
+
+  // 9. Bỏ toàn bộ khoảng trắng và chuyển sang chữ thường
+  str = str.replace(/\s+/g, '').toLowerCase();
+
+  return str;
 }
 
 /**
@@ -115,9 +160,12 @@ export function resolveMcqLetter(
   const str = answer.toString().trim();
   if (!str) return { letter: null, index: null, text: '' };
 
-  // 1. Kiểm tra số thứ tự 0, 1, 2, 3
-  if (/^[0-3]$/.test(str)) {
-    const idx = parseInt(str, 10);
+  // 1. Bỏ dấu bọc $ hoặc $$
+  const unwrapStr = str.replace(/^\$+|\$+$/g, '').trim();
+
+  // 2. Kiểm tra nếu chuỗi là số thứ tự 0, 1, 2, 3
+  if (/^[0-3]$/.test(unwrapStr)) {
+    const idx = parseInt(unwrapStr, 10);
     return {
       letter: String.fromCharCode(65 + idx),
       index: idx,
@@ -125,24 +173,37 @@ export function resolveMcqLetter(
     };
   }
 
-  // 2. Kiểm tra ký tự A, B, C, D đứng đầu (hoặc đơn lẻ)
-  const letterMatch = str.match(/^([A-D])([\.\)\s]|$)/i);
-  if (letterMatch) {
-    const letter = letterMatch[1].toUpperCase();
+  // 3. Kiểm tra các dạng gán nhãn phương án độc lập:
+  // "A", "B", "C", "D", "A.", "A)", "A:", "Đáp án A", "Chọn A", "Phương án B", "Câu C", "(A)", "[A]"
+  const prefixLetterMatch = unwrapStr.match(/^(?:đáp\s*án|phương\s*án|chọn|câu|ý)?\s*[:=]?\s*[\(\[]?\s*([A-D])\s*[\)\]\.\:]?\s*$/i);
+  if (prefixLetterMatch) {
+    const letter = prefixLetterMatch[1].toUpperCase();
     const idx = ['A', 'B', 'C', 'D'].indexOf(letter);
     return {
       letter,
       index: idx >= 0 ? idx : null,
-      text: cleanOptionText(str) || (options && idx >= 0 && options[idx] ? cleanOptionText(options[idx]) : '')
+      text: options && idx >= 0 && options[idx] ? cleanOptionText(options[idx]) : ''
     };
   }
 
-  // 3. Nếu không có ký tự A-D ở đầu, so khớp với danh sách options để tìm vị trí
+  // 4. Kiểm tra ký tự A, B, C, D đứng đầu: "A. $3x^2 - 3$", "A) 3x^2 - 3", "$A. 3x^2$"
+  const leadingLetterMatch = str.match(/^\$?\s*([A-D])[\.\)\:\-\]]\s*/i);
+  if (leadingLetterMatch) {
+    const letter = leadingLetterMatch[1].toUpperCase();
+    const idx = ['A', 'B', 'C', 'D'].indexOf(letter);
+    return {
+      letter,
+      index: idx >= 0 ? idx : null,
+      text: options && idx >= 0 && options[idx] ? cleanOptionText(options[idx]) : cleanOptionText(str)
+    };
+  }
+
+  // 5. Nếu không có ký tự A-D ở đầu, so khớp nội dung toán học với options để tìm vị trí
   if (options && Array.isArray(options) && options.length > 0) {
-    const cleanAns = cleanOptionText(str).toLowerCase();
+    const canonicalAns = canonicalMathText(str);
     for (let i = 0; i < options.length; i++) {
       const opt = options[i];
-      if (opt === str || cleanOptionText(opt).toLowerCase() === cleanAns) {
+      if (opt === str || canonicalMathText(opt) === canonicalAns) {
         return {
           letter: String.fromCharCode(65 + i),
           index: i,
@@ -168,20 +229,27 @@ export function checkMcqAnswer(
 
   let isCorrect = false;
 
-  // So sánh theo chữ cái A, B, C, D
+  // 1. So sánh theo chữ cái phương án A, B, C, D
   if (studentResolved.letter && correctResolved.letter) {
-    isCorrect = studentResolved.letter === correctResolved.letter;
+    isCorrect = studentResolved.letter.toUpperCase() === correctResolved.letter.toUpperCase();
+  } else if (studentResolved.index !== null && correctResolved.index !== null) {
+    // 2. So sánh theo vị trí index 0, 1, 2, 3
+    isCorrect = studentResolved.index === correctResolved.index;
   } else if (studentResolved.text && correctResolved.text) {
-    // So sánh theo nội dung sạch
-    isCorrect = studentResolved.text.toLowerCase() === correctResolved.text.toLowerCase();
+    // 3. So sánh theo canonical math text
+    isCorrect = canonicalMathText(studentResolved.text) === canonicalMathText(correctResolved.text);
   } else if (studentAns && correctAns) {
-    isCorrect = studentAns.toString().trim().toLowerCase() === correctAns.toString().trim().toLowerCase();
+    // 4. So sánh chuỗi gốc sau khi chuẩn hóa
+    isCorrect = canonicalMathText(studentAns) === canonicalMathText(correctAns);
   }
+
+  const finalCorrectLetter = correctResolved.letter || (options && correctResolved.index !== null ? String.fromCharCode(65 + correctResolved.index) : (correctAns?.toString() || ''));
+  const finalStudentLetter = studentResolved.letter || (options && studentResolved.index !== null ? String.fromCharCode(65 + studentResolved.index) : (studentAns?.toString() || ''));
 
   return {
     isCorrect,
-    correctLetter: correctResolved.letter || correctAns?.toString() || '',
-    studentLetter: studentResolved.letter || studentAns?.toString() || ''
+    correctLetter: finalCorrectLetter,
+    studentLetter: finalStudentLetter
   };
 }
 
@@ -191,8 +259,10 @@ export function checkMcqAnswer(
 export function normalizeTfValue(val: any): 'Đ' | 'S' | null {
   if (val === null || val === undefined) return null;
   const s = val.toString().trim().toLowerCase();
-  if (['đ', 'đúng', 'dung', 'd', 'true', 't', '1', 'yes'].includes(s)) return 'Đ';
-  if (['s', 'sai', 'false', 'f', '0', 'no'].includes(s)) return 'S';
+  if (['đ', 'đúng', 'dung', 'd', 'true', 't', '1', 'yes', 'y', 'correct', 'đ/đúng'].includes(s)) return 'Đ';
+  if (['s', 'sai', 'false', 'f', '0', 'no', 'n', 'incorrect', 's/sai'].includes(s)) return 'S';
+  if (/^(đ|đúng|dung|true|t\b)/i.test(s)) return 'Đ';
+  if (/^(s|sai|false|f\b)/i.test(s)) return 'S';
   return null;
 }
 
@@ -212,11 +282,12 @@ export function parseTfSubAnswers(
 
   if (!raw) return result;
 
-  // Nếu là object đã có key a, b, c, d
+  // 1. Nếu là object đã có key a, b, c, d (hoặc A, B, C, D)
   if (typeof raw === 'object' && !Array.isArray(raw)) {
     ['a', 'b', 'c', 'd'].forEach((key) => {
-      if (raw[key] !== undefined) {
-        result[key] = normalizeTfValue(raw[key]);
+      const val = raw[key] !== undefined ? raw[key] : raw[key.toUpperCase()];
+      if (val !== undefined) {
+        result[key] = normalizeTfValue(val);
       }
     });
     return result;
@@ -224,13 +295,14 @@ export function parseTfSubAnswers(
 
   const str = raw.toString().trim();
 
-  // Thử parse nếu là chuỗi JSON
+  // 2. Thử parse nếu là chuỗi JSON
   if (str.startsWith('{') && str.endsWith('}')) {
     try {
       const parsed = JSON.parse(str);
       ['a', 'b', 'c', 'd'].forEach((key) => {
-        if (parsed[key] !== undefined) {
-          result[key] = normalizeTfValue(parsed[key]);
+        const val = parsed[key] !== undefined ? parsed[key] : parsed[key.toUpperCase()];
+        if (val !== undefined) {
+          result[key] = normalizeTfValue(val);
         }
       });
       return result;
@@ -239,41 +311,55 @@ export function parseTfSubAnswers(
     }
   }
 
-  // Dạng có gán nhãn rõ ràng: "a-Đ, b-S, c-Đ, d-S" hoặc "a: Đúng, b: Sai..." hoặc "1-Đ, 2-S..."
-  const labeledMatches = str.matchAll(/([a-dA-D1-4])\s*[-:=]\s*(đúng|sai|đ|s|true|false|d)/gi);
-  let hasLabeled = false;
-  for (const m of labeledMatches) {
-    hasLabeled = true;
-    let label = m[1].toLowerCase();
-    if (label === '1') label = 'a';
-    if (label === '2') label = 'b';
-    if (label === '3') label = 'c';
-    if (label === '4') label = 'd';
-    result[label] = normalizeTfValue(m[2]);
-  }
-
-  if (hasLabeled) return result;
-
-  // Dạng phân tách danh sách: "Đ, S, Đ, S" hoặc "Đ - S - Đ - S" hoặc "Đ/S/Đ/S" hoặc "ĐSĐS"
-  const tokens = str.split(/[,;\-\/|\s]+/).map((t: string) => t.trim()).filter(Boolean);
-  const keys = ['a', 'b', 'c', 'd'];
-
-  if (tokens.length >= 2) {
-    tokens.slice(0, 4).forEach((tok: string, idx: number) => {
-      result[keys[idx]] = normalizeTfValue(tok);
-    });
+  // 3. Dạng có gán nhãn:
+  // "a-Đ, b-S, c-Đ, d-S", "a) Đúng, b) Sai...", "a. Đúng, b. Sai...", "a: Đúng, b: Sai...",
+  // "a-Đúng, b-Sai...", "Ý a: Đúng, Ý b: Sai...", "1) Đúng, 2) Sai...", "1-Đ, 2-S..."
+  const labeledRegex = /(?:ý\s*)?([a-dA-D1-4])\s*[\)\.\:\-\=\s]+\s*(đúng|sai|đ|s|true|false|dung|d\b)/gi;
+  const labeledMatches = Array.from(str.matchAll(labeledRegex));
+  if (labeledMatches.length > 0) {
+    for (const m of labeledMatches) {
+      let label = m[1].toLowerCase();
+      if (label === '1') label = 'a';
+      else if (label === '2') label = 'b';
+      else if (label === '3') label = 'c';
+      else if (label === '4') label = 'd';
+      result[label] = normalizeTfValue(m[2]);
+    }
     return result;
   }
 
-  // Dạng chuỗi liền: "ĐSĐS" hoặc "TFTF"
-  if (str.length >= 2 && /^[đsdtf]{2,4}$/i.test(str)) {
-    str.split('').slice(0, 4).forEach((char: string, idx: number) => {
+  // 4. Chuỗi 2-4 ký tự liền: "ĐSĐS", "TFTF", "DSDS"
+  const cleanChars = str.replace(/[^a-zA-ZđĐ]/g, '');
+  if (cleanChars.length >= 2 && cleanChars.length <= 4 && /^[đsdtf]{2,4}$/i.test(cleanChars)) {
+    const keys = ['a', 'b', 'c', 'd'];
+    cleanChars.split('').slice(0, 4).forEach((char, idx) => {
       result[keys[idx]] = normalizeTfValue(char);
     });
     return result;
   }
 
-  // Dạng chỉ 1 giá trị duy nhất (cho câu hỏi Đúng/Sai chỉ có 1 ý)
+  // 5. Dạng phân tách danh sách: "Đúng, Sai, Đúng, Sai" hoặc "Đ, S, Đ, S" hoặc "Đ - S - Đ - S"
+  const tokens = str.split(/[,;\-\/|\n\r]+/).map((t: string) => t.trim()).filter(Boolean);
+  const keys = ['a', 'b', 'c', 'd'];
+
+  if (tokens.length >= 2) {
+    tokens.slice(0, 4).forEach((tok: string, idx: number) => {
+      const m = tok.match(/(?:ý\s*)?([a-dA-D1-4])\s*[\)\.\:\-\=\s]+\s*(đúng|sai|đ|s|true|false|dung|d\b)/i);
+      if (m) {
+        let label = m[1].toLowerCase();
+        if (label === '1') label = 'a';
+        else if (label === '2') label = 'b';
+        else if (label === '3') label = 'c';
+        else if (label === '4') label = 'd';
+        result[label] = normalizeTfValue(m[2]);
+      } else {
+        result[keys[idx]] = normalizeTfValue(tok);
+      }
+    });
+    return result;
+  }
+
+  // 6. Dạng chỉ 1 giá trị duy nhất (cho câu hỏi Đúng/Sai chỉ có 1 ý)
   const single = normalizeTfValue(str);
   if (single) {
     result.a = single;
@@ -315,7 +401,7 @@ export function gradeTfQuestion(
     const isCorr = !!sVal && !!cVal && sVal === cVal;
     if (isCorr) correctCount++;
 
-    const optText = options && options[idx] ? cleanOptionText(options[idx]) : `Ý ${key.toUpperCase()}`;
+    const optText = options && options[idx] ? stripOptionPrefix(options[idx]) : `Ý ${key.toUpperCase()}`;
     subResults.push({
       label: key,
       text: optText,
@@ -346,7 +432,7 @@ export function gradeTfQuestion(
     ? `Chính xác hoàn toàn cả ${subCount} ý (+${score}đ).`
     : correctCount > 0
     ? `Đúng ${correctCount}/${subCount} ý (+${score}đ). Đáp án đúng: ${correctDisplay}`
-    : `Sai cả ${subCount} ý. Đáp án đúng: ${correctDisplay}`;
+    : `Chưa đúng ý nào (0đ). Đáp án đúng: ${correctDisplay}`;
 
   return {
     score,
@@ -364,19 +450,25 @@ export function normalizeShortMathAnswer(text: any): { raw: string; num: number 
   if (text === null || text === undefined) return { raw: '', num: null, clean: '' };
 
   let str = text.toString().trim();
-  // Bỏ dấu bọc công thức $ và $$
+  if (!str) return { raw: '', num: null, clean: '' };
+
+  // 1. Bỏ dấu bọc công thức $ và $$
   str = str.replace(/^\$+|\$+$/g, '').trim();
 
-  // Bỏ các tiền tố gán biến hoặc lời dẫn kết quả thường gặp: "x = 2", "m = -3", "đáp số: 5"
-  str = str.replace(/^(x|y|z|t|m|k|n|s|v|a|b|c|d|p|q)\s*=\s*/i, '');
-  str = str.replace(/^(đáp số|đáp án|kết quả|kết quả là|giá trị|nghiệm)\s*[:=]?\s*/i, '');
+  // 2. Bỏ các tiền tố gán biến hoặc lời dẫn: "x = 2", "x_1 = 3", "r = 5", "R = 5", "h = 10", "S = 24", "V = 100", "I = 2"
+  str = str.replace(/^[a-zA-Z](?:_[0-9a-zA-Z]+)?\s*=\s*/, '');
+  str = str.replace(/^(?:đáp\s*số|đáp\s*án|kết\s*quả|kết\s*quả\s*là|giá\s*trị|nghiệm|phương\s*trình\s*có\s*nghiệm)\s*[:=]?\s*/i, '');
   str = str.replace(/;+$/, '').replace(/\.+$/, '').trim();
 
-  // Xóa đơn vị phổ biến nếu có (cm, m, km, đvdt, đvtt...)
-  str = str.replace(/\s*(cm|m|km|dm|mm|kg|g|rad|độ|°|đvdt|đvtt)$/i, '').trim();
+  // 3. Xóa đơn vị phổ biến nếu có (cm, m, km, dm, mm, kg, g, rad, độ, °, đvdt, đvtt...)
+  str = str.replace(/\s*(cm|m|km|dm|mm|kg|g|rad|độ|°|đvdt|đvtt|cm\^2|cm\^3|m\^2|m\^3)$/i, '').trim();
 
-  // Kiểm tra phân số: ví dụ "-3/4", "1/2"
-  const fracMatch = str.match(/^([+-]?\d+)\s*\/\s*(\d+)$/);
+  // 4. Chuẩn hóa phân số LaTeX: \frac{a}{b} hoặc \dfrac{a}{b}
+  str = str.replace(/-\\d?frac\s*\{([+-]?\d+(?:\.\d+)?)\}\s*\{([+-]?\d+(?:\.\d+)?)\}/g, '-$1/$2');
+  str = str.replace(/\\d?frac\s*\{([+-]?\d+(?:\.\d+)?)\}\s*\{([+-]?\d+(?:\.\d+)?)\}/g, '$1/$2');
+
+  // 5. Kiểm tra phân số: ví dụ "-3/4", "1/2", "7/2"
+  const fracMatch = str.match(/^([+-]?\d+(?:\.\d+)?)\s*\/\s*([+-]?\d+(?:\.\d+)?)$/);
   if (fracMatch) {
     const n = parseFloat(fracMatch[1]);
     const d = parseFloat(fracMatch[2]);
@@ -385,7 +477,7 @@ export function normalizeShortMathAnswer(text: any): { raw: string; num: number 
     }
   }
 
-  // Đổi dấu phẩy thập phân kiểu Việt Nam (3,5) sang chấm (3.5)
+  // 6. Đổi dấu phẩy thập phân kiểu Việt Nam (3,5) sang chấm (3.5)
   const decimalNormalized = str.replace(/^([+-]?\d+),(\d+)$/, '$1.$2');
   const parsedNum = parseFloat(decimalNormalized);
 
@@ -393,7 +485,18 @@ export function normalizeShortMathAnswer(text: any): { raw: string; num: number 
     return { raw: text.toString(), num: parsedNum, clean: decimalNormalized };
   }
 
-  // Chuỗi tọa độ hoặc khoảng/đoạn: loại bỏ khoảng trắng dư thừa
+  // 7. Chuỗi căn bậc hai: \sqrt{2}, sqrt(2), căn 2
+  const sqrtClean = str.replace(/\\sqrt\s*\{?(\d+)\}?/g, 'sqrt($1)').replace(/căn\s*(\d+)/i, 'sqrt($1)');
+  const sqrtNumMatch = sqrtClean.match(/^([+-]?\d*)\s*\*?\s*sqrt\((\d+)\)(?:\s*\/\s*(\d+))?$/i);
+  if (sqrtNumMatch) {
+    const mult = sqrtNumMatch[1] === '-' ? -1 : sqrtNumMatch[1] ? parseFloat(sqrtNumMatch[1]) : 1;
+    const base = parseFloat(sqrtNumMatch[2]);
+    const div = sqrtNumMatch[3] ? parseFloat(sqrtNumMatch[3]) : 1;
+    const val = (mult * Math.sqrt(base)) / div;
+    return { raw: text.toString(), num: val, clean: sqrtClean.replace(/\s+/g, '') };
+  }
+
+  // 8. Chuỗi tọa độ hoặc khoảng/đoạn: loại bỏ khoảng trắng dư thừa
   const cleanStr = str.replace(/\s+/g, '').replace(/;/g, ',');
   return { raw: text.toString(), num: null, clean: cleanStr };
 }
@@ -412,10 +515,10 @@ export function checkShortAnswer(
     return { isCorrect: false, cleanStudent: st.clean, cleanCorrect: cr.clean };
   }
 
-  // 1. So sánh bằng giá trị số học
+  // 1. So sánh bằng giá trị số học (dung sai 0.005 cho số thập phân / phân số tương đương)
   if (st.num !== null && cr.num !== null) {
     const diff = Math.abs(st.num - cr.num);
-    if (diff < 0.0001) {
+    if (diff < 0.005) {
       return { isCorrect: true, cleanStudent: st.clean, cleanCorrect: cr.clean };
     }
   }
@@ -425,7 +528,13 @@ export function checkShortAnswer(
     return { isCorrect: true, cleanStudent: st.clean, cleanCorrect: cr.clean };
   }
 
-  // 3. So sánh chuỗi gốc sau khi bỏ dấu cách
+  // 3. So sánh chuỗi tọa độ hoặc khoảng đoạn bỏ ngoặc ngoài: (1,2) vs 1,2
+  const unwrapParens = (s: string) => s.replace(/^[\(\[\{]/, '').replace(/[\)\]\}]$/, '').trim();
+  if (unwrapParens(st.clean).toLowerCase() === unwrapParens(cr.clean).toLowerCase()) {
+    return { isCorrect: true, cleanStudent: st.clean, cleanCorrect: cr.clean };
+  }
+
+  // 4. So sánh chuỗi gốc sau khi bỏ dấu cách
   const origSt = st.raw.toLowerCase().replace(/\s+/g, '');
   const origCr = cr.raw.toLowerCase().replace(/\s+/g, '');
   if (origSt === origCr) {

@@ -1,3 +1,5 @@
+import { resolveMcqLetter, stripOptionPrefix, canonicalMathText } from './gradeEngine';
+
 export type QuestionType = 'mcq' | 'tf' | 'short' | 'essay';
 
 export interface TestVariant {
@@ -228,26 +230,19 @@ export function generateTestVariants(
         if ((q.type === 'mcq' || !q.type) && Array.isArray(q.options) && q.options.length > 1) {
           const originalOptions = [...q.options];
           
-          // Determine the text of the correct option
+          // Determine the correct option index and text using the full gradeEngine resolution
+          const resolved = resolveMcqLetter(q.correctAnswer, originalOptions);
           let correctText = '';
-          const rawCorrect = (q.correctAnswer || '').toString().trim();
-          const upperLetter = rawCorrect.toUpperCase();
-          const letterIdx = ['A', 'B', 'C', 'D', 'E', 'F'].indexOf(upperLetter);
-
-          if (letterIdx >= 0 && letterIdx < originalOptions.length) {
-            correctText = cleanOptionPrefix(originalOptions[letterIdx]);
-          } else {
-            // Check if rawCorrect matches an option directly
-            const matched = originalOptions.find(opt => cleanOptionPrefix(opt).toLowerCase() === rawCorrect.toLowerCase());
-            if (matched) {
-              correctText = cleanOptionPrefix(matched);
-            } else if (originalOptions.length > 0) {
-              correctText = cleanOptionPrefix(originalOptions[0]);
-            }
+          if (resolved.index !== null && resolved.index >= 0 && resolved.index < originalOptions.length) {
+            correctText = stripOptionPrefix(originalOptions[resolved.index]);
+          } else if (resolved.text) {
+            correctText = stripOptionPrefix(resolved.text);
+          } else if (originalOptions.length > 0) {
+            correctText = stripOptionPrefix(originalOptions[0]);
           }
 
           // Strip prefixes for shuffling
-          const cleanedOptions = originalOptions.map(opt => cleanOptionPrefix(opt));
+          const cleanedOptions = originalOptions.map(opt => stripOptionPrefix(opt));
           
           // For variants > 0, shuffle the options. Variant 0 keeps original order if desired or shuffled
           let newCleaned = [...cleanedOptions];
@@ -255,9 +250,15 @@ export function generateTestVariants(
             newCleaned = shuffleArray(newCleaned);
           }
 
-          // Find new index of the correct text
-          let newCorrectIdx = newCleaned.findIndex(opt => opt === correctText);
-          if (newCorrectIdx === -1) newCorrectIdx = 0;
+          // Find new index of the correct text by exact match or canonical math text
+          const canonicalCorrect = canonicalMathText(correctText);
+          let newCorrectIdx = newCleaned.findIndex(opt => 
+            stripOptionPrefix(opt) === correctText || 
+            canonicalMathText(opt) === canonicalCorrect
+          );
+          if (newCorrectIdx === -1) {
+            newCorrectIdx = resolved.index !== null ? resolved.index : 0;
+          }
           const newCorrectAnswer = String.fromCharCode(65 + newCorrectIdx);
 
           // Re-format with prefixes: A. ..., B. ...

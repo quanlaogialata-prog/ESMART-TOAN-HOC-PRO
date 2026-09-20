@@ -165,7 +165,7 @@ export default function DoAssignment() {
 
           parsedQuestions.forEach((q: any, idx: number) => {
             const oldFb = updatedFeedback[idx] || {};
-            const stAns = oldFb.studentAnswer ?? existingSub.answers?.[q.id] ?? '';
+            const stAns = oldFb.studentAnswer ?? existingSub.answers?.[q.id] ?? existingSub.answers?.[`q${idx}`] ?? existingSub.answers?.[idx] ?? '';
 
             if (q.type !== 'essay') {
               const freshGrade = gradeQuestion(q, stAns);
@@ -306,7 +306,8 @@ export default function DoAssignment() {
     let essayMax = 0;
     const feedback: any[] = [];
 
-    for (const q of questions) {
+    for (let qIdx = 0; qIdx < questions.length; qIdx++) {
+      const q = questions[qIdx];
       const qType = (q.type || 'mcq').toString().toLowerCase().trim();
       const pts = Number(q.points) || (qType === 'mcq' ? 0.25 : qType === 'tf' ? 1.0 : qType === 'short' ? 0.5 : 1.0);
       maxScore += pts;
@@ -316,7 +317,7 @@ export default function DoAssignment() {
       let evaluatedDetails: any = null;
       let correctAnswerDisplay = (q.correctAnswer || '').toString().trim();
       
-      const studentAns = answers[q.id] || '';
+      const studentAns = answers[q.id] ?? answers[`q${qIdx}`] ?? answers[qIdx] ?? '';
 
       if (qType === 'mcq' || qType === 'tf' || qType === 'short') {
         mcqMax += pts;

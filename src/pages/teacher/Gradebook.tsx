@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { collection, getDocs, doc, getDoc, query, where, orderBy } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Download, FileText, Calendar, Filter, Users, FileSpreadsheet } from 'lucide-react';
-import html2pdf from 'html2pdf.js';
+import { Download, FileText, Calendar, Filter, Users, FileSpreadsheet, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import ExportStudentAccountsModal from '../../components/ExportStudentAccountsModal';
-// Need this to support UTF-8 in PDF if possible, but jsPDF base font doesn't support Vietnamese well.
-// We might need to use standard English ASCII mapping or base64 font.
-// Since we don't have a font file, we'll try standard text, or strip diacritics.
+import { 
+  exportGradebookPdf, 
+  exportGradebookExcel, 
+  exportPeriodSummaryPdf, 
+  exportPeriodSummaryExcel 
+} from '../../utils/gradebookExport';
 
 export default function Gradebook() {
   const { user, role } = useAuth();
@@ -26,6 +28,12 @@ export default function Gradebook() {
   const [showTestPdfModal, setShowTestPdfModal] = useState(false);
   const [exportTestId, setExportTestId] = useState('');
   const [showExportAccountsModal, setShowExportAccountsModal] = useState(false);
+
+  // Trạng thái xuất file
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgressText, setExportProgressText] = useState('');
+  const [exportError, setExportError] = useState('');
+  const [exportSuccess, setExportSuccess] = useState('');
 
   useEffect(() => {
     loadData();
@@ -167,122 +175,56 @@ export default function Gradebook() {
   
   
   
-  const handleDownloadTestPdf = () => {
+  const handleDownloadTestPdf = async () => {
     const asm = assignments.find(a => a.id === exportTestId);
     const cls = classes.find(c => c.id === selectedClassId);
     if (!asm || !cls) return;
 
-    const container = document.createElement('div');
-    container.style.padding = '20px';
-    container.style.fontFamily = 'Arial, sans-serif';
-    container.style.color = '#333';
-    
-    let html = `
-      <h2 style="text-align: center; margin-bottom: 20px; font-size: 24px; color: #1f2937;">BẢNG ĐIỂM BÀI KIỂM TRA</h2>
-      <div style="margin-bottom: 20px; font-size: 14px;">
-        <p><b>Tên bài kiểm tra:</b> ${asm.testTitle || 'Không tên'}</p>
-        <p><b>Lớp:</b> ${cls.name}</p>
-        <p><b>Giáo viên:</b> ${teacherName}</p>
-        <p><b>Giao lúc:</b> ${new Date(asm.assignedDate).toLocaleString('vi-VN')}</p>
-        <p><b>Hạn nộp:</b> ${asm.dueDate ? new Date(asm.dueDate).toLocaleString('vi-VN') : 'Không có'}</p>
-      </div>
-      <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-        <thead>
-          <tr style="background-color: #f3f4f6;">
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">STT</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px; text-align: left;">Họ và Tên</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Bắt đầu làm</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Nộp bài</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Thời gian</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Trắc nghiệm</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Tự luận</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Tổng điểm</th>
-          </tr>
-        </thead>
-        <tbody>
-    `;
-
-    students.forEach((stu, idx) => {
-      const sub = submissions.find(s => s.studentId === stu.id && s.assignmentId === asm.id);
-      
-      let startTimeStr = 'Chưa làm';
-      let submitTimeStr = 'Chưa nộp';
-      let durationStr = '-';
-      let scoreStr = 'Chưa nộp';
-      let mcqStr = '-';
-      let essayStr = '-';
-
-      if (sub && sub.submittedAt) {
-        submitTimeStr = new Date(sub.submittedAt).toLocaleString('vi-VN');
-        
-        if (sub.timeSpent) {
-           const durationMins = Math.floor(sub.timeSpent / 60);
-           const durationSecs = sub.timeSpent % 60;
-           durationStr = `${durationMins}p ${durationSecs}s`;
-           const startTime = new Date(new Date(sub.submittedAt).getTime() - sub.timeSpent * 1000);
-           startTimeStr = startTime.toLocaleString('vi-VN');
-        } else {
-           startTimeStr = new Date(sub.submittedAt).toLocaleString('vi-VN');
-        }
-
-        if (typeof sub.score === 'number') {
-          scoreStr = sub.score.toString();
-        } else {
-          scoreStr = 'Chờ chấm';
-        }
-
-        if (sub.mcqMax > 0) {
-           mcqStr = `${Number(sub.mcqScore || 0).toFixed(1)}/${sub.mcqMax}`;
-        }
-        if (sub.essayMax > 0) {
-           essayStr = `${Number(sub.essayScore || 0).toFixed(1)}/${sub.essayMax}`;
-        }
-      }
-      
-      html += `
-        <tr>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${idx + 1}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px;">
-            ${stu.displayName || 'Không tên'}
-            ${sub && sub.variantCode ? `<div style="font-size: 11px; color: #4f46e5; font-weight: bold;">(Mã đề: ${sub.variantCode})</div>` : ''}
-          </td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${startTimeStr}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${submitTimeStr}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${durationStr}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${mcqStr}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${essayStr}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center; font-weight: bold; color: #2563eb;">${scoreStr}</td>
-        </tr>
-      `;
-    });
-
-    html += `
-        </tbody>
-      </table>
-    `;
-    
-    container.innerHTML = html;
-    
-    const opt = {
-      margin:       0.4,
-      filename:     `Bang_diem_${cls.name}_${Date.now()}.pdf`,
-      image:        { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas:  { scale: 2 },
-      jsPDF:        { unit: 'in', format: 'a4', orientation: 'landscape' as const }
-    };
-    
-    html2pdf().set(opt).from(container).save();
-    
-    setShowTestPdfModal(false);
+    setIsExporting(true);
+    setExportProgressText('Đang khởi tạo PDF bài kiểm tra...');
+    setExportError('');
+    try {
+      await exportGradebookPdf(
+        students,
+        submissions,
+        asm,
+        teacherName || user?.displayName || user?.email || 'Giáo viên',
+        (msg) => setExportProgressText(msg)
+      );
+      setExportSuccess('Xuất bảng điểm PDF thành công!');
+      setTimeout(() => setExportSuccess(''), 4000);
+      setShowTestPdfModal(false);
+    } catch (err: any) {
+      console.error('PDF export error:', err);
+      setExportError('Lỗi xuất PDF: ' + (err?.message || 'Không thể tạo file'));
+    } finally {
+      setIsExporting(false);
+      setExportProgressText('');
+    }
   };
 
+  const handleDownloadTestExcel = () => {
+    const asm = assignments.find(a => a.id === exportTestId);
+    const cls = classes.find(c => c.id === selectedClassId);
+    if (!asm || !cls) return;
 
+    try {
+      exportGradebookExcel(
+        students,
+        submissions,
+        asm,
+        teacherName || user?.displayName || user?.email || 'Giáo viên'
+      );
+      setExportSuccess('Xuất bảng điểm Excel thành công!');
+      setTimeout(() => setExportSuccess(''), 4000);
+      setShowTestPdfModal(false);
+    } catch (err: any) {
+      console.error('Excel export error:', err);
+      setExportError('Lỗi xuất Excel: ' + (err?.message || 'Không thể tạo file'));
+    }
+  };
 
-
-  
-  
-  
-  const handleDownloadPeriodPdf = () => {
+  const handleDownloadPeriodPdf = async () => {
     const cls = classes.find(c => c.id === selectedClassId);
     if (!cls) return;
 
@@ -291,58 +233,52 @@ export default function Gradebook() {
     if (timeFilter === 'month') timeText = 'Tháng này';
     if (timeFilter === 'semester') timeText = 'Học kỳ này';
 
-    const container = document.createElement('div');
-    container.style.padding = '20px';
-    container.style.fontFamily = 'Arial, sans-serif';
-    container.style.color = '#333';
-    
-    let html = `
-      <h2 style="text-align: center; margin-bottom: 20px; font-size: 24px; color: #1f2937;">TỔNG HỢP KẾT QUẢ HỌC TẬP</h2>
-      <div style="margin-bottom: 20px; font-size: 14px;">
-        <p><b>Thời gian:</b> ${timeText}</p>
-        <p><b>Lớp:</b> ${cls.name}</p>
-        <p><b>Giáo viên:</b> ${teacherName}</p>
-      </div>
-      <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-        <thead>
-          <tr style="background-color: #f3f4f6;">
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">STT</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px; text-align: left;">Họ và Tên</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Số bài đã làm</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Điểm trung bình</th>
-          </tr>
-        </thead>
-        <tbody>
-    `;
+    setIsExporting(true);
+    setExportProgressText('Đang khởi tạo PDF tổng hợp...');
+    setExportError('');
+    try {
+      await exportPeriodSummaryPdf(
+        students,
+        getStudentStats,
+        cls.name,
+        timeText,
+        teacherName || user?.displayName || user?.email || 'Giáo viên',
+        (msg) => setExportProgressText(msg)
+      );
+      setExportSuccess('Xuất PDF tổng hợp thành công!');
+      setTimeout(() => setExportSuccess(''), 4000);
+    } catch (err: any) {
+      console.error('PDF export error:', err);
+      setExportError('Lỗi xuất PDF: ' + (err?.message || 'Không thể tạo file'));
+    } finally {
+      setIsExporting(false);
+      setExportProgressText('');
+    }
+  };
 
-    students.forEach((s, idx) => {
-      const stats = getStudentStats(s.id);
-      html += `
-        <tr>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${idx + 1}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px;">${s.displayName || 'Không tên'}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${stats.count}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center; font-weight: bold; color: #2563eb;">${stats.avg}</td>
-        </tr>
-      `;
-    });
+  const handleDownloadPeriodExcel = () => {
+    const cls = classes.find(c => c.id === selectedClassId);
+    if (!cls) return;
 
-    html += `
-        </tbody>
-      </table>
-    `;
-    
-    container.innerHTML = html;
-    
-    const opt = {
-      margin:       0.5,
-      filename:     `Tong_hop_ket_qua_${cls.name}_${Date.now()}.pdf`,
-      image:        { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas:  { scale: 2 },
-      jsPDF:        { unit: 'in', format: 'a4', orientation: 'portrait' as const }
-    };
-    
-    html2pdf().set(opt).from(container).save();
+    let timeText = 'Tất cả';
+    if (timeFilter === 'week') timeText = 'Tuần này';
+    if (timeFilter === 'month') timeText = 'Tháng này';
+    if (timeFilter === 'semester') timeText = 'Học kỳ này';
+
+    try {
+      exportPeriodSummaryExcel(
+        students,
+        getStudentStats,
+        cls.name,
+        timeText,
+        teacherName || user?.displayName || user?.email || 'Giáo viên'
+      );
+      setExportSuccess('Xuất Excel tổng hợp thành công!');
+      setTimeout(() => setExportSuccess(''), 4000);
+    } catch (err: any) {
+      console.error('Excel export error:', err);
+      setExportError('Lỗi xuất Excel: ' + (err?.message || 'Không thể tạo file'));
+    }
   };
 
 
@@ -401,28 +337,56 @@ export default function Gradebook() {
         </div>
       </div>
 
-      <div className="bg-orange-50 text-orange-700 text-xs p-3 rounded-lg border border-orange-100 mb-4 sm:hidden">Lưu ý: Nếu không tải được PDF trên điện thoại, vui lòng mở ứng dụng trong Tab mới.</div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+      {exportProgressText && (
+        <div className="mb-4 p-3.5 bg-blue-50 border border-blue-200 text-blue-800 rounded-xl flex items-center gap-2.5 text-sm shadow-sm">
+          <Loader2 size={18} className="animate-spin text-blue-600 flex-shrink-0" />
+          <span className="font-medium">{exportProgressText}</span>
+        </div>
+      )}
+      {exportSuccess && (
+        <div className="mb-4 p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl flex items-center gap-2.5 text-sm shadow-sm">
+          <CheckCircle2 size={18} className="text-emerald-600 flex-shrink-0" />
+          <span className="font-medium">{exportSuccess}</span>
+        </div>
+      )}
+      {exportError && (
+        <div className="mb-4 p-3.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl flex items-center gap-2.5 text-sm shadow-sm">
+          <AlertCircle size={18} className="text-rose-600 flex-shrink-0" />
+          <span className="font-medium">{exportError}</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         <button
           onClick={() => setShowTestPdfModal(true)}
-          className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg font-medium hover:bg-blue-100 transition-colors w-full border border-blue-100"
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors w-full shadow-sm text-sm cursor-pointer"
         >
-          <Download size={18} />
-          Tải bảng điểm bài kiểm tra
+          <FileText size={17} />
+          Bảng điểm bài kiểm tra
         </button>
         <button
+          disabled={isExporting}
           onClick={handleDownloadPeriodPdf}
-          className="flex items-center justify-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-lg font-medium hover:bg-green-100 transition-colors w-full border border-green-100"
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-50 text-indigo-700 rounded-xl font-medium hover:bg-indigo-100 transition-colors w-full border border-indigo-200 text-sm disabled:opacity-50 cursor-pointer"
+          title="Xuất PDF Tổng hợp kết quả học tập (chuẩn A4 chống cắt dòng)"
         >
-          <Download size={18} />
-          Tải kết quả (Excel)
+          <Download size={17} />
+          Tổng hợp PDF (A4)
+        </button>
+        <button
+          onClick={handleDownloadPeriodExcel}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-50 text-emerald-700 rounded-xl font-medium hover:bg-emerald-100 transition-colors w-full border border-emerald-200 text-sm cursor-pointer"
+          title="Xuất bảng Excel Tổng hợp kết quả học tập"
+        >
+          <FileSpreadsheet size={17} />
+          Tổng hợp Excel (.xlsx)
         </button>
         <button
           onClick={() => setShowExportAccountsModal(true)}
-          className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-800 rounded-lg font-semibold hover:bg-emerald-100 transition-colors w-full border border-emerald-200"
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-50 text-gray-700 rounded-xl font-medium hover:bg-gray-100 transition-colors w-full border border-gray-200 text-sm cursor-pointer"
         >
-          <FileSpreadsheet size={18} className="text-emerald-600" />
-          Xuất DS tài khoản HS lớp này
+          <Users size={17} />
+          DS tài khoản học sinh
         </button>
       </div>
 
@@ -480,20 +444,20 @@ export default function Gradebook() {
 
       {showTestPdfModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <Download size={20} className="text-blue-600"/> Tải xuống bảng điểm bài kiểm tra
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold mb-2 flex items-center gap-2 text-gray-800">
+              <Download size={20} className="text-blue-600"/> Xuất bảng điểm bài kiểm tra
             </h2>
-            <p className="text-sm text-gray-600 mb-4">
-              Chỉ hiển thị các bài kiểm tra được giao trong thời gian: <strong>{timeFilter === 'week' ? 'Tuần này' : timeFilter === 'month' ? 'Tháng này' : timeFilter === 'semester' ? 'Học kỳ này' : 'Tất cả'}</strong>
+            <p className="text-xs text-gray-500 mb-4">
+              Lọc theo thời gian: <strong>{timeFilter === 'week' ? 'Tuần này' : timeFilter === 'month' ? 'Tháng này' : timeFilter === 'semester' ? 'Học kỳ này' : 'Tất cả'}</strong>
             </p>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Chọn bài kiểm tra</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Chọn bài kiểm tra</label>
                 <select 
                   value={exportTestId}
                   onChange={e => setExportTestId(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                 >
                   <option value="">-- Chọn bài kiểm tra --</option>
                   {filteredAssignments.map(a => (
@@ -504,19 +468,43 @@ export default function Gradebook() {
                   )}
                 </select>
               </div>
-              <div className="flex gap-3 justify-end mt-6">
-                <button 
-                  onClick={() => setShowTestPdfModal(false)}
-                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium"
-                >
-                  Đóng
-                </button>
+
+              {exportProgressText && (
+                <div className="p-3 bg-blue-50 border border-blue-200 text-blue-700 rounded-xl text-xs flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>{exportProgressText}</span>
+                </div>
+              )}
+
+              <div className="pt-2 flex flex-col sm:flex-row gap-2.5">
                 <button 
                   onClick={handleDownloadTestPdf}
-                  disabled={!exportTestId}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
+                  disabled={!exportTestId || isExporting}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors text-sm shadow-sm cursor-pointer"
+                  title="Xuất file PDF chuẩn A4 (tự động ngắt trang, lặp tiêu đề cột, chống cắt ngang hàng chữ)"
                 >
-                  Tải file PDF
+                  <FileText size={16} />
+                  <span>{isExporting ? 'Đang tạo PDF...' : 'Tải file PDF (A4)'}</span>
+                </button>
+
+                <button 
+                  onClick={handleDownloadTestExcel}
+                  disabled={!exportTestId || isExporting}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-600 text-white rounded-xl font-medium hover:bg-emerald-700 disabled:opacity-50 transition-colors text-sm shadow-sm cursor-pointer"
+                  title="Xuất file Excel (.xlsx) đầy đủ cột điểm và thống kê"
+                >
+                  <FileSpreadsheet size={16} />
+                  <span>Tải Excel (.xlsx)</span>
+                </button>
+              </div>
+
+              <div className="flex justify-end pt-1">
+                <button 
+                  onClick={() => setShowTestPdfModal(false)}
+                  disabled={isExporting}
+                  className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-xl font-medium text-sm transition-colors cursor-pointer"
+                >
+                  Đóng
                 </button>
               </div>
             </div>

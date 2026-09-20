@@ -4,7 +4,6 @@ import { db } from '../../lib/firebase';
 import { FileText, Plus, Upload, Clock, List, Calendar, X, Trash2, Eye, Pencil, ArrowLeft, Folder, FolderCheck, Layers, Shuffle, CheckCircle, Copy, Sparkles, Printer, FileCheck, ShieldCheck, LayoutGrid, FileSpreadsheet, Check, ChevronRight, BookOpen, Sliders, HelpCircle, Info, Users, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import MathText from '../../components/MathText';
-import html2pdf from 'html2pdf.js';
 import { generateTestVariants, TestVariant } from '../../utils/variantGenerator';
 import { CreateOnlineTestModal } from '../../components/teacher/CreateOnlineTestModal';
 import QuestionVisualRenderer from '../../components/common/QuestionVisualRenderer';
@@ -12,7 +11,8 @@ import QuestionReferenceBadge from '../../components/common/QuestionReferenceBad
 import EditQuestionsModal from '../../components/teacher/EditQuestionsModal';
 import CancelAssignmentModal from '../../components/teacher/CancelAssignmentModal';
 import { QuestionItem } from '../../types/test';
-import { stripOptionPrefix } from '../../utils/gradeEngine';
+import { stripOptionPrefix, checkMcqAnswer } from '../../utils/gradeEngine';
+import { exportGradebookPdf, exportGradebookExcel } from '../../utils/gradebookExport';
 
 export default function ManageTests() {
   const { user, role } = useAuth();
@@ -983,111 +983,48 @@ export default function ManageTests() {
   
   
   
-  const exportGradebookForAssignment = (a: any) => {
+  const [exportingAssignId, setExportingAssignId] = useState<string | null>(null);
+
+  const exportGradebookForAssignment = async (a: any, format: 'pdf' | 'excel' = 'pdf') => {
     const classStudents = studentsList.filter(s => s.className === a.className);
     if (classStudents.length === 0) {
       alert('Lớp này chưa có học sinh!');
       return;
     }
 
-    const container = document.createElement('div');
-    container.style.padding = '20px';
-    container.style.fontFamily = 'Arial, sans-serif';
-    container.style.color = '#333';
-    
-    let html = `
-      <h2 style="text-align: center; margin-bottom: 20px; font-size: 24px; color: #1f2937;">BẢNG ĐIỂM BÀI KIỂM TRA</h2>
-      <div style="margin-bottom: 20px; font-size: 14px;">
-        <p><b>Tên bài kiểm tra:</b> ${a.testTitle || 'Không tên'}</p>
-        <p><b>Lớp:</b> ${a.className}</p>
-        <p><b>Giáo viên:</b> ${user?.displayName || user?.email || 'Giáo viên'}</p>
-        <p><b>Giao lúc:</b> ${new Date(a.assignedDate).toLocaleString('vi-VN')}</p>
-        <p><b>Hạn nộp:</b> ${a.dueDate ? new Date(a.dueDate).toLocaleString('vi-VN') : 'Không có'}</p>
-      </div>
-      <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-        <thead>
-          <tr style="background-color: #f3f4f6;">
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">STT</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px; text-align: left;">Họ và Tên</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Bắt đầu làm</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Nộp bài</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Thời gian</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Trắc nghiệm</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Tự luận</th>
-            <th style="border: 1px solid #e5e7eb; padding: 8px;">Tổng điểm</th>
-          </tr>
-        </thead>
-        <tbody>
-    `;
+    const teacherName = user?.displayName || user?.email || 'Giáo viên';
 
-    classStudents.forEach((stu, idx) => {
-      const sub = submissionsList.find(s => s.studentId === stu.id && s.assignmentId === a.id);
-      
-      let startTimeStr = 'Chưa làm';
-      let submitTimeStr = 'Chưa nộp';
-      let durationStr = '-';
-      let scoreStr = 'Chưa nộp';
-      let mcqStr = '-';
-      let essayStr = '-';
-
-      if (sub && sub.submittedAt) {
-        submitTimeStr = new Date(sub.submittedAt).toLocaleString('vi-VN');
-        
-        if (sub.timeSpent) {
-           const durationMins = Math.floor(sub.timeSpent / 60);
-           const durationSecs = sub.timeSpent % 60;
-           durationStr = `${durationMins}p ${durationSecs}s`;
-           
-           const startTime = new Date(new Date(sub.submittedAt).getTime() - sub.timeSpent * 1000);
-           startTimeStr = startTime.toLocaleString('vi-VN');
-        } else {
-           startTimeStr = new Date(sub.submittedAt).toLocaleString('vi-VN');
-        }
-
-        if (typeof sub.score === 'number') {
-          scoreStr = sub.score.toString();
-        } else {
-          scoreStr = 'Chờ chấm';
-        }
-
-        if (sub.mcqMax > 0) {
-           mcqStr = `${Number(sub.mcqScore || 0).toFixed(1)}/${sub.mcqMax}`;
-        }
-        if (sub.essayMax > 0) {
-           essayStr = `${Number(sub.essayScore || 0).toFixed(1)}/${sub.essayMax}`;
-        }
+    if (format === 'excel') {
+      try {
+        exportGradebookExcel(classStudents, submissionsList, a, teacherName);
+        setSysMsg(`Đã xuất bảng điểm Excel lớp ${a.className} thành công!`);
+        setTimeout(() => setSysMsg(''), 4000);
+      } catch (err: any) {
+        console.error('Excel export error:', err);
+        setSysError('Lỗi xuất Excel: ' + (err?.message || 'Không thể tạo file'));
       }
-      
-      html += `
-        <tr>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${idx + 1}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px;">${stu.displayName || 'Không tên'}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${startTimeStr}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${submitTimeStr}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${durationStr}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${mcqStr}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${essayStr}</td>
-          <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center; font-weight: bold; color: #2563eb;">${scoreStr}</td>
-        </tr>
-      `;
-    });
+      return;
+    }
 
-    html += `
-        </tbody>
-      </table>
-    `;
-    
-    container.innerHTML = html;
-    
-    const opt = {
-      margin:       0.4,
-      filename:     `Bang_diem_${a.className}_${Date.now()}.pdf`,
-      image:        { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas:  { scale: 2 },
-      jsPDF:        { unit: 'in', format: 'a4', orientation: 'landscape' as const }
-    };
-    
-    html2pdf().set(opt).from(container).save();
+    // PDF format
+    setExportingAssignId(a.id);
+    setSysMsg('Đang tạo bảng điểm PDF chuẩn A4 (chống cắt dòng)...');
+    try {
+      await exportGradebookPdf(
+        classStudents,
+        submissionsList,
+        a,
+        teacherName,
+        (msg) => setSysMsg(msg)
+      );
+      setSysMsg(`Đã xuất bảng điểm PDF lớp ${a.className} thành công!`);
+      setTimeout(() => setSysMsg(''), 4000);
+    } catch (err: any) {
+      console.error('PDF export error:', err);
+      setSysError('Lỗi xuất PDF: ' + (err?.message || 'Không thể tạo file PDF'));
+    } finally {
+      setExportingAssignId(null);
+    }
   };
 
 
@@ -1134,14 +1071,24 @@ export default function ManageTests() {
                   </span>
                 </div>
 
-                <div className="mt-1 flex items-center gap-2 pt-1 border-t border-gray-200/60">
+                <div className="mt-1 flex items-center gap-1.5 pt-1 border-t border-gray-200/60">
                   <button 
-                    onClick={() => exportGradebookForAssignment(a)}
-                    className="flex-1 text-xs font-semibold bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 py-1.5 px-2 rounded-lg transition-colors flex items-center justify-center gap-1"
-                    title="Xuất bảng điểm PDF của lớp này"
+                    disabled={exportingAssignId === a.id}
+                    onClick={() => exportGradebookForAssignment(a, 'pdf')}
+                    className="flex-1 text-xs font-semibold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 py-1.5 px-2 rounded-lg transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
+                    title="Xuất bảng điểm PDF (chuẩn A4, không cắt dòng)"
+                  >
+                    <FileText size={13} />
+                    <span>{exportingAssignId === a.id ? 'Đang tạo...' : 'PDF'}</span>
+                  </button>
+
+                  <button 
+                    onClick={() => exportGradebookForAssignment(a, 'excel')}
+                    className="text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 py-1.5 px-2.5 rounded-lg transition-colors flex items-center justify-center gap-1"
+                    title="Xuất bảng điểm Excel (.xlsx)"
                   >
                     <FileSpreadsheet size={13} />
-                    <span>Bảng điểm</span>
+                    <span>Excel</span>
                   </button>
 
                   {canCancel && (
@@ -3282,11 +3229,7 @@ export default function ManageTests() {
                                 <div className="space-y-1.5 mb-3">
                                   {q.options.map((opt: string, optIdx: number) => {
                                     const optLetter = String.fromCharCode(65 + optIdx);
-                                    let isCorrect = false;
-                                    const rawAns = (q.correctAnswer || '').toString().trim().toUpperCase();
-                                    if (rawAns === optLetter || rawAns === optIdx.toString()) {
-                                      isCorrect = true;
-                                    }
+                                    const isCorrect = checkMcqAnswer(optLetter, q.correctAnswer, q.options).isCorrect;
 
                                     return (
                                       <div 
