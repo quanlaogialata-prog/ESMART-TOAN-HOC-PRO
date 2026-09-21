@@ -154,7 +154,7 @@ export default function ExportStudentAccountsModal({
 
   // Copy helper
   const handleCopyAccount = (student: any) => {
-    const text = `Tài khoản học sinh: ${student.fullName} | Lớp: ${student.className}\nTên đăng nhập: ${student.username}\nMật khẩu: ${student.rawPassword || '••••••'}\nWebsite: ESmart`;
+    const text = `Tài khoản học sinh: ${student.fullName} | Lớp: ${student.className}\nTên đăng nhập: ${student.username}\nMật khẩu: ${student.rawPassword || '••••••'}\nWebsite: ESmart KB`;
     navigator.clipboard.writeText(text);
     setCopiedId(student.id);
     setTimeout(() => setCopiedId(null), 2000);
@@ -170,10 +170,10 @@ export default function ExportStudentAccountsModal({
       const gradeStr = classStudents[0]?.grade ? `Khối ${classStudents[0].grade}` : '';
 
       const rows: any[][] = [
-        ['TRUNG TÂM ESMART - HỆ THỐNG ÔN TẬP VÀ KIỂM TRA MÔN TOÁN'],
+        ['TRUNG TÂM ESMART KB - HỆ THỐNG ÔN TẬP VÀ KIỂM TRA MÔN TOÁN'],
         [`DANH SÁCH TÀI KHOẢN HỌC SINH - LỚP ${selectedClass.toUpperCase()}`],
         [`Thông tin: ${gradeStr} | Sĩ số: ${classStudents.length} học sinh | Ngày xuất: ${new Date().toLocaleDateString('vi-VN')}`],
-        ['Địa chỉ đăng nhập: Hệ thống ESmart (Đăng nhập bằng Tên đăng nhập hoặc Email)'],
+        ['Địa chỉ đăng nhập: Hệ thống ESmart KB (Đăng nhập bằng Tên đăng nhập hoặc Email)'],
         [], // blank line
         [
           'STT',
@@ -200,7 +200,7 @@ export default function ExportStudentAccountsModal({
           stu.rawPassword,
           stu.parentPhone,
           stu.createdAt,
-          'Nhập Tên đăng nhập & Mật khẩu trên app ESmart'
+          'Nhập Tên đăng nhập & Mật khẩu trên app ESmart KB'
         ]);
       });
 
@@ -229,7 +229,7 @@ export default function ExportStudentAccountsModal({
       // Export ALL classes: Create Summary Sheet + Individual Sheet for each Class!
       // 1. Summary Sheet
       const summaryRows: any[][] = [
-        ['TRUNG TÂM ESMART - HỆ THỐNG ÔN TẬP VÀ KIỂM TRA MÔN TOÁN'],
+        ['TRUNG TÂM ESMART KB - HỆ THỐNG ÔN TẬP VÀ KIỂM TRA MÔN TOÁN'],
         ['TỔNG HỢP DANH SÁCH TÀI KHOẢN HỌC SINH TOÀN TRUNG TÂM'],
         [`Tổng số học sinh: ${formattedStudents.length} | Ngày xuất: ${new Date().toLocaleDateString('vi-VN')}`],
         [],
@@ -280,7 +280,7 @@ export default function ExportStudentAccountsModal({
         if (clsStudents.length === 0) return;
 
         const clsRows: any[][] = [
-          ['TRUNG TÂM ESMART - HỆ THỐNG ÔN TẬP VÀ KIỂM TRA MÔN TOÁN'],
+          ['TRUNG TÂM ESMART KB - HỆ THỐNG ÔN TẬP VÀ KIỂM TRA MÔN TOÁN'],
           [`DANH SÁCH TÀI KHOẢN HỌC SINH - LỚP ${cls.name.toUpperCase()}`],
           [`Khối: ${cls.grade} | Sĩ số: ${clsStudents.length} học sinh | Ngày xuất: ${new Date().toLocaleDateString('vi-VN')}`],
           [],
@@ -493,7 +493,7 @@ export default function ExportStudentAccountsModal({
               
               {/* Print Header (Only visible when printing) */}
               <div className="hidden print:block p-4 text-center border-b border-gray-300 mb-4">
-                <h2 className="text-lg font-bold uppercase text-gray-900">TRUNG TÂM ESMART - HỆ THỐNG TOÁN HỌC</h2>
+                <h2 className="text-lg font-bold uppercase text-gray-900">TRUNG TÂM ESMART KB - HỆ THỐNG TOÁN HỌC</h2>
                 <h3 className="text-base font-bold text-gray-800 mt-1">
                   DANH SÁCH TÀI KHOẢN HỌC SINH {selectedClass !== 'all' ? `- LỚP ${selectedClass.toUpperCase()}` : 'TOÀN TRƯỜNG'}
                 </h3>
@@ -604,7 +604,7 @@ export default function ExportStudentAccountsModal({
                     <div className="border-b border-gray-100 pb-2 flex items-center justify-between">
                       <div>
                         <div className="text-[10px] font-bold uppercase tracking-wider text-blue-700">
-                          TRUNG TÂM ESMART
+                          TRUNG TÂM ESMART KB
                         </div>
                         <div className="text-xs font-black text-gray-900">
                           THẺ TÀI KHOẢN HỌC TẬP
@@ -644,7 +644,7 @@ export default function ExportStudentAccountsModal({
 
                     {/* Slip Footer */}
                     <div className="border-t border-gray-100 pt-1.5 text-[9.5px] text-gray-500 text-center leading-snug">
-                      Đăng nhập trên ứng dụng ESmart hoặc web trường. Lưu giữ bảo mật mật khẩu.
+                      Đăng nhập trên ứng dụng ESmart KB hoặc web trường. Lưu giữ bảo mật mật khẩu.
                     </div>
                   </div>
                 ))}

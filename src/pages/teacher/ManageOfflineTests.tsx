@@ -78,7 +78,7 @@ function ExamPaperContent({ test, variant }: { test: OfflineTest; variant: TestV
         {/* Left Header */}
         <div className="w-[58%] text-center">
           <div className="font-bold uppercase text-[13px] tracking-wide text-gray-900">
-            {test.schoolName || 'TRUNG TÂM LUYỆN THI ESMART'}
+            {test.schoolName || 'TRUNG TÂM LUYỆN THI ESMART KB'}
           </div>
           <div className="font-semibold text-xs mt-0.5 text-gray-800">
             TỔ CHUYÊN MÔN: {test.subject?.toUpperCase() || 'TOÁN HỌC'}
@@ -665,7 +665,7 @@ export default function ManageOfflineTests() {
 
   // --- FORM STATE FOR CREATE MODAL ---
   // Common exam header configuration
-  const [schoolName, setSchoolName] = useState('TRUNG TÂM LUYỆN THI ESMART');
+  const [schoolName, setSchoolName] = useState('TRUNG TÂM LUYỆN THI ESMART KB');
   const [examHeader, setExamHeader] = useState('ĐỀ KIỂM TRA ĐỊNH KỲ MÔN TOÁN');
   const [examSubject, setExamSubject] = useState('Toán học');
   const [examGrade, setExamGrade] = useState<number>(10);
@@ -1137,7 +1137,7 @@ export default function ManageOfflineTests() {
       // Create new offline test document in Firestore
       const newOfflineTest: Omit<OfflineTest, 'id'> = {
         title: examTitle.trim() || `${selected.title} (Bản in Offline)`,
-        schoolName: schoolName.trim() || 'TRUNG TÂM LUYỆN THI ESMART',
+        schoolName: schoolName.trim() || 'TRUNG TÂM LUYỆN THI ESMART KB',
         examHeader: examHeader.trim() || 'ĐỀ KIỂM TRA ĐỊNH KỲ MÔN TOÁN',
         grade: examGrade,
         subject: examSubject,
@@ -1325,7 +1325,7 @@ export default function ManageOfflineTests() {
 
       const newOfflineTest: Omit<OfflineTest, 'id'> = {
         title: examTitle.trim() || 'Đề thi offline',
-        schoolName: schoolName.trim() || 'TRUNG TÂM LUYỆN THI ESMART',
+        schoolName: schoolName.trim() || 'TRUNG TÂM LUYỆN THI ESMART KB',
         examHeader: examHeader.trim() || 'ĐỀ KIỂM TRA ĐỊNH KỲ MÔN TOÁN',
         grade: examGrade,
         subject: examSubject,
@@ -1869,7 +1869,7 @@ export default function ManageOfflineTests() {
                       type="text"
                       value={schoolName}
                       onChange={e => setSchoolName(e.target.value)}
-                      placeholder="TRUNG TÂM ESMART..."
+                      placeholder="TRUNG TÂM ESMART KB..."
                       className="w-full px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs"
                     />
                   </div>

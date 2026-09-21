@@ -24,7 +24,7 @@ export default function Dashboard() {
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <header className="bg-white border-b px-6 py-4 flex flex-col lg:flex-row justify-between items-center gap-4 shrink-0 w-full">
         <div className="w-full lg:w-auto flex justify-center lg:justify-start">
-          <h1 className="text-xl font-bold text-blue-600 tracking-tight">TRUNG TÂM ESMART <span className="text-sm font-medium text-gray-500 ml-2">| {role?.toUpperCase()}</span></h1>
+          <h1 className="text-xl font-bold text-blue-600 tracking-tight">TRUNG TÂM ESMART KB <span className="text-sm font-medium text-gray-500 ml-2">| {role?.toUpperCase()}</span></h1>
         </div>
         
         {(role === 'teacher' || role === 'admin') && (
