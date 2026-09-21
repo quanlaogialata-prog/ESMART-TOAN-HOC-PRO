@@ -2,198 +2,354 @@ import { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, doc, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Clock, CheckCircle2, AlertCircle, Calendar } from 'lucide-react';
-import { Link } from 'react-router';
+import { 
+  Clock, CheckCircle2, AlertTriangle, BookOpen, Award, 
+  TrendingUp, RefreshCw, User, Sparkles
+} from 'lucide-react';
+import CurrentAssignmentsList from '../../components/student/CurrentAssignmentsList';
+import OverdueAssignmentsList from '../../components/student/OverdueAssignmentsList';
+import CompletedAssignmentsList from '../../components/student/CompletedAssignmentsList';
+import StudentGradebook from '../../components/student/StudentGradebook';
+import StudentResultModal from '../../components/student/StudentResultModal';
+
+type StudentTab = 'current' | 'overdue' | 'completed' | 'gradebook';
 
 export default function StudentDashboard() {
   const { user } = useAuth();
-  const [assignments, setAssignments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [userGrade, setUserGrade] = useState<number | null>(null);
+  const [studentInfo, setStudentInfo] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState<StudentTab>('current');
+
+  const [currentAssignments, setCurrentAssignments] = useState<any[]>([]);
+  const [overdueAssignments, setOverdueAssignments] = useState<any[]>([]);
+  const [completedAssignments, setCompletedAssignments] = useState<any[]>([]);
+
+  // Modal review state
+  const [reviewState, setReviewState] = useState<{
+    assignment: any;
+    submission: any;
+  } | null>(null);
 
   useEffect(() => {
     if (user) {
-      loadUserGradeAndAssignments();
+      loadData();
     }
   }, [user]);
 
-  const loadUserGradeAndAssignments = async () => {
-    // 1. Get user grade
-    const userDoc = await getDocs(query(collection(db, 'users'), where('email', '==', user?.email)));
-    let grade = 9;
-    let className = '';
-    if (!userDoc.empty) {
-      const uData = userDoc.docs[0].data();
-      if (uData.grade) grade = Number(uData.grade) || 9;
-      if (uData.className) className = uData.className;
-    }
-    setUserGrade(grade);
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      // 1. Get user profile details
+      let grade = 9;
+      let className = '';
+      let fullName = user?.displayName || '';
 
-    // 2. Get assignments for this grade
-    const snap = await getDocs(collection(db, 'assignments'));
-    
-    const subQ = query(collection(db, 'submissions'), where('studentEmail', '==', user?.email));
-    const subSnap = await getDocs(subQ);
-    const submittedAssignMap = new Map();
-    subSnap.docs.forEach(doc => {
-      submittedAssignMap.set(doc.data().assignmentId, doc.data());
-    });
+      const userDoc = await getDocs(query(collection(db, 'users'), where('email', '==', user?.email)));
+      if (!userDoc.empty) {
+        const uData = userDoc.docs[0].data();
+        if (uData.grade) grade = Number(uData.grade) || 9;
+        if (uData.className) className = uData.className;
+        if (uData.fullName) fullName = uData.fullName;
+      }
+      setStudentInfo({ grade, className, fullName, email: user?.email });
 
-    const validAssignments: any[] = [];
-    for (const d of snap.docs) {
-      const assignData = d.data();
-      // Filter by grade and class
-      if (Number(assignData.grade) !== Number(grade)) continue;
-      if (assignData.className !== className) continue;
-      // Check if test actually exists (handles cases where tests were deleted without cascade)
-      const testSnap = await getDoc(doc(db, 'tests', assignData.testId));
-      if (testSnap.exists()) {
+      // 2. Get all submissions by this student
+      const subQ = query(collection(db, 'submissions'), where('studentEmail', '==', user?.email));
+      const subSnap = await getDocs(subQ);
+      const submittedAssignMap = new Map();
+      subSnap.docs.forEach(d => {
+        const sData = d.data();
+        submittedAssignMap.set(sData.assignmentId, { id: d.id, ...sData });
+      });
+
+      // Also check studentId matching if email didn't catch any
+      if (user?.uid) {
+        const subIdQ = query(collection(db, 'submissions'), where('studentId', '==', user.uid));
+        const subIdSnap = await getDocs(subIdQ);
+        subIdSnap.docs.forEach(d => {
+          const sData = d.data();
+          if (!submittedAssignMap.has(sData.assignmentId)) {
+            submittedAssignMap.set(sData.assignmentId, { id: d.id, ...sData });
+          }
+        });
+      }
+
+      // 3. Get assignments assigned to this class and grade
+      const snap = await getDocs(collection(db, 'assignments'));
+      const activeList: any[] = [];
+      const overdueList: any[] = [];
+      const doneList: any[] = [];
+
+      const now = new Date();
+
+      for (const d of snap.docs) {
+        const assignData = d.data();
+
+        // Filter by grade and class
+        if (Number(assignData.grade) !== Number(grade)) continue;
+        if (assignData.className !== className) continue;
+
+        // Verify that the underlying test document exists
+        const testSnap = await getDoc(doc(db, 'tests', assignData.testId));
+        if (!testSnap.exists()) {
+          // Clean up orphaned assignment safely
+          try {
+            await deleteDoc(doc(db, 'assignments', d.id));
+          } catch (e) {
+            console.error("Cleanup error", e);
+          }
+          continue;
+        }
+
         const subData = submittedAssignMap.get(d.id);
-        validAssignments.push({ 
-          id: d.id, 
-          ...assignData, 
-          isSubmitted: !!subData,
+        const isSubmitted = !!subData;
+
+        // Calculate due date taking student-specific extension into account
+        const dueDateToUse = (assignData.extensions && user?.uid && assignData.extensions[user.uid])
+          ? assignData.extensions[user.uid]
+          : assignData.dueDate;
+        
+        const isOverdue = !isSubmitted && dueDateToUse && (now > new Date(dueDateToUse));
+
+        const item = {
+          id: d.id,
+          ...assignData,
+          effectiveDueDate: dueDateToUse,
+          isSubmitted,
+          isOverdue,
+          submission: subData,
           score: subData?.score,
           maxScore: subData?.maxScore,
           submittedAt: subData?.submittedAt,
           timeSpent: subData?.timeSpent
-        });
-      } else {
-        // Clean up orphaned assignment
-        try {
-          await deleteDoc(doc(db, 'assignments', d.id));
-        } catch(e) {
-          console.error("Cleanup error", e);
+        };
+
+        if (isSubmitted) {
+          doneList.push(item);
+        } else if (isOverdue) {
+          overdueList.push(item);
+        } else {
+          activeList.push(item);
         }
       }
+
+      // Sort current assignments by due date (nearest first)
+      activeList.sort((a, b) => new Date(a.effectiveDueDate).getTime() - new Date(b.effectiveDueDate).getTime());
+
+      // Sort overdue assignments by due date (most recent overdue first)
+      overdueList.sort((a, b) => new Date(b.effectiveDueDate).getTime() - new Date(a.effectiveDueDate).getTime());
+
+      // Sort completed assignments by submission date (latest submitted first)
+      doneList.sort((a, b) => {
+        const timeA = new Date(a.submittedAt || a.createdAt).getTime();
+        const timeB = new Date(b.submittedAt || b.createdAt).getTime();
+        return timeB - timeA;
+      });
+
+      setCurrentAssignments(activeList);
+      setOverdueAssignments(overdueList);
+      setCompletedAssignments(doneList);
+    } catch (err) {
+      console.error("Error loading student dashboard data:", err);
+    } finally {
+      setLoading(false);
     }
-    
-    // Sort by due date
-    validAssignments.sort((a, b) => {
-      const aDue = a.extensions && user?.uid && a.extensions[user.uid] ? a.extensions[user.uid] : a.dueDate;
-      const bDue = b.extensions && user?.uid && b.extensions[user.uid] ? b.extensions[user.uid] : b.dueDate;
-      return new Date(aDue).getTime() - new Date(bDue).getTime();
-    });
-    
-    setAssignments(validAssignments);
-    setLoading(false);
   };
 
-  if (loading) return <div className="flex h-64 items-center justify-center">Đang tải bài tập...</div>;
+  const handleOpenReview = (assignment: any, submission: any) => {
+    setReviewState({ assignment, submission });
+  };
 
-  // Group assignments by date
-  const getDueDate = (a: any) => (a.extensions && user?.uid && a.extensions[user.uid]) ? a.extensions[user.uid] : a.dueDate;
-  const groupedAssignments: { [date: string]: any[] } = {};
-  assignments.forEach(a => {
-    const dateStr = new Date(a.dueDate).toLocaleDateString('vi-VN', {
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric'
-    });
-    if (!groupedAssignments[dateStr]) {
-      groupedAssignments[dateStr] = [];
-    }
-    groupedAssignments[dateStr].push(a);
-  });
+  if (loading) {
+    return (
+      <div className="flex flex-col h-72 items-center justify-center gap-3">
+        <RefreshCw size={28} className="animate-spin text-blue-600" />
+        <span className="text-sm font-medium text-gray-500">Đang tải dữ liệu học tập của bạn...</span>
+      </div>
+    );
+  }
+
+  // Calculate quick GPA for header summary
+  const totalCompleted = completedAssignments.length;
+  let avg10 = 0;
+  if (totalCompleted > 0) {
+    const sum = completedAssignments.reduce((acc, a) => {
+      const sub = a.submission || {};
+      const score = Number(sub.score || 0);
+      const max = Number(sub.maxScore || 10);
+      return acc + (max > 0 ? (score / max) * 10 : score);
+    }, 0);
+    avg10 = Math.round((sum / totalCompleted) * 100) / 100;
+  }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8 pb-10">
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-800">Bài tập của tôi</h2>
-          <p className="text-gray-500 mt-1">Danh sách các bài kiểm tra được giao theo ngày (Khối {userGrade})</p>
+    <div className="max-w-6xl mx-auto space-y-6 pb-12">
+      
+      {/* Student Welcome & Profile Banner */}
+      <div className="bg-white rounded-2xl p-5 sm:p-6 shadow-xs border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold text-xl shadow-xs shrink-0">
+            {studentInfo?.fullName ? studentInfo.fullName.charAt(0).toUpperCase() : <User size={26} />}
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
+                {studentInfo?.fullName || user?.displayName || 'Học sinh'}
+              </h1>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">
+                Lớp {studentInfo?.className || '--'}
+              </span>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                Khối {studentInfo?.grade || '--'}
+              </span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Email đăng nhập: <strong className="text-gray-700">{user?.email}</strong>
+            </p>
+          </div>
+        </div>
+
+        {/* Quick Progress Counters */}
+        <div className="flex items-center gap-3 self-start md:self-auto bg-gray-50/80 p-2 rounded-xl border border-gray-100">
+          <div className="px-3 py-1 text-center">
+            <div className="text-xs text-gray-400 font-medium">Cần làm</div>
+            <div className="text-base font-bold text-blue-600">{currentAssignments.length}</div>
+          </div>
+          <div className="w-px h-7 bg-gray-200"></div>
+          <div className="px-3 py-1 text-center">
+            <div className="text-xs text-gray-400 font-medium">Đã làm</div>
+            <div className="text-base font-bold text-emerald-600">{completedAssignments.length}</div>
+          </div>
+          <div className="w-px h-7 bg-gray-200"></div>
+          <div className="px-3 py-1 text-center">
+            <div className="text-xs text-gray-400 font-medium">ĐTB (Hệ 10)</div>
+            <div className="text-base font-bold text-indigo-600">
+              {totalCompleted > 0 ? avg10.toFixed(2).replace(/\.00$/, '') : '--'}
+            </div>
+          </div>
         </div>
       </div>
-      
-      {Object.keys(groupedAssignments).length > 0 ? (
-        <div className="space-y-8">
-          {Object.keys(groupedAssignments).map(dateKey => (
-            <div key={dateKey} className="space-y-4">
-              <h3 className="text-lg font-bold text-indigo-800 border-b border-indigo-100 pb-2 flex items-center gap-2">
-                <Calendar size={20} />
-                {dateKey}
-              </h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {groupedAssignments[dateKey].map(a => (
-                  <div key={a.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col hover:shadow-md transition-shadow">
-                    {a.isSubmitted ? (
-                    <>
-                      <div className="p-5 border-b border-gray-100 flex-1">
-                        <div className="flex justify-between items-start mb-3">
-                           <span className="text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider bg-green-100 text-green-700">
-                             Đã nộp bài
-                           </span>
-                        </div>
-                        <h3 className="font-bold text-gray-800 text-lg mb-4 line-clamp-2">{a.testTitle}</h3>
-                        <div className="space-y-2">
-                          <p className="text-sm text-gray-600 flex items-center gap-2">
-                            <Calendar size={14} className="text-gray-400" /> <span className="font-medium">Giao bài:</span> {((dateStr) => { const d = new Date(dateStr); return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')} ${d.toLocaleDateString('vi-VN')}` })(a.assignedDate || a.createdAt)}
-                          </p>
-                          <p className="text-sm text-gray-600 flex items-center gap-2">
-                            <Clock size={14} className="text-gray-400" /> <span className="font-medium">Nộp bài:</span> {((dateStr) => { const d = new Date(dateStr); return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')} ${d.toLocaleDateString('vi-VN')}` })(a.submittedAt)}
-                          </p>
-                          <p className="text-sm text-gray-600 flex items-center gap-2">
-                            <AlertCircle size={14} className="text-gray-400" /> <span className="font-medium">Thời gian làm:</span> {((seconds) => { if (!seconds) return '0 phút'; const m = Math.floor(seconds / 60); const s = seconds % 60; return m > 0 ? `${m} phút ${s} giây` : `${s} giây`; })(a.timeSpent)}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="p-4 bg-gray-50 flex items-center gap-3">
-                         <div className="flex-1 text-center bg-gray-200 text-gray-500 font-medium py-2 rounded-lg cursor-not-allowed">
-                            Đã làm bài
-                         </div>
-                         {a.score !== undefined && (
-                            <div className="px-3 py-2 bg-blue-100 text-blue-700 font-bold rounded-lg whitespace-nowrap">
-                              {Number(a.score).toFixed(2)} / {a.maxScore}
-                            </div>
-                         )}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                    <div className="p-5 border-b border-gray-100 flex-1">
-                      <div className="flex justify-end items-start mb-3">
-                        <span className="flex items-center gap-1 text-xs text-orange-600 font-medium bg-orange-50 px-2 py-1 rounded">
-                          <Clock size={12} /> Hạn nộp: {((dateStr) => { const d = new Date(dateStr); return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')} ${d.toLocaleDateString('vi-VN')}` })(getDueDate(a))}
-                        </span>
-                      </div>
-                      <h3 className="font-bold text-gray-800 text-lg mb-3 line-clamp-2">{a.testTitle}</h3>
-                      <div className="space-y-2">
-                        <p className="text-sm text-gray-600 flex items-center gap-2">
-                          <AlertCircle size={14} className="text-gray-400" /> <span className="font-medium">Thời lượng:</span> {a.testDuration} phút
-                        </p>
-                        <p className="text-sm text-gray-600 flex items-center gap-2">
-                          <Calendar size={14} className="text-gray-400" /> <span className="font-medium">Giao bài:</span> {((dateStr) => { const d = new Date(dateStr); return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')} ${d.toLocaleDateString('vi-VN')}` })(a.assignedDate || a.createdAt)}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="p-4 bg-gray-50 flex items-center gap-3">
-                        {new Date() > new Date(getDueDate(a)) ? (
-                            <div className="block w-full text-center bg-gray-300 text-gray-600 font-medium py-2 rounded-lg cursor-not-allowed">
-                              Quá hạn thời gian làm bài
-                            </div>
-                        ) : (
-                            <Link to={`/assignment/${a.id}`} className="block w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg transition-colors">
-                              Làm bài ngay
-                            </Link>
-                        )}
-                    </div>
-                    </>
-                  )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 py-16 text-center text-gray-500">
-          <CheckCircle2 size={56} className="mx-auto mb-4 text-green-400" />
-          <p className="text-xl font-medium text-gray-800 mb-2">Tuyệt vời!</p>
-          <p>Bạn không có bài tập nào cần làm lúc này.</p>
-        </div>
+
+      {/* Main Tab Navigation */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 pb-3">
+        
+        {/* Tab 1: Bài kiểm tra hiện tại */}
+        <button
+          onClick={() => setActiveTab('current')}
+          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'current'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'bg-white text-gray-600 hover:text-gray-900 border border-gray-200 hover:bg-gray-50'
+          }`}
+        >
+          <BookOpen size={16} />
+          <span>Bài kiểm tra hiện tại</span>
+          {currentAssignments.length > 0 && (
+            <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+              activeTab === 'current' ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-700'
+            }`}>
+              {currentAssignments.length}
+            </span>
+          )}
+        </button>
+
+        {/* Tab 2: Bài kiểm tra quá hạn */}
+        <button
+          onClick={() => setActiveTab('overdue')}
+          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'overdue'
+              ? 'bg-rose-600 text-white shadow-xs'
+              : 'bg-white text-gray-600 hover:text-gray-900 border border-gray-200 hover:bg-gray-50'
+          }`}
+        >
+          <AlertTriangle size={16} />
+          <span>Bài kiểm tra quá hạn</span>
+          {overdueAssignments.length > 0 && (
+            <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+              activeTab === 'overdue' ? 'bg-white/20 text-white' : 'bg-rose-100 text-rose-700'
+            }`}>
+              {overdueAssignments.length}
+            </span>
+          )}
+        </button>
+
+        {/* Tab 3: Bài kiểm tra đã làm */}
+        <button
+          onClick={() => setActiveTab('completed')}
+          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'completed'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'bg-white text-gray-600 hover:text-gray-900 border border-gray-200 hover:bg-gray-50'
+          }`}
+        >
+          <CheckCircle2 size={16} />
+          <span>Bài kiểm tra đã làm</span>
+          {completedAssignments.length > 0 && (
+            <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+              activeTab === 'completed' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'
+            }`}>
+              {completedAssignments.length}
+            </span>
+          )}
+        </button>
+
+        {/* Tab 4: Sổ kết quả cá nhân */}
+        <button
+          onClick={() => setActiveTab('gradebook')}
+          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'gradebook'
+              ? 'bg-indigo-600 text-white shadow-xs'
+              : 'bg-white text-gray-600 hover:text-gray-900 border border-gray-200 hover:bg-gray-50'
+          }`}
+        >
+          <Award size={16} />
+          <span>Sổ kết quả cá nhân</span>
+        </button>
+      </div>
+
+      {/* Tab Content Display */}
+      <div>
+        {activeTab === 'current' && (
+          <CurrentAssignmentsList 
+            assignments={currentAssignments} 
+            user={user} 
+          />
+        )}
+
+        {activeTab === 'overdue' && (
+          <OverdueAssignmentsList 
+            assignments={overdueAssignments} 
+            user={user} 
+          />
+        )}
+
+        {activeTab === 'completed' && (
+          <CompletedAssignmentsList 
+            assignments={completedAssignments} 
+            onReview={handleOpenReview} 
+          />
+        )}
+
+        {activeTab === 'gradebook' && (
+          <StudentGradebook 
+            user={user} 
+            studentInfo={studentInfo} 
+            completedAssignments={completedAssignments} 
+            onReview={handleOpenReview} 
+          />
+        )}
+      </div>
+
+      {/* Review Modal for submitted tests */}
+      {reviewState && (
+        <StudentResultModal
+          assignment={reviewState.assignment}
+          submission={reviewState.submission}
+          onClose={() => setReviewState(null)}
+        />
       )}
+
     </div>
   );
 }
+

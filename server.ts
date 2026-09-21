@@ -295,7 +295,7 @@ function reconcileAnswersWithExplanations(questions: any[]): any[] {
     const explanation = (q.explanation || '').toString().trim();
     const qText = (q.question || '').toString();
 
-    // Check specific math cases (e.g. y = (x-2)/(x-m) dong bien tren [-10; 10])
+    // 1. Trường hợp đặc biệt: y = (x-2)/(x-m) đồng biến trên [-10; 10]
     if (
       (qText.includes('x-2') || qText.includes('x - 2')) && 
       (qText.includes('x-m') || qText.includes('x - m')) && 
@@ -307,11 +307,76 @@ function reconcileAnswersWithExplanations(questions: any[]): any[] {
       }
     }
 
+    // 2. Trường hợp đặc biệt: Phương trình lượng giác (2cos^2 x - 1) - 3cos x + 2 = 0 hoặc tương đương trên [0; 2pi]
+    if (
+      (qText.includes('cos') || explanation.includes('cos')) &&
+      (qText.includes('[0; 2') || explanation.includes('[0; 2') || explanation.includes('[0, 2')) &&
+      (explanation.includes('4 nghiệm') || explanation.includes('bốn nghiệm') || explanation.includes('có đúng 4'))
+    ) {
+      if (correctAnswer !== '4') {
+        console.log(`[Reconcile] Auto-healed trigonometric roots from "${correctAnswer}" to "4" matching explanation.`);
+        correctAnswer = '4';
+      }
+    }
+
     if (explanation) {
-      // Check count expressions: "Vậy có X giá trị nguyên" / "Số giá trị nguyên là ... = X"
-      const countMatch = explanation.match(/(?:vậy\s+có|số\s+giá\s+trị\s+nguyên\s+là[^\.\n]*?=\s*|có\s+tất\s+cả|tổng\s+cộng\s+có)\s*(\d+)\s*giá\s+trị/i)
-        || explanation.match(/vậy\s+có\s*(\d+)\s*giá\s+trị\s*(?:nguyên)?/i)
-        || explanation.match(/vậy\s+(\d+)\s*giá\s+trị\s+nguyên/i);
+      // 3. Nhận diện số lượng NGHIỆM: "Như vậy có đúng 4 nghiệm", "Có tất cả 4 nghiệm", "Vậy phương trình có 4 nghiệm", "Số nghiệm là 4"
+      const rootRegexes = [
+        /(?:như\s+vậy\s+có\s+đúng|khoan[^\.\n]*?như\s+vậy\s+có\s+đúng)\s*(\d+)\s*nghiệm/i,
+        /(?:có\s+tất\s+cả|tổng\s+cộng\s+có)\s*(\d+)\s*nghiệm/i,
+        /(?:kết\s*luận[^\.\n]*?|do\s+đó[^\.\n]*?|như\s+vậy[^\.\n]*?)có\s*(\d+)\s*nghiệm/i,
+        /số\s+nghiệm\s+(?:của\s+phương\s+trình\s+)?(?:đã\s+cho\s+)?(?:trên[^\.\n]*?)?là[^\.\n]*?(\d+)(?:\s|$|\.)/i,
+        /vậy\s+(?:phương\s+trình\s+)?(?:đã\s+cho\s+)?có\s*(\d+)\s*nghiệm/i,
+        /(?:phương\s+trình\s+)?có\s*(\d+)\s*nghiệm\s*(?:thỏa\s+mãn|phân\s+biệt)?(?:\s|$|\.)/i
+      ];
+      for (const regex of rootRegexes) {
+        const match = explanation.match(regex);
+        if (match && match[1]) {
+          const val = match[1].trim();
+          if (correctAnswer && correctAnswer !== val) {
+            console.log(`[Reconcile] Fixed answer from "${correctAnswer}" to "${val}" based on roots count in explanation.`);
+            correctAnswer = val;
+            break;
+          }
+        }
+      }
+
+      // Quét câu kết luận cuối cùng (250 ký tự cuối) để tìm kết luận số nghiệm
+      const tail = explanation.slice(-250);
+      const tailRootMatch = tail.match(/(?:có|được|gồm)\s*(?:đúng\s*)?(\d+)\s*nghiệm/i);
+      if (tailRootMatch && tailRootMatch[1]) {
+        const val = tailRootMatch[1].trim();
+        if (correctAnswer && correctAnswer !== val && /^\d+$/.test(correctAnswer)) {
+          console.log(`[Reconcile] Fixed answer from "${correctAnswer}" to "${val}" based on tail roots conclusion.`);
+          correctAnswer = val;
+        }
+      }
+
+      // 4. Nhận diện số lượng CỰC TRỊ / TIỆM CẬN
+      const extremaRegexes = [
+        /(?:như\s+vậy\s+có\s+đúng|có\s+tất\s+cả|tổng\s+cộng\s+có|vậy\s+có|hàm\s+số\s+có)\s*(\d+)\s*(?:điểm\s+cực\s+trị|cực\s+trị)/i,
+        /số\s+điểm\s+cực\s+trị\s+(?:của\s+hàm\s+số\s+)?là[^\.\n]*?(\d+)/i,
+        /(?:như\s+vậy\s+có\s+đúng|có\s+tất\s+cả|tổng\s+cộng\s+có|vậy\s+có|đồ\s+thị\s+có)\s*(\d+)\s*(?:đường\s+tiệm\s+cận|tiệm\s+cận)/i,
+        /số\s+đường\s+tiệm\s+cận\s+(?:của\s+đồ\s+thị\s+)?là[^\.\n]*?(\d+)/i
+      ];
+      for (const regex of extremaRegexes) {
+        const match = explanation.match(regex);
+        if (match && match[1]) {
+          const val = match[1].trim();
+          if (correctAnswer && correctAnswer !== val) {
+            console.log(`[Reconcile] Fixed answer from "${correctAnswer}" to "${val}" based on extrema/asymptote in explanation.`);
+            correctAnswer = val;
+            break;
+          }
+        }
+      }
+
+      // 5. Nhận diện số lượng GIÁ TRỊ NGUYÊN / GIÁ TRỊ: "Vậy có X giá trị nguyên" / "Số giá trị nguyên là ... = X"
+      const countMatch = explanation.match(/(?:như\s+vậy\s+có\s+đúng|khoan[^\.\n]*?như\s+vậy\s+có\s+đúng)\s*(\d+)\s*giá\s+trị/i)
+        || explanation.match(/(?:vậy\s+có|số\s+giá\s+trị\s+(?:nguyên|thực|m)?\s*(?:của\s+m\s+)?là[^\.\n]*?=\s*|có\s+tất\s+cả|tổng\s+cộng\s+có)\s*(\d+)\s*giá\s+trị/i)
+        || explanation.match(/vậy\s+có\s*(\d+)\s*giá\s+trị\s*(?:nguyên|thực)?/i)
+        || explanation.match(/vậy\s+(\d+)\s*giá\s+trị\s+nguyên/i)
+        || explanation.match(/(?:có\s+tất\s+cả|tổng\s+cộng\s+có|vậy\s+có)\s*(\d+)\s*(?:số\s+nguyên|phần\s+tử|cách)/i);
       if (countMatch && countMatch[1]) {
         const expected = countMatch[1].trim();
         if (correctAnswer && correctAnswer !== expected) {
@@ -320,7 +385,7 @@ function reconcileAnswersWithExplanations(questions: any[]): any[] {
         }
       }
 
-      // Check "Đáp số: X" or "Kết quả: X"
+      // 6. Check "Đáp số: X" or "Kết quả: X"
       const resultMatch = explanation.match(/(?:đáp\s*số|kết\s*quả\s*là|vậy\s*(?:kết\s*quả|đáp\s*số)?\s*[:=])\s*([0-9\/\-\.]+)(?:\s|$|\.)/i);
       if (resultMatch && resultMatch[1]) {
         const expected = resultMatch[1].trim();
@@ -331,7 +396,18 @@ function reconcileAnswersWithExplanations(questions: any[]): any[] {
         }
       }
 
-      // Check MCQ: "Chọn A" / "Chọn B"
+      // 7. Check formula conclusion at tail "= X."
+      const tailEqMatch = tail.match(/(?:vậy|do\s+đó|như\s+vậy|kết\s+luận)[^.\n]*?=\s*([0-9\/\-\.]+)\.?$/i);
+      if (tailEqMatch && tailEqMatch[1]) {
+        const val = tailEqMatch[1].trim();
+        const isMcqLetter = /^[A-D]$/i.test(correctAnswer);
+        if ((!isMcqLetter || !q.options || q.options.length === 0) && correctAnswer && correctAnswer !== val) {
+          console.log(`[Reconcile] Fixed tail formula answer from "${correctAnswer}" to "${val}".`);
+          correctAnswer = val;
+        }
+      }
+
+      // 8. Check MCQ: "Chọn A" / "Chọn B"
       if (q.type === 'mcq' || (Array.isArray(q.options) && q.options.length > 0)) {
         const mcqMatch = explanation.match(/(?:chọn|đáp\s*án\s*đúng\s*là|vậy\s*chọn)\s*(?:phương\s*án\s*|đáp\s*án\s*)?([A-D])\b/i);
         if (mcqMatch && mcqMatch[1]) {
@@ -726,9 +802,14 @@ For each question, output an object in a JSON array with the following fields:
 - "type": "mcq" (for multiple choice), "tf" (for true/false), "short" (for short fill-in-the-blank), or "essay" (for long answer)
 - "question": The full text of the question in Vietnamese. IMPORTANT: Any math formulas, variables, and vectors MUST be wrapped in LaTeX delimiters: use $...$ for inline math and $$...$$ for block math. Example: $\\overrightarrow{AB}$, $\\frac{a}{b}$, $\\sqrt{x}$, $90^\\circ$.
 - "options": An array of strings for MCQ choices (A, B, C, D) or TF sub-statements (a, b, c, d). QUY TẮC CÔNG THỨC TOÁN: MỌI biểu thức toán, lũy thừa, chỉ số dưới (ví dụ: "$3x^2 - 3$", "$u_2 = 3$") BẮT BUỘC PHẢI ĐƯỢC BỌC TRONG $...$. TUYỆT ĐỐI KHÔNG ĐƯỢC ghi "3x^2 - 3" thiếu $ hoặc "u_2 = 3$." (thiếu dấu $ mở đầu hoặc thừa dấu chấm sau $). Viết chuẩn: "A. $3x^2 - 3$", "B. $3x^2 + 3$" hoặc "a) $u_2 = 3$", "b) $u_3 = 7$".
-- "correctAnswer": The correct answer text.
+- "explanation": A concise, step-by-step mathematical explanation (lời giải chi tiết) in Vietnamese with LaTeX formulas. Suy luận từng bước và chốt câu kết luận rõ ràng (ví dụ: "Như vậy có đúng 4 nghiệm.").
+- "correctAnswer": The correct answer text. BẮT BUỘC TRÙNG KHỚP 100% VỚI KẾT QUẢ CUỐI CÙNG TRONG "explanation". Nếu lời giải kết luận 4 nghiệm thì correctAnswer PHẢI LÀ "4", không được lệch (ví dụ tuyệt đối không ghi "3").
 - "points": A number (e.g., 0.25 cho MCQ, 1.0 cho TF, 0.5 cho Short).
-- "explanation": A concise, step-by-step mathematical explanation (lời giải chi tiết) in Vietnamese with LaTeX formulas.
+
+*** QUY TẮC ĐỐI SOÁT ĐÁP ÁN VÀ LỜI GIẢI (QUAN TRỌNG BẬC NHẤT) ***
+1. TRƯỜNG "correctAnswer" BẮT BUỘC PHẢI TRÙNG KHỚP 100% VỚI KẾT QUẢ CUỐI CÙNG TRONG "explanation".
+   - Tuyệt đối không để xảy ra việc lời giải chi tiết giải ra một kết quả (ví dụ: "Như vậy có đúng 4 nghiệm", "Vậy có 12 giá trị nguyên", "Chọn C") nhưng "correctAnswer" lại ghi số khác (ví dụ: "3" hoặc "8" hoặc "A").
+   - Khi giải bài toán, hãy kiểm tra kỹ số nghiệm trên khoảng/đoạn cho trước (chú ý xét đủ các đầu mút như 0 và 2π). Kết quả ở câu kết luận của "explanation" phải được điền chính xác vào "correctAnswer".
 
 *** NGUYÊN TẮC BẮT BUỘC VỀ HÌNH VẼ & BẢNG BIỂU MINH HỌA (QUAN TRỌNG NHẤT) ***
 1. CHỈ CÂU HỎI NÀO TRONG ĐỀ BÀI CÓ CHO BẢNG HOẶC CHO HÌNH VẼ TRONG GIẢ THIẾT thì mới cung cấp hình vẽ hoặc bảng biểu minh họa ("figureType": "svg" hoặc "table"):

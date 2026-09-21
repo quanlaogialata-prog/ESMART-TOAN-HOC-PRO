@@ -7,7 +7,7 @@ import { Clock, CheckCircle, AlertCircle, FileText, Upload, ArrowLeft, PenTool, 
 import DrawingPad from '../../components/DrawingPad';
 import MathText from '../../components/MathText';
 import QuestionVisualRenderer from '../../components/common/QuestionVisualRenderer';
-import { gradeQuestion, resolveMcqLetter, parseTfSubAnswers, cleanOptionText, stripOptionPrefix } from '../../utils/gradeEngine';
+import { gradeQuestion, resolveMcqLetter, parseTfSubAnswers, cleanOptionText, stripOptionPrefix, autoReconcileQuestion } from '../../utils/gradeEngine';
 
 export default function DoAssignment() {
   const { assignmentId } = useParams();
@@ -146,13 +146,16 @@ export default function DoAssignment() {
           }
         }
 
-        // ensure IDs exist and types are normalized
+        // ensure IDs exist, types are normalized, and answers are reconciled with explanations
         if (!Array.isArray(parsedQuestions)) parsedQuestions = [];
-        parsedQuestions = parsedQuestions.map((q: any, i: number) => ({ 
-          ...q, 
-          id: q.id || `q${i}`,
-          type: (q.type || 'mcq').toString().toLowerCase().trim()
-        }));
+        parsedQuestions = parsedQuestions.map((q: any, i: number) => {
+          const rec = autoReconcileQuestion(q);
+          return { 
+            ...rec.question, 
+            id: rec.question.id || `q${i}`,
+            type: (rec.question.type || 'mcq').toString().toLowerCase().trim()
+          };
+        });
         setQuestions(parsedQuestions);
 
         // Auto-correct any legacy grading mismatches for existing submission
@@ -169,7 +172,11 @@ export default function DoAssignment() {
 
             if (q.type !== 'essay') {
               const freshGrade = gradeQuestion(q, stAns);
-              if (oldFb.score !== freshGrade.score || oldFb.feedback !== freshGrade.feedback) {
+              if (
+                oldFb.score !== freshGrade.score || 
+                oldFb.feedback !== freshGrade.feedback ||
+                oldFb.correctAnswer !== (freshGrade.correctAnswerDisplay || q.correctAnswer)
+              ) {
                 needsUpdate = true;
               }
               updatedFeedback[idx] = {

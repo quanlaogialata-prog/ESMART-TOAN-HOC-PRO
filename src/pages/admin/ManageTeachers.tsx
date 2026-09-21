@@ -3,7 +3,7 @@ import { collection, getDocs, updateDoc, doc, setDoc, addDoc, deleteDoc, query, 
 import { initializeApp, deleteApp, getApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword, updatePassword, deleteUser } from 'firebase/auth';
 import { db, firebaseConfig } from '../../lib/firebase';
-import { Users, UserPlus, BookOpen, Database, Key, Trash2, FileSpreadsheet, Download } from 'lucide-react';
+import { Users, UserPlus, BookOpen, Database, Key, Trash2, FileSpreadsheet, Download, Pencil, ArrowRightLeft, X } from 'lucide-react';
 import ExportStudentAccountsModal from '../../components/ExportStudentAccountsModal';
 
 export default function AdminDashboard() {
@@ -128,6 +128,20 @@ export default function AdminDashboard() {
   const [classFormName, setClassFormName] = useState('');
   const [newPerms, setNewPerms] = useState({ lessons: true, tests: true });
   const [creatingUser, setCreatingUser] = useState(false);
+
+  // Edit Class State
+  const [editingClass, setEditingClass] = useState<any | null>(null);
+  const [editClassName, setEditClassName] = useState('');
+  const [editClassGrade, setEditClassGrade] = useState('9');
+  const [isSavingClassEdit, setIsSavingClassEdit] = useState(false);
+
+  // Student Class Transfer State
+  const [transferModalStudent, setTransferModalStudent] = useState<any | null>(null);
+  const [transferTargetClassId, setTransferTargetClassId] = useState('');
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [showBulkTransferModal, setShowBulkTransferModal] = useState(false);
+  const [bulkTargetClassId, setBulkTargetClassId] = useState('');
+  const [isTransferring, setIsTransferring] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -351,14 +365,224 @@ export default function AdminDashboard() {
 
   const handleCreateClass = async (e: React.FormEvent) => {
     e.preventDefault();
-    if(!classFormName) return;
-    await addDoc(collection(db, 'classes'), {
-      grade: classFormGrade,
-      name: classFormName
-    });
-    setClassFormName('');
-    setShowClassModal(false);
-    loadData();
+    const trimmedName = classFormName.trim();
+    if (!trimmedName) return;
+
+    const duplicate = schoolClasses.some(
+      c => String(c.grade) === String(classFormGrade) && 
+           c.name.trim().toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (duplicate) {
+      setSysError(`Đã tồn tại lớp "${trimmedName}" trong Khối ${classFormGrade}. Vui lòng nhập tên khác.`);
+      setTimeout(() => setSysError(''), 4000);
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, 'classes'), {
+        grade: classFormGrade,
+        name: trimmedName
+      });
+      setClassFormName('');
+      setShowClassModal(false);
+      setSysMsg(`Đã thêm lớp "${trimmedName}" (Khối ${classFormGrade}) thành công!`);
+      setTimeout(() => setSysMsg(''), 3000);
+      loadData();
+    } catch (err: any) {
+      console.error('Lỗi khi thêm lớp:', err);
+      setSysError('Lỗi khi thêm lớp: ' + err.message);
+    }
+  };
+
+  const handleSaveEditClass = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingClass) return;
+    const trimmedName = editClassName.trim();
+    if (!trimmedName) {
+      setSysError('Tên lớp không được để trống.');
+      setTimeout(() => setSysError(''), 3000);
+      return;
+    }
+
+    const duplicate = schoolClasses.some(
+      c => c.id !== editingClass.id && 
+           String(c.grade) === String(editClassGrade) && 
+           c.name.trim().toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (duplicate) {
+      setSysError(`Đã tồn tại lớp "${trimmedName}" trong Khối ${editClassGrade}. Vui lòng chọn tên khác.`);
+      setTimeout(() => setSysError(''), 4000);
+      return;
+    }
+
+    setIsSavingClassEdit(true);
+    setSysMsg('Đang cập nhật thông tin lớp học...');
+    setSysError('');
+
+    try {
+      const oldName = editingClass.name;
+      const oldGrade = String(editingClass.grade || '9');
+      const newGrade = String(editClassGrade);
+
+      // 1. Cập nhật document lớp trong collection 'classes'
+      await updateDoc(doc(db, 'classes', editingClass.id), {
+        name: trimmedName,
+        grade: newGrade
+      });
+
+      let updatedStudentsCount = 0;
+      // 2. Nếu đổi tên lớp hoặc khối, đồng bộ tên lớp mới cho toàn bộ học sinh thuộc lớp cũ
+      if (oldName !== trimmedName || oldGrade !== newGrade) {
+        const studentsToUpdate = users.filter(
+          u => u.role === 'student' && 
+               u.className === oldName && 
+               String(u.grade || '') === oldGrade
+        );
+
+        if (studentsToUpdate.length > 0) {
+          await Promise.all(
+            studentsToUpdate.map(u => 
+              updateDoc(doc(db, 'users', u.id), {
+                className: trimmedName,
+                grade: newGrade
+              })
+            )
+          );
+          updatedStudentsCount = studentsToUpdate.length;
+        }
+
+        // Cập nhật assignments nếu có
+        try {
+          const qAsm = query(collection(db, 'assignments'), where('className', '==', oldName));
+          const snapAsm = await getDocs(qAsm);
+          const asmToUpdate = snapAsm.docs.filter(d => String(d.data().grade || '') === oldGrade);
+          if (asmToUpdate.length > 0) {
+            await Promise.all(
+              asmToUpdate.map(d => updateDoc(d.ref, { className: trimmedName, grade: newGrade }))
+            );
+          }
+        } catch (err) {
+          console.warn('Lỗi khi cập nhật assignments:', err);
+        }
+      }
+
+      setSysMsg(`Đã đổi tên lớp thành "${trimmedName}" (Khối ${newGrade})${updatedStudentsCount > 0 ? ` và cập nhật ${updatedStudentsCount} học sinh` : ''} thành công!`);
+      setEditingClass(null);
+      await loadData();
+      setTimeout(() => setSysMsg(''), 4000);
+    } catch (err: any) {
+      console.error('Lỗi khi cập nhật tên lớp:', err);
+      setSysError('Lỗi cập nhật tên lớp: ' + err.message);
+    } finally {
+      setIsSavingClassEdit(false);
+    }
+  };
+
+  const handleTransferSingleStudent = async () => {
+    if (!transferModalStudent || !transferTargetClassId) {
+      setSysError('Vui lòng chọn lớp chuyển đến.');
+      setTimeout(() => setSysError(''), 3000);
+      return;
+    }
+
+    const targetCls = schoolClasses.find(c => c.id === transferTargetClassId);
+    if (!targetCls) {
+      setSysError('Lớp chuyển đến không hợp lệ.');
+      setTimeout(() => setSysError(''), 3000);
+      return;
+    }
+
+    if (transferModalStudent.className === targetCls.name && String(transferModalStudent.grade) === String(targetCls.grade)) {
+      setSysError('Học sinh hiện đã ở lớp này rồi.');
+      setTimeout(() => setSysError(''), 3000);
+      return;
+    }
+
+    setIsTransferring(true);
+    setSysMsg(`Đang chuyển học sinh sang lớp ${targetCls.name}...`);
+    setSysError('');
+
+    try {
+      await updateDoc(doc(db, 'users', transferModalStudent.id), {
+        className: targetCls.name,
+        grade: String(targetCls.grade)
+      });
+
+      setSysMsg(`Đã chuyển học sinh "${transferModalStudent.fullName || transferModalStudent.displayName}" sang lớp ${targetCls.name} (Khối ${targetCls.grade}) thành công!`);
+      setTransferModalStudent(null);
+      setTransferTargetClassId('');
+      await loadData();
+      setTimeout(() => setSysMsg(''), 4000);
+    } catch (err: any) {
+      console.error('Lỗi khi chuyển lớp học sinh:', err);
+      setSysError('Lỗi khi chuyển lớp: ' + err.message);
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
+  const handleBulkTransferStudents = async () => {
+    if (selectedStudentIds.length === 0) {
+      setSysError('Chưa chọn học sinh nào để chuyển lớp.');
+      setTimeout(() => setSysError(''), 3000);
+      return;
+    }
+    if (!bulkTargetClassId) {
+      setSysError('Vui lòng chọn lớp chuyển đến.');
+      setTimeout(() => setSysError(''), 3000);
+      return;
+    }
+
+    const targetCls = schoolClasses.find(c => c.id === bulkTargetClassId);
+    if (!targetCls) {
+      setSysError('Lớp chuyển đến không hợp lệ.');
+      setTimeout(() => setSysError(''), 3000);
+      return;
+    }
+
+    setIsTransferring(true);
+    setSysMsg(`Đang chuyển ${selectedStudentIds.length} học sinh sang lớp ${targetCls.name}...`);
+    setSysError('');
+
+    try {
+      await Promise.all(
+        selectedStudentIds.map(studentId =>
+          updateDoc(doc(db, 'users', studentId), {
+            className: targetCls.name,
+            grade: String(targetCls.grade)
+          })
+        )
+      );
+
+      setSysMsg(`Đã chuyển thành công ${selectedStudentIds.length} học sinh sang lớp ${targetCls.name} (Khối ${targetCls.grade})!`);
+      setShowBulkTransferModal(false);
+      setSelectedStudentIds([]);
+      setBulkTargetClassId('');
+      await loadData();
+      setTimeout(() => setSysMsg(''), 4000);
+    } catch (err: any) {
+      console.error('Lỗi khi chuyển lớp hàng loạt:', err);
+      setSysError('Lỗi khi chuyển lớp hàng loạt: ' + err.message);
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
+  const toggleSelectAllStudents = () => {
+    const studentUserIds = filteredUsers.filter(u => u.role === 'student').map(u => u.id);
+    if (studentUserIds.length === 0) return;
+    const allSelected = studentUserIds.every(id => selectedStudentIds.includes(id));
+    if (allSelected) {
+      setSelectedStudentIds(prev => prev.filter(id => !studentUserIds.includes(id)));
+    } else {
+      setSelectedStudentIds(prev => Array.from(new Set([...prev, ...studentUserIds])));
+    }
+  };
+
+  const toggleSelectStudent = (id: string) => {
+    setSelectedStudentIds(prev =>
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
   };
 
   
@@ -539,6 +763,30 @@ export default function AdminDashboard() {
         </div>
       </div>
 
+      {sysMsg && (
+        <div className="p-4 bg-green-50 border border-green-200 text-green-800 rounded-xl text-sm font-medium flex items-center justify-between shadow-2xs animate-fade-in">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-green-500"></span>
+            {sysMsg}
+          </div>
+          <button onClick={() => setSysMsg('')} className="text-green-600 hover:text-green-800 p-1 rounded cursor-pointer">
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {sysError && (
+        <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl text-sm font-medium flex items-center justify-between shadow-2xs animate-fade-in">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-red-500"></span>
+            {sysError}
+          </div>
+          <button onClick={() => setSysError('')} className="text-red-600 hover:text-red-800 p-1 rounded cursor-pointer">
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div 
           onClick={() => setActiveTab('teacher')}
@@ -644,10 +892,22 @@ export default function AdminDashboard() {
                 <Key size={14} /> {syncingPasswords ? 'Đang đồng bộ...' : 'Đồng bộ Mật khẩu'}
               </button>
             )}
+            {activeTab === 'student' && selectedStudentIds.length > 0 && (
+              <button
+                onClick={() => {
+                  setBulkTargetClassId('');
+                  setShowBulkTransferModal(true);
+                }}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer animate-fade-in"
+                title="Chuyển các học sinh đã chọn sang một lớp khác"
+              >
+                <ArrowRightLeft size={14} /> Chuyển lớp ({selectedStudentIds.length} HS)
+              </button>
+            )}
             {activeTab === 'student' && (
               <button 
                 onClick={() => setShowImportModal(true)}
-                className="bg-green-700 text-white px-3.5 py-2 rounded-lg font-medium text-xs flex items-center gap-1.5 hover:bg-green-800"
+                className="bg-green-700 text-white px-3.5 py-2 rounded-lg font-medium text-xs flex items-center gap-1.5 hover:bg-green-800 cursor-pointer"
               >
                 Nhập danh sách
               </button>
@@ -661,7 +921,7 @@ export default function AdminDashboard() {
                   setShowAddModal(true);
                 }
               }}
-              className="bg-blue-600 text-white px-3.5 py-2 rounded-lg font-medium text-xs flex items-center gap-1.5 hover:bg-blue-700"
+              className="bg-blue-600 text-white px-3.5 py-2 rounded-lg font-medium text-xs flex items-center gap-1.5 hover:bg-blue-700 cursor-pointer"
             >
               <UserPlus size={15} /> Thêm {activeTab === 'teacher' ? 'giáo viên' : activeTab === 'student' ? 'học sinh' : 'khối lớp'}
             </button>
@@ -673,6 +933,20 @@ export default function AdminDashboard() {
           <table className="w-full text-left text-sm">
             <thead className="bg-gray-50 text-gray-600 border-b">
               <tr>
+                {activeTab === 'student' && (
+                  <th className="px-4 py-4 w-10 text-center">
+                    <input
+                      type="checkbox"
+                      checked={
+                        filteredUsers.filter(u => u.role === 'student').length > 0 &&
+                        filteredUsers.filter(u => u.role === 'student').every(u => selectedStudentIds.includes(u.id))
+                      }
+                      onChange={toggleSelectAllStudents}
+                      title="Chọn tất cả học sinh đang hiển thị"
+                      className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer"
+                    />
+                  </th>
+                )}
                 <th className="px-6 py-4 font-medium">Họ và Tên</th>
                 <th className="px-6 py-4 font-medium">
                   {activeTab === 'student' ? 'Tên đăng nhập' : 'Tên hiển thị'}
@@ -687,11 +961,21 @@ export default function AdminDashboard() {
             <tbody className="divide-y divide-gray-100">
               {filteredUsers.length === 0 && (
                 <tr>
-                  <td colSpan={activeTab === 'student' ? 7 : 4} className="px-6 py-8 text-center text-gray-500">Chưa có dữ liệu</td>
+                  <td colSpan={activeTab === 'student' ? 8 : 4} className="px-6 py-8 text-center text-gray-500">Chưa có dữ liệu</td>
                 </tr>
               )}
               {filteredUsers.map(u => (
-                <tr key={u.id} className="hover:bg-gray-50/50">
+                <tr key={u.id} className={`hover:bg-gray-50/50 ${selectedStudentIds.includes(u.id) ? 'bg-indigo-50/40' : ''}`}>
+                  {activeTab === 'student' && (
+                    <td className="px-4 py-4 text-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedStudentIds.includes(u.id)}
+                        onChange={() => toggleSelectStudent(u.id)}
+                        className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer"
+                      />
+                    </td>
+                  )}
                   <td className="px-6 py-4 font-medium text-gray-800">{u.fullName || u.displayName}</td>
                   <td className="px-6 py-4 text-gray-600">
                     {activeTab === 'student' ? (
@@ -718,9 +1002,23 @@ export default function AdminDashboard() {
                   )}
                   {activeTab === 'student' && (
                     <td className="px-4 py-4 text-gray-600 font-medium">
-                      <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-100 text-xs">
-                        {u.className || '-'}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-100 text-xs font-semibold">
+                          {u.className || '-'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTransferModalStudent(u);
+                            const currentCls = schoolClasses.find(c => c.name === u.className && String(c.grade) === String(u.grade));
+                            setTransferTargetClassId(currentCls ? currentCls.id : '');
+                          }}
+                          title={`Chuyển lớp cho ${u.fullName || u.displayName}`}
+                          className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors cursor-pointer"
+                        >
+                          <ArrowRightLeft size={13} />
+                        </button>
+                      </div>
                     </td>
                   )}
                   {activeTab === 'student' && (
@@ -730,6 +1028,18 @@ export default function AdminDashboard() {
                       <div className="flex gap-2 items-center flex-wrap">
                         {u.role === 'student' ? (
                           <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTransferModalStudent(u);
+                                const currentCls = schoolClasses.find(c => c.name === u.className && String(c.grade) === String(u.grade));
+                                setTransferTargetClassId(currentCls ? currentCls.id : '');
+                              }}
+                              className="text-xs px-2.5 py-1 rounded-md border bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1 font-semibold transition-colors cursor-pointer"
+                              title={`Chuyển học sinh ${u.fullName || u.displayName} sang lớp khác`}
+                            >
+                              <ArrowRightLeft size={12} /> Chuyển lớp
+                            </button>
                             <button 
                               onClick={() => togglePermission(u.id, u.permissions || {lessons:true, tests:true}, 'lessons')}
                               className={`text-xs px-2 py-1 rounded border ${u.permissions?.lessons !== false ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}
@@ -742,8 +1052,8 @@ export default function AdminDashboard() {
                             >
                               Kiểm tra: {u.permissions?.tests !== false ? 'Bật' : 'Tắt'}
                             </button>
-                            <button onClick={() => { setEditingUserPass(u); setNewPass(''); setSysError(''); }} className="text-xs px-2 py-1 rounded border bg-blue-50 border-blue-200 text-blue-700">Đổi MK</button>
-                            <button onClick={() => handleDeleteUser(u)} className={`text-xs px-2 py-1 rounded border ${userToDelete === u.id ? 'bg-red-600 text-white border-red-600' : 'bg-red-50 border-red-200 text-red-700'}`}>{userToDelete === u.id ? 'Xác nhận xóa' : 'Xóa'}</button>
+                            <button onClick={() => { setEditingUserPass(u); setNewPass(''); setSysError(''); }} className="text-xs px-2 py-1 rounded border bg-blue-50 border-blue-200 text-blue-700 cursor-pointer">Đổi MK</button>
+                            <button onClick={() => handleDeleteUser(u)} className={`text-xs px-2 py-1 rounded border cursor-pointer ${userToDelete === u.id ? 'bg-red-600 text-white border-red-600' : 'bg-red-50 border-red-200 text-red-700'}`}>{userToDelete === u.id ? 'Xác nhận xóa' : 'Xóa'}</button>
 
                           </>
                         ) : (
@@ -805,18 +1115,31 @@ export default function AdminDashboard() {
                       {users.filter(u => u.role === 'student' && String(u.grade) === String(cls.grade) && u.className === cls.name).length} học sinh
                     </td>
                     <td className="px-6 py-4 text-gray-600">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <button 
+                          type="button"
+                          onClick={() => {
+                            setEditingClass(cls);
+                            setEditClassName(cls.name);
+                            setEditClassGrade(String(cls.grade || '9'));
+                          }}
+                          className="text-xs px-2.5 py-1 rounded-md border bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100 flex items-center gap-1 font-semibold transition-colors cursor-pointer"
+                          title={`Sửa tên và khối của lớp ${cls.name}`}
+                        >
+                          <Pencil size={12} /> Sửa tên lớp
+                        </button>
+                        <button 
+                          type="button"
                           onClick={() => {
                             setExportInitialClass(cls.name);
                             setShowExportModal(true);
                           }}
-                          className="text-xs px-2.5 py-1 rounded-md border bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100 flex items-center gap-1 font-medium transition-colors"
+                          className="text-xs px-2.5 py-1 rounded-md border bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100 flex items-center gap-1 font-medium transition-colors cursor-pointer"
                           title={`Xuất file danh sách tài khoản học sinh lớp ${cls.name}`}
                         >
                           <Download size={12} /> Xuất DS tài khoản
                         </button>
-                        <button onClick={() => handleDeleteClass(cls.id)} className={`text-xs px-2 py-1 rounded border ${classToDelete === cls.id ? 'bg-red-600 text-white border-red-600' : 'text-red-500 border-red-200 bg-red-50'}`}>{classToDelete === cls.id ? 'Xác nhận xóa' : 'Xóa'}</button>
+                        <button onClick={() => handleDeleteClass(cls.id)} className={`text-xs px-2 py-1 rounded border cursor-pointer ${classToDelete === cls.id ? 'bg-red-600 text-white border-red-600 font-bold' : 'text-red-500 border-red-200 bg-red-50 hover:bg-red-100'}`}>{classToDelete === cls.id ? 'Xác nhận xóa' : 'Xóa'}</button>
                       </div>
                     </td>
                   </tr>
@@ -1116,6 +1439,280 @@ export default function AdminDashboard() {
         classes={schoolClasses}
         initialSelectedClass={exportInitialClass}
       />
+
+      {/* Edit Class Modal */}
+      {editingClass && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <Pencil size={18} className="text-amber-600" />
+                Sửa Tên Lớp & Khối
+              </h2>
+              <button 
+                onClick={() => setEditingClass(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <form onSubmit={handleSaveEditClass} className="p-6 space-y-4">
+              <div className="flex gap-4">
+                <div className="w-1/3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Khối</label>
+                  <select 
+                    value={editClassGrade}
+                    onChange={e => setEditClassGrade(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none"
+                  >
+                    {[6, 7, 8, 9, 10, 11, 12].map(g => (
+                      <option key={g} value={g}>Khối {g}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tên Lớp</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={editClassName}
+                    onChange={e => setEditClassName(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none font-semibold"
+                    placeholder="VD: 9A1"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 leading-relaxed">
+                <p className="font-bold mb-1">Lưu ý khi đổi tên lớp:</p>
+                <p>
+                  Lớp hiện có <strong>{users.filter(u => u.role === 'student' && String(u.grade) === String(editingClass.grade) && u.className === editingClass.name).length} học sinh</strong>. 
+                  Khi đổi tên lớp, hệ thống sẽ tự động cập nhật tên lớp mới cho toàn bộ các học sinh và bài tập thuộc lớp này.
+                </p>
+              </div>
+              
+              <div className="pt-2 flex gap-3">
+                <button 
+                  type="button"
+                  onClick={() => setEditingClass(null)}
+                  disabled={isSavingClassEdit}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button 
+                  type="submit"
+                  disabled={isSavingClassEdit}
+                  className="flex-1 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer shadow-sm"
+                >
+                  {isSavingClassEdit ? 'Đang lưu...' : 'Lưu Thay Đổi'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Single Student Class Transfer Modal */}
+      {transferModalStudent && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <ArrowRightLeft size={18} className="text-indigo-600" />
+                Chuyển Lớp Cho Học Sinh
+              </h2>
+              <button 
+                onClick={() => setTransferModalStudent(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-gray-50 p-3.5 rounded-xl border border-gray-200 text-sm space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Học sinh:</span>
+                  <span className="font-bold text-gray-800">{transferModalStudent.fullName || transferModalStudent.displayName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Tên đăng nhập:</span>
+                  <span className="font-mono text-blue-700 font-semibold">{transferModalStudent.email ? transferModalStudent.email.replace('@toanhoc.pro', '') : '-'}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-500">Lớp hiện tại:</span>
+                  <span className="px-2 py-0.5 bg-blue-100 text-blue-800 font-bold rounded text-xs border border-blue-200">
+                    Lớp {transferModalStudent.className || 'Chưa xếp lớp'} (Khối {transferModalStudent.grade || '-'})
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                  Chọn Lớp Chuyển Đến:
+                </label>
+                <select
+                  value={transferTargetClassId}
+                  onChange={e => setTransferTargetClassId(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-medium bg-white"
+                >
+                  <option value="">-- Chọn lớp muốn chuyển sang --</option>
+                  {schoolClasses.map(cls => {
+                    const count = users.filter(u => u.role === 'student' && String(u.grade) === String(cls.grade) && u.className === cls.name).length;
+                    const isCurrent = cls.name === transferModalStudent.className && String(cls.grade) === String(transferModalStudent.grade);
+                    return (
+                      <option key={cls.id} value={cls.id} disabled={isCurrent}>
+                        Khối {cls.grade} - Lớp {cls.name} ({count} học sinh){isCurrent ? ' - [Lớp hiện tại]' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-xl text-xs text-indigo-900 leading-relaxed">
+                Tài khoản, mật khẩu, bài tập đã làm và lịch sử điểm số của học sinh sẽ được <strong>bảo lưu nguyên vẹn</strong> sau khi chuyển lớp.
+              </div>
+
+              <div className="pt-2 flex gap-3">
+                <button 
+                  type="button"
+                  onClick={() => setTransferModalStudent(null)}
+                  disabled={isTransferring}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button 
+                  type="button"
+                  onClick={handleTransferSingleStudent}
+                  disabled={isTransferring || !transferTargetClassId}
+                  className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer shadow-sm"
+                >
+                  {isTransferring ? 'Đang chuyển...' : 'Xác Nhận Chuyển'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Student Class Transfer Modal */}
+      {showBulkTransferModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <ArrowRightLeft size={18} className="text-indigo-600" />
+                Chuyển Lớp Hàng Loạt
+              </h2>
+              <button 
+                onClick={() => setShowBulkTransferModal(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-indigo-50 p-3.5 rounded-xl border border-indigo-200 text-sm">
+                <p className="text-indigo-950 font-semibold mb-1">
+                  Số học sinh được chọn: <span className="text-base text-indigo-700 font-bold">{selectedStudentIds.length}</span>
+                </p>
+                <p className="text-xs text-indigo-800">
+                  Tất cả các học sinh này sẽ được đồng loạt chuyển sang lớp mới.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                  Chọn Lớp Chuyển Đến:
+                </label>
+                <select
+                  value={bulkTargetClassId}
+                  onChange={e => setBulkTargetClassId(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-medium bg-white"
+                >
+                  <option value="">-- Chọn lớp muốn chuyển đến --</option>
+                  {schoolClasses.map(cls => {
+                    const count = users.filter(u => u.role === 'student' && String(u.grade) === String(cls.grade) && u.className === cls.name).length;
+                    return (
+                      <option key={cls.id} value={cls.id}>
+                        Khối {cls.grade} - Lớp {cls.name} (Hiện có {count} HS)
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              <div className="pt-2 flex gap-3">
+                <button 
+                  type="button"
+                  onClick={() => setShowBulkTransferModal(false)}
+                  disabled={isTransferring}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button 
+                  type="button"
+                  onClick={handleBulkTransferStudents}
+                  disabled={isTransferring || !bulkTargetClassId}
+                  className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer shadow-sm"
+                >
+                  {isTransferring ? 'Đang chuyển...' : `Chuyển ${selectedStudentIds.length} Học Sinh`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Password Modal */}
+      {editingUserPass && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <h2 className="text-lg font-bold text-gray-800">Đổi Mật Khẩu</h2>
+              <button 
+                onClick={() => setEditingUserPass(null)} 
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600">
+                Tài khoản: <strong>{editingUserPass.fullName || editingUserPass.displayName}</strong> ({editingUserPass.email})
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Mật khẩu mới (tối thiểu 6 ký tự)</label>
+                <input
+                  type="text"
+                  value={newPass}
+                  onChange={e => setNewPass(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                  placeholder="Nhập mật khẩu mới"
+                />
+              </div>
+              <div className="pt-2 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingUserPass(null)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={handleUpdatePassword}
+                  className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors cursor-pointer"
+                >
+                  Cập nhật
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
