@@ -24,6 +24,7 @@ import QuestionVisualRenderer from '../common/QuestionVisualRenderer';
 import { QuestionItem, QuestionType, QuestionReference } from '../../types/test';
 import { MATH_FIGURE_TEMPLATES, MathFigureTemplate } from '../../utils/mathFigureTemplates';
 import { stripOptionPrefix } from '../../utils/gradeEngine';
+import DocumentReferenceSelectorModal from './DocumentReferenceSelectorModal';
 
 interface EditQuestionsModalProps {
   testTitle: string;
@@ -50,6 +51,7 @@ export default function EditQuestionsModal({
   const [activeIndex, setActiveIndex] = useState<number>(0);
   const [showFigureTemplateModal, setShowFigureTemplateModal] = useState<boolean>(false);
   const [showRawSvgEditor, setShowRawSvgEditor] = useState<boolean>(false);
+  const [showRefSelector, setShowRefSelector] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'content' | 'visual' | 'reference'>('content');
 
   if (!isOpen) return null;
@@ -788,16 +790,26 @@ export default function EditQuestionsModal({
                           />
                         </div>
 
-                        {/* Curriculum Lesson */}
+                        {/* Curriculum Lesson / Library Reference */}
                         <div>
-                          <label className="text-xs font-bold text-slate-700 block mb-1">
-                            Bài học SGK tham chiếu (Toán GDPT 2018):
-                          </label>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-bold text-slate-700">
+                              Bài học / Tài liệu tham chiếu (Thư viện tài liệu):
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => setShowRefSelector(true)}
+                              className="text-[11px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 hover:underline cursor-pointer"
+                            >
+                              <BookOpen size={12} />
+                              <span>Chọn từ Thư viện</span>
+                            </button>
+                          </div>
                           <input
                             type="text"
                             value={currentQ.reference?.curriculumLesson || ''}
                             onChange={(e) => updateReference({ curriculumLesson: e.target.value })}
-                            placeholder="Ví dụ: SGK Toán 12 - Chương 1: Bài 1"
+                            placeholder="Ví dụ: Tài liệu Khảo sát hàm số (Thư viện Toán 12)"
                             className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-800 bg-slate-50/50 focus:outline-blue-500"
                           />
                         </div>
@@ -978,6 +990,22 @@ export default function EditQuestionsModal({
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODAL CHỌN BÀI HỌC THAM CHIẾU TỪ THƯ VIỆN */}
+      {showRefSelector && (
+        <DocumentReferenceSelectorModal
+          isOpen={showRefSelector}
+          onClose={() => setShowRefSelector(false)}
+          title="Chọn bài học / tài liệu tham chiếu cho câu hỏi"
+          onSelect={(ref) => {
+            updateReference({
+              topic: ref.topicName,
+              curriculumLesson: ref.lessonTitle,
+              coreKnowledge: ref.knowledge ? ref.knowledge.substring(0, 300) : currentQ?.reference?.coreKnowledge
+            });
+          }}
+        />
       )}
 
     </div>

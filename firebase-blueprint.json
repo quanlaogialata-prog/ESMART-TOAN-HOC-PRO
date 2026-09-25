@@ -1,0 +1,46 @@
+{
+  "entities": {
+    "topic": {
+      "title": "Chuyên đề trong Thư viện tài liệu",
+      "description": "Chuyên đề môn Toán theo khối lớp (6-12) trong thư viện tài liệu tham chiếu",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Tên chuyên đề" },
+        "grade": { "type": "number", "description": "Khối lớp (6-12)" },
+        "isSpecial": { "type": "boolean", "description": "Đánh dấu chuyên đề trọng tâm ôn thi" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "grade"]
+    },
+    "lesson": {
+      "title": "Bài học & Tài liệu tham chiếu",
+      "description": "Tài liệu lưu trữ trong thư viện theo chuyên đề, bao gồm tệp đính kèm (PDF, Word, Ảnh), tóm tắt lý thuyết công thức KaTeX và link video bài giảng",
+      "type": "object",
+      "properties": {
+        "topicId": { "type": "string", "description": "ID của chuyên đề" },
+        "title": { "type": "string", "description": "Tên tài liệu / bài học" },
+        "knowledge": { "type": "string", "description": "Nội dung tóm tắt kiến thức / công thức toán KaTeX" },
+        "videoUrl": { "type": "string", "description": "Đường dẫn video bài giảng tham chiếu" },
+        "attachment": {
+          "type": "object",
+          "description": "Tài liệu đính kèm (PDF, Word, Text, Ảnh)"
+        },
+        "grade": { "type": "number", "description": "Khối lớp" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["topicId", "title"]
+    }
+  },
+  "firestore": {
+    "/topics/{topicId}": {
+      "schema": { "$ref": "#/entities/topic" },
+      "description": "Danh sách các chuyên đề trong thư viện tài liệu"
+    },
+    "/lessons/{lessonId}": {
+      "schema": { "$ref": "#/entities/lesson" },
+      "description": "Danh sách bài học và tài liệu lưu trữ trong thư viện"
+    }
+  }
+}

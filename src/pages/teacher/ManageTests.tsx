@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, getDocs, addDoc, where, deleteDoc, doc, updateDoc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { FileText, Plus, Upload, Clock, List, Calendar, X, Trash2, Eye, Pencil, ArrowLeft, Folder, FolderCheck, Layers, Shuffle, CheckCircle, Copy, Sparkles, Printer, FileCheck, ShieldCheck, LayoutGrid, FileSpreadsheet, Check, ChevronRight, BookOpen, Sliders, HelpCircle, Info, Users, AlertTriangle } from 'lucide-react';
+import { FileText, Plus, Upload, Clock, List, Calendar, X, Trash2, Eye, Pencil, ArrowLeft, Folder, FolderCheck, Layers, Shuffle, CheckCircle, Copy, Sparkles, Printer, FileCheck, ShieldCheck, LayoutGrid, FileSpreadsheet, Check, ChevronRight, ChevronDown, ChevronUp, BookOpen, Sliders, HelpCircle, Info, Users, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import MathText from '../../components/MathText';
 import { generateTestVariants, TestVariant } from '../../utils/variantGenerator';
@@ -13,12 +13,15 @@ import CancelAssignmentModal from '../../components/teacher/CancelAssignmentModa
 import { QuestionItem } from '../../types/test';
 import { stripOptionPrefix, checkMcqAnswer, detectAnswerDiscrepancy, autoReconcileQuestion } from '../../utils/gradeEngine';
 import { exportGradebookPdf, exportGradebookExcel } from '../../utils/gradebookExport';
+import { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
+import { dataUrlToFile } from '../../lib/fileUtils';
 
 export default function ManageTests() {
   const { user, role } = useAuth();
   const [tests, setTests] = useState<any[]>([]);
   const [topics, setTopics] = useState<any[]>([]);
   const [lessons, setLessons] = useState<any[]>([]);
+  const [selectedReference, setSelectedReference] = useState<SelectedDocumentReference | null>(null);
   
   const [loading, setLoading] = useState(true);
   const [schoolClasses, setSchoolClasses] = useState<any[]>([]);
@@ -27,6 +30,29 @@ export default function ManageTests() {
   const [assignmentsList, setAssignmentsList] = useState<any[]>([]);
   const [submissionsList, setSubmissionsList] = useState<any[]>([]);
   const [studentsList, setStudentsList] = useState<any[]>([]);
+
+  // Tự động nhận diện tài liệu tham chiếu từ Thư viện khi chuyển từ tab Thư viện tài liệu
+  useEffect(() => {
+    const pending = sessionStorage.getItem('pendingTestReference');
+    if (pending) {
+      try {
+        const ref = JSON.parse(pending);
+        sessionStorage.removeItem('pendingTestReference');
+        setSelectedReference(ref);
+        if (ref.grade) setNewGrade(ref.grade.toString());
+        if (ref.topicId) setNewTopicId(ref.topicId);
+        if (ref.lessonTitle) setNewTitle(ref.lessonTitle);
+        if (ref.attachment?.dataUrl && ref.attachment?.name) {
+          const file = dataUrlToFile(ref.attachment.dataUrl, ref.attachment.name, ref.attachment.type);
+          setNewFile(file);
+          setOnlineCreationMode('upload');
+        }
+        setShowCreateModal(true);
+      } catch (e) {
+        console.error("Error reading pending test reference:", e);
+      }
+    }
+  }, []);
   
   const [selectedGrade, setSelectedGrade] = useState<number | null>(null);
   const [selectedTopicId, setSelectedTopicId] = useState<string>('');
@@ -35,6 +61,33 @@ export default function ManageTests() {
   // Topic folder state: maps topicId -> 'single' | 'multi'
   const [topicFolderTab, setTopicFolderTab] = useState<{ [topicId: string]: 'single' | 'multi' }>({});
   const [selectedTopicTab, setSelectedTopicTab] = useState<string>('all');
+
+  // Quản lý trạng thái mở rộng chi tiết của đề thi trong thư mục: testId -> boolean
+  // Mặc định chỉ hiện tên đề, khi bấm chọn/mở mới hiện đầy đủ giao diện thông tin & thao tác
+  const [expandedTestIds, setExpandedTestIds] = useState<{ [testId: string]: boolean }>({});
+
+  const toggleTestExpanded = (testId: string) => {
+    setExpandedTestIds(prev => ({
+      ...prev,
+      [testId]: !prev[testId]
+    }));
+  };
+
+  const expandAllTestsInFolder = (testIds: string[]) => {
+    setExpandedTestIds(prev => {
+      const next = { ...prev };
+      testIds.forEach(id => { next[id] = true; });
+      return next;
+    });
+  };
+
+  const collapseAllTestsInFolder = (testIds: string[]) => {
+    setExpandedTestIds(prev => {
+      const next = { ...prev };
+      testIds.forEach(id => { next[id] = false; });
+      return next;
+    });
+  };
 
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assigningTest, setAssigningTest] = useState<any>(null);
@@ -571,6 +624,8 @@ export default function ManageTests() {
     setCustomVariantCodes('101, 102, 103, 104');
     setShuffleQuestions(true);
     setShuffleOptions(true);
+    setReferenceFile(null);
+    setReferenceNotes('');
 
     const presets = formatPresets[format] || [];
     const selectedP = presetId ? presets.find(p => p.id === presetId) : presets[0];
@@ -580,8 +635,23 @@ export default function ManageTests() {
     setShowCreateModal(true);
   };
 
+  const handleCloseCreateModal = () => {
+    setShowCreateModal(false);
+    setNewFile(null);
+    setNewAnswerFile(null);
+    setSplitAnswers(false);
+    setMatrixFile(null);
+    setReferenceFile(null);
+    setReferenceNotes('');
+    setSysError('');
+    setSysMsg('');
+    setEditingTestId(null);
+  };
+
   const [autoGenType, setAutoGenType] = useState<'mcq_3part' | 'mcq_custom' | 'mcq' | 'essay' | 'mixed' | 'matrix'>('mcq_3part');
   const [matrixFile, setMatrixFile] = useState<File | null>(null);
+  const [referenceFile, setReferenceFile] = useState<File | null>(null);
+  const [referenceNotes, setReferenceNotes] = useState<string>('');
   const [mcqCount, setMcqCount] = useState('10');
   const [essayCount, setEssayCount] = useState('2');
 
@@ -1111,7 +1181,65 @@ export default function ManageTests() {
     );
   };
 
-  const handleCreateTest = async (e: React.FormEvent) => {
+  const handleSaveBatchTests = async (testsToSave: any[], targetGrade: number, targetTopicId: string) => {
+    setIsSaving(true);
+    setSysError('');
+    try {
+      let savedCount = 0;
+      for (let i = 0; i < testsToSave.length; i++) {
+        const t = testsToSave[i];
+        setSysMsg(`Đang lưu đề ${i + 1}/${testsToSave.length}: "${t.title}"...`);
+
+        const questions = t.questions || [];
+        const mcqC = questions.filter((q: any) => q.type === 'mcq').length;
+        const tfC = questions.filter((q: any) => q.type === 'tf').length;
+        const shortC = questions.filter((q: any) => q.type === 'short').length;
+        const essayC = questions.filter((q: any) => q.type === 'essay').length;
+
+        const resolvedExamFormat = t.examFormat || (essayC > 0 && (mcqC > 0 || tfC > 0 || shortC > 0) ? 'mixed' : (mcqC > 0 && tfC > 0 ? 'mcq_3part' : (essayC > 0 ? 'essay' : 'mcq_3part')));
+        const resolvedType = (resolvedExamFormat === 'essay') ? 'essay' : ((resolvedExamFormat === 'mixed') ? 'mixed' : 'mcq');
+
+        const testData: any = {
+          title: t.title,
+          type: resolvedType,
+          durationMinutes: Number(t.durationMinutes) || 45,
+          topicId: targetTopicId,
+          grade: targetGrade,
+          creationMode: 'upload',
+          examFormat: resolvedExamFormat,
+          formatType: resolvedExamFormat,
+          autoGenType: resolvedExamFormat,
+          questionsData: JSON.stringify(questions),
+          mcqCount: mcqC,
+          part1Count: mcqC,
+          part2Count: tfC,
+          part3Count: shortC,
+          essayCount: essayC,
+          isCustom: true,
+          rubricUrl: "",
+          createdAt: new Date().toISOString(),
+          createdBy: user?.displayName || user?.email || 'Giáo viên'
+        };
+
+        await addDoc(collection(db, 'tests'), testData);
+        savedCount++;
+      }
+
+      setSysMsg(`Đã bóc tách và tạo thành công ${savedCount} đề online riêng biệt cho chủ đề!`);
+      setTimeout(() => setSysMsg(''), 5000);
+      setShowCreateModal(false);
+      setNewFile(null);
+      setNewAnswerFile(null);
+      loadData();
+    } catch (err: any) {
+      console.error("Batch save error:", err);
+      setSysError("Lỗi khi lưu danh sách đề thi online: " + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCreateTest = async (e: React.FormEvent, customQuestions?: any[]) => {
     e.preventDefault();
     setSysError('');
     if (!newTitle || !newDuration) {
@@ -1139,7 +1267,7 @@ export default function ManageTests() {
       return;
     }
 
-    if (examFormat === 'mcq_custom') {
+    if (onlineCreationMode !== 'upload' && examFormat === 'mcq_custom') {
       const selectedPartsCount = [customPart1Enabled, customPart2Enabled, customPart3Enabled].filter(Boolean).length;
       if (selectedPartsCount === 0) {
         setSysError('Vui lòng chọn ít nhất 1 phần trong cấu trúc trắc nghiệm tùy biến.');
@@ -1236,9 +1364,17 @@ export default function ManageTests() {
         if (onlineCreationMode === 'matrix' && matrixFile) {
           testData.matrixFileName = matrixFile.name;
         }
+        if (onlineCreationMode === 'auto' || onlineCreationMode === 'matrix') {
+          testData.referenceFileName = referenceFile ? referenceFile.name : 'SGK Kết nối tri thức & Học liệu chủ đề';
+          if (referenceNotes) testData.referenceNotes = referenceNotes;
+        }
 
         if (!editingTestId) {
-          setSysMsg(onlineCreationMode === 'matrix' ? 'Đang dùng AI tạo đề theo ma trận... Vui lòng chờ...' : 'Đang dùng AI tạo đề tự động... Vui lòng chờ...');
+          setSysMsg(
+            onlineCreationMode === 'matrix'
+              ? (referenceFile ? 'Đang phân tích ma trận & tài liệu tham chiếu bổ sung để tạo đề... Vui lòng chờ...' : 'Đang dùng AI tạo đề theo ma trận & SGK Kết nối tri thức... Vui lòng chờ...')
+              : (referenceFile ? 'Đang phân tích tài liệu tham chiếu & dùng AI tạo đề... Vui lòng chờ...' : 'Đang dùng AI tạo đề theo SGK Kết nối tri thức & chủ đề... Vui lòng chờ...')
+          );
           
           let matrixFileDataUrl = "";
           let mimeType = "";
@@ -1251,6 +1387,23 @@ export default function ManageTests() {
             });
             mimeType = matrixFile.type;
           }
+
+          let referenceFileDataUrl = "";
+          let referenceFileMimeType = "";
+          if ((onlineCreationMode === 'auto' || onlineCreationMode === 'matrix') && referenceFile) {
+            referenceFileDataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(referenceFile);
+            });
+            referenceFileMimeType = referenceFile.type;
+          }
+
+          const currentTopicObj = topics.find(t => t.id === newTopicId);
+          const topicLessonsList = lessons
+            .filter(l => l.topicId === newTopicId)
+            .map(l => ({ title: l.title, knowledge: l.knowledge || '' }));
 
           try {
             const res = await fetch('/api/generate-test', {
@@ -1276,7 +1429,13 @@ export default function ManageTests() {
                   part3Count: customPart3Count
                 },
                 matrixFileDataUrl,
-                mimeType
+                mimeType,
+                referenceFileDataUrl,
+                referenceFileMimeType,
+                referenceFileName: referenceFile ? referenceFile.name : undefined,
+                referenceNotes,
+                topicTitle: currentTopicObj?.title || currentTopicObj?.name || '',
+                topicLessons: topicLessonsList
               })
             });
             if (res.ok) {
@@ -1423,7 +1582,32 @@ export default function ManageTests() {
             }
         }
 
-        if (extractionFileUrl) {
+        if (selectedReference) {
+          testData.referenceDocId = selectedReference.lessonId || null;
+          testData.referenceDocTitle = selectedReference.lessonTitle || null;
+          testData.referenceTopicName = selectedReference.topicName || null;
+          testData.referenceGrade = selectedReference.grade || null;
+        }
+
+        if (customQuestions && customQuestions.length > 0) {
+          testData.questionsData = JSON.stringify(customQuestions);
+          const mcqC = customQuestions.filter((q: any) => q.type === 'mcq').length;
+          const tfC = customQuestions.filter((q: any) => q.type === 'tf').length;
+          const shortC = customQuestions.filter((q: any) => q.type === 'short').length;
+          const essayC = customQuestions.filter((q: any) => q.type === 'essay').length;
+          testData.mcqCount = mcqC + tfC + shortC;
+          testData.part1Count = mcqC;
+          testData.part2Count = tfC;
+          testData.part3Count = shortC;
+          testData.essayCount = essayC;
+          const resolvedFormat = (essayC > 0 && (mcqC > 0 || tfC > 0 || shortC > 0))
+            ? 'mixed'
+            : ((mcqC > 0 && tfC > 0) ? 'mcq_3part' : (essayC > 0 ? 'essay' : 'mcq_3part'));
+          testData.examFormat = resolvedFormat;
+          testData.formatType = resolvedFormat;
+          testData.autoGenType = resolvedFormat;
+          testData.type = (resolvedFormat === 'essay') ? 'essay' : ((resolvedFormat === 'mixed') ? 'mixed' : 'mcq');
+        } else if (extractionFileUrl) {
           setSysMsg('Đang dùng AI trích xuất câu hỏi từ tài liệu... Vui lòng chờ...');
           try {
             const res = await fetch('/api/extract-questions', {
@@ -1435,9 +1619,22 @@ export default function ManageTests() {
               const extracted = await res.json();
               if (Array.isArray(extracted) && extracted.length > 0) {
                 testData.questionsData = JSON.stringify(extracted);
-                if (testData.type === 'essay') {
-                  testData.type = 'mixed';
-                }
+                const mcqC = extracted.filter((q: any) => q.type === 'mcq').length;
+                const tfC = extracted.filter((q: any) => q.type === 'tf').length;
+                const shortC = extracted.filter((q: any) => q.type === 'short').length;
+                const essayC = extracted.filter((q: any) => q.type === 'essay').length;
+                testData.mcqCount = mcqC + tfC + shortC;
+                testData.part1Count = mcqC;
+                testData.part2Count = tfC;
+                testData.part3Count = shortC;
+                testData.essayCount = essayC;
+                const resolvedFormat = (essayC > 0 && (mcqC > 0 || tfC > 0 || shortC > 0))
+                  ? 'mixed'
+                  : ((mcqC > 0 && tfC > 0) ? 'mcq_3part' : (essayC > 0 ? 'essay' : 'mcq_3part'));
+                testData.examFormat = resolvedFormat;
+                testData.formatType = resolvedFormat;
+                testData.autoGenType = resolvedFormat;
+                testData.type = (resolvedFormat === 'essay') ? 'essay' : ((resolvedFormat === 'mixed') ? 'mixed' : 'mcq');
               } else {
                 setSysMsg('');
                 setSysError('AI trả về kết quả rỗng. Vui lòng kiểm tra lại tài liệu.');
@@ -1683,24 +1880,92 @@ export default function ManageTests() {
   const renderTestCard = (t: any) => {
     const isMulti = t.isMultiVariant || (t.variants && t.variants.length > 1);
     const variantCodesList = t.variantCodes || (t.variants ? t.variants.map((v: any) => v.code) : []);
+    const questionCount = t.questionsData ? getParsedQuestions(t.questionsData).length : (t.questions?.length || 0);
+    const isExpanded = !!expandedTestIds[t.id];
 
+    // Giao diện khi chưa chọn: Chỉ hiện tên đề và nhãn nhận diện gọn gàng
+    if (!isExpanded) {
+      return (
+        <div
+          key={t.id}
+          onClick={() => toggleTestExpanded(t.id)}
+          className={`group bg-white hover:bg-blue-50/50 p-4 rounded-xl shadow-2xs hover:shadow-md border transition-all cursor-pointer flex items-center justify-between gap-3 select-none ${
+            isMulti
+              ? 'border-indigo-100 hover:border-indigo-300'
+              : 'border-gray-200/90 hover:border-blue-400'
+          }`}
+          title="Bấm để mở đầy đủ giao diện và thông tin đề thi"
+        >
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
+              isMulti 
+                ? 'bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white' 
+                : 'bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white'
+            }`}>
+              {isMulti ? <Layers size={18} /> : <FileText size={18} />}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-bold text-gray-800 text-sm sm:text-base leading-snug group-hover:text-blue-700 transition-colors line-clamp-2">
+                {t.title}
+              </div>
+              <div className="text-[11px] text-gray-400 flex items-center gap-2 mt-0.5">
+                <span className={isMulti ? 'text-indigo-600 font-semibold' : 'text-gray-500 font-medium'}>
+                  {isMulti ? `${variantCodesList.length} mã đề` : '1 mã đề'}
+                </span>
+                <span>•</span>
+                <span>{questionCount} câu</span>
+                <span>•</span>
+                <span>{t.durationMinutes} phút</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0 text-gray-400 group-hover:text-blue-600 transition-colors">
+            <span className="hidden sm:inline-block text-xs font-semibold text-blue-600 bg-blue-50 group-hover:bg-blue-100 px-2 py-0.5 rounded-md transition-colors">
+              Chi tiết
+            </span>
+            <ChevronDown size={18} />
+          </div>
+        </div>
+      );
+    }
+
+    // Giao diện khi ĐÃ CHỌN: Hiện đầy đủ toàn bộ giao diện thông tin & nút thao tác
     return (
-      <div key={t.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex flex-col h-full hover:shadow-md transition-shadow">
-        <div className="mb-3 mt-1">
+      <div key={t.id} className="bg-white p-5 rounded-2xl shadow-md border-2 border-blue-400/80 ring-4 ring-blue-50 flex flex-col transition-all">
+        <div className="mb-2 mt-1">
           <div className="flex items-center justify-between gap-2 mb-1.5">
-            <span className="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Tên đề kiểm tra</span>
-            {isMulti ? (
-              <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-[11px] font-bold px-2 py-0.5 rounded-full border border-indigo-200">
-                <Layers size={12} className="text-indigo-600" />
-                {variantCodesList.length} mã đề
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-600 text-[11px] font-medium px-2 py-0.5 rounded-full border border-gray-200">
-                1 mã đề
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Tên đề kiểm tra</span>
+              {isMulti ? (
+                <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-[11px] font-bold px-2 py-0.5 rounded-full border border-indigo-200">
+                  <Layers size={12} className="text-indigo-600" />
+                  {variantCodesList.length} mã đề
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-600 text-[11px] font-medium px-2 py-0.5 rounded-full border border-gray-200">
+                  1 mã đề
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => toggleTestExpanded(t.id)}
+              className="flex items-center gap-1 text-xs font-bold text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 px-2.5 py-1 rounded-lg transition-colors shrink-0"
+              title="Thu gọn đề này lại chỉ hiện tên đề"
+            >
+              <span>Thu gọn</span>
+              <ChevronUp size={14} />
+            </button>
           </div>
           <div className="font-bold text-gray-800 text-base leading-snug">{t.title}</div>
+          {(t.referenceDocTitle || t.referenceTopicName) && (
+            <div className="mt-1 flex items-center gap-1 text-[11px] text-blue-800 font-medium bg-blue-50 border border-blue-200/80 px-2 py-0.5 rounded-md w-fit">
+              <BookOpen size={12} className="text-blue-600 shrink-0" />
+              <span>Tham chiếu Thư viện: <strong>{t.referenceDocTitle || t.referenceTopicName}</strong></span>
+            </div>
+          )}
           {t.originalTestTitle && (
             <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-800 font-medium bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-md w-fit">
               <ShieldCheck size={12} className="text-emerald-600 shrink-0" />
@@ -1762,14 +2027,25 @@ export default function ManageTests() {
           )}
         </div>
 
-        <div className="mb-3">
-          <div className="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Người ra đề</div>
-          <div className="font-medium text-gray-800 text-sm">{t.createdBy || 'Giáo viên'}</div>
+        {/* Thông tin metadata đề thi gọn gàng, liền mạch không để khoảng trống */}
+        <div className="my-2 py-2 px-3 bg-gray-50/90 rounded-lg border border-gray-100 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-gray-400 shrink-0">Người ra đề:</span>
+            <span className="font-semibold text-gray-800 truncate">{t.createdBy || 'Giáo viên'}</span>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {questionCount > 0 && (
+              <span className="font-medium text-gray-600 flex items-center gap-1">
+                <HelpCircle size={13} className="text-indigo-500" />
+                <span>{questionCount} câu</span>
+              </span>
+            )}
+            <span className="font-medium text-gray-600 flex items-center gap-1">
+              <Clock size={13} className="text-amber-500" />
+              <span>{t.durationMinutes} phút</span>
+            </span>
+          </div>
         </div>
-
-        <p className="text-xs text-gray-500 flex items-center gap-1 mt-auto pt-2">
-          <Clock size={14} /> {t.durationMinutes} phút
-        </p>
 
         {(role === 'admin' || role === 'teacher') && (
           <div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-2">
@@ -2169,8 +2445,33 @@ export default function ManageTests() {
                   <div>
                     {currentFolder === 'single' ? (
                       singleVariantTests.length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                          {singleVariantTests.map(t => renderTestCard(t))}
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-gray-500">
+                            <span className="font-medium flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0"></span>
+                              Danh sách đề trong thư mục ({singleVariantTests.length} đề) • <span className="text-gray-400">Bấm vào đề để xem đầy đủ giao diện</span>
+                            </span>
+                            <div className="flex items-center gap-2.5">
+                              <button
+                                type="button"
+                                onClick={() => expandAllTestsInFolder(singleVariantTests.map(t => t.id))}
+                                className="text-blue-600 hover:text-blue-800 font-semibold hover:underline"
+                              >
+                                Mở rộng tất cả
+                              </button>
+                              <span className="text-gray-300">•</span>
+                              <button
+                                type="button"
+                                onClick={() => collapseAllTestsInFolder(singleVariantTests.map(t => t.id))}
+                                className="text-gray-500 hover:text-gray-700 font-semibold hover:underline"
+                              >
+                                Thu gọn tất cả
+                              </button>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
+                            {singleVariantTests.map(t => renderTestCard(t))}
+                          </div>
                         </div>
                       ) : (
                         <div className="py-10 text-center bg-gray-50/50 rounded-xl border border-dashed border-gray-200">
@@ -2180,8 +2481,33 @@ export default function ManageTests() {
                       )
                     ) : (
                       multiVariantTests.length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                          {multiVariantTests.map(t => renderTestCard(t))}
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-gray-500">
+                            <span className="font-medium flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-indigo-500 shrink-0"></span>
+                              Danh sách đề trong thư mục ({multiVariantTests.length} đề) • <span className="text-gray-400">Bấm vào đề để xem đầy đủ giao diện</span>
+                            </span>
+                            <div className="flex items-center gap-2.5">
+                              <button
+                                type="button"
+                                onClick={() => expandAllTestsInFolder(multiVariantTests.map(t => t.id))}
+                                className="text-indigo-600 hover:text-indigo-800 font-semibold hover:underline"
+                              >
+                                Mở rộng tất cả
+                              </button>
+                              <span className="text-gray-300">•</span>
+                              <button
+                                type="button"
+                                onClick={() => collapseAllTestsInFolder(multiVariantTests.map(t => t.id))}
+                                className="text-gray-500 hover:text-gray-700 font-semibold hover:underline"
+                              >
+                                Thu gọn tất cả
+                              </button>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
+                            {multiVariantTests.map(t => renderTestCard(t))}
+                          </div>
                         </div>
                       ) : (
                         <div className="py-10 text-center bg-indigo-50/30 rounded-xl border border-dashed border-indigo-200 p-6">
@@ -2436,9 +2762,11 @@ export default function ManageTests() {
       {/* Create Online Test Modal */}
       <CreateOnlineTestModal
         show={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
+        onClose={handleCloseCreateModal}
         onSubmit={handleCreateTest}
         editingTestId={editingTestId}
+        selectedReference={selectedReference}
+        setSelectedReference={setSelectedReference}
         onlineCreationMode={onlineCreationMode}
         setOnlineCreationMode={setOnlineCreationMode}
         examFormat={examFormat}
@@ -2506,10 +2834,16 @@ export default function ManageTests() {
         setShuffleQuestions={setShuffleQuestions}
         shuffleOptions={shuffleOptions}
         setShuffleOptions={setShuffleOptions}
+        referenceFile={referenceFile}
+        setReferenceFile={setReferenceFile}
+        referenceNotes={referenceNotes}
+        setReferenceNotes={setReferenceNotes}
+        lessons={lessons}
         isSaving={isSaving}
         sysError={sysError}
         setSysError={setSysError}
         sysMsg={sysMsg}
+        onSaveBatchTests={handleSaveBatchTests}
       />
 
       {/* Comprehensive Edit Questions Modal with Visuals & Reference Content */}

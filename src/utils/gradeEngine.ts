@@ -31,10 +31,10 @@ export function isLikelyMathExpression(str: string): boolean {
   // - Lũy thừa: 3x^2 - 3, x^2, 2^x
   // - Chỉ số dưới: u_2, u_3 = 7, x_1
   // - Phép so sánh / phương trình: u_2 = 3, y = 2x - 1, f'(x) = 0
-  // - Lệnh LaTeX: \frac, \sqrt, \vec, \infty, \alpha, \cdot, \pi...
+  // - Lệnh LaTeX: \frac, \dfrac, \tfrac, \sqrt, \vec, \begin, \cases, \infty, \alpha, \cdot, \pi...
   // - Khoảng/đoạn: (-1; 2), [0; 3], (-\infty; 1)
   // - Bất đẳng thức: >, <, \le, \ge, \neq
-  if (/\^|_[0-9a-zA-Z]|\\(frac|sqrt|vec|infty|alpha|beta|gamma|cdot|pi|pm|approx|neq|le|ge|over)|=|<|>|\(-?\d+;|-?\d+\)|\[-?\d+;|-?\d+\]|f'\(|y'/.test(trimmed)) {
+  if (/\^|_[0-9a-zA-Z]|\\(?:(?:d|t)?frac|sqrt|vec|begin|cases|matrix|aligned|infty|alpha|beta|gamma|cdot|pi|pm|approx|neq|le|ge|over)|=|<|>|\(-?\d+;|-?\d+\)|\[-?\d+;|-?\d+\]|f'\(|y'/.test(trimmed)) {
     return true;
   }
 
@@ -56,11 +56,15 @@ export function stripOptionPrefix(text: string | null | undefined): string {
   if (!text) return '';
   let str = text.toString().trim();
 
-  // 1. Tiền tố bên ngoài $: "A. $3x^2 - 3$", "A) 3x^2 - 3", "a) $u_2 = 3$."
-  str = str.replace(/^(\[?[a-dA-D0-9][\.\)\]\:]|\([a-dA-D0-9]\))\s*/, '');
+  // 0. Chuẩn hóa dấu gạch ngang (em-dash, en-dash, unicode minus) trước dấu gạch chéo ngược LaTeX hoặc số
+  str = str.replace(/[–—−](?=\s*\\)/g, '-');
+  str = str.replace(/[–—−](?=\s*[0-9])/g, '-');
+
+  // 1. Tiền tố bên ngoài $, hỗ trợ cả ký hiệu bullet hoặc gạch đầu dòng: "• A. $3x^2 - 3$", "• B. -\dfrac{5}{8}"
+  str = str.replace(/^[•\-\*\s]*(\[?[a-dA-D0-9][\.\)\]\:]|\([a-dA-D0-9]\))\s*/, '');
 
   // 2. Tiền tố nằm bên trong $: "$A. 3x^2 - 3$" -> "$3x^2 - 3$"
-  str = str.replace(/^\$\s*([a-dA-D0-9][\.\)\]\:]|\([a-dA-D0-9]\))\s*/, '$');
+  str = str.replace(/^\$\s*[•\-\*\s]*([a-dA-D0-9][\.\)\]\:]|\([a-dA-D0-9]\))\s*/, '$');
 
   // 3. Xử lý dấu chấm sau dấu $: "$u_2 = 3$." hoặc "u_2 = 3$." -> "$u_2 = 3$"
   str = str.replace(/\$\.\s*$/, '$').trim();
@@ -78,7 +82,7 @@ export function stripOptionPrefix(text: string | null | undefined): string {
     }
   }
 
-  // 5. Nếu chưa có dấu $ nhưng là biểu thức toán học rõ rệt (như 3x^2 - 3, u_2 = 3)
+  // 5. Nếu chưa có dấu $ nhưng là biểu thức toán học rõ rệt (như 3x^2 - 3, u_2 = 3, -\dfrac{5}{8})
   if (!str.includes('$') && isLikelyMathExpression(str)) {
     str = `$${str}$`;
   }

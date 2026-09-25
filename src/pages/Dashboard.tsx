@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router';
 import AdminDashboard from './admin/ManageTeachers';
-import Curriculum from './teacher/Curriculum';
+import DocumentLibrary from './teacher/DocumentLibrary';
 import ManageTests from './teacher/ManageTests';
 import ManageOfflineTests from './teacher/ManageOfflineTests';
 import ManageSubmissions from './teacher/ManageSubmissions';
@@ -16,6 +16,16 @@ export default function Dashboard() {
   const { user, role, loading, logout } = useAuth();
   const [showSettings, setShowSettings] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>(role === 'admin' ? 'admin' : (role === 'teacher' ? 'curriculum' : 'student'));
+
+  useEffect(() => {
+    const handleSwitch = (e: any) => {
+      if (e.detail?.tab) {
+        setActiveTab(e.detail.tab);
+      }
+    };
+    window.addEventListener('switch-dashboard-tab', handleSwitch);
+    return () => window.removeEventListener('switch-dashboard-tab', handleSwitch);
+  }, []);
 
   if (loading) return <div className="flex h-screen items-center justify-center">Đang tải...</div>;
   if (!user) return <Navigate to="/login" />;
@@ -40,8 +50,9 @@ export default function Dashboard() {
             <button 
               onClick={() => setActiveTab('curriculum')}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'curriculum' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+              title="Thư viện tài liệu tham chiếu theo từng chuyên đề và bài học của các khối lớp"
             >
-              Chương trình học
+              📚 Thư viện tài liệu
             </button>
             <button 
               onClick={() => setActiveTab('tests')}
@@ -78,7 +89,12 @@ export default function Dashboard() {
       </header>
       <main className="flex-1 p-4 sm:p-6 overflow-x-hidden overflow-y-auto min-w-0">
         {role === 'admin' && activeTab === 'admin' && <AdminDashboard />}
-        {(role === 'teacher' || role === 'admin') && activeTab === 'curriculum' && <Curriculum />}
+        {(role === 'teacher' || role === 'admin') && activeTab === 'curriculum' && (
+          <DocumentLibrary 
+            onNavigateToTests={() => setActiveTab('tests')} 
+            onNavigateToOfflineTests={() => setActiveTab('offline-tests')} 
+          />
+        )}
         {(role === 'teacher' || role === 'admin') && activeTab === 'tests' && <ManageTests />}
         {(role === 'teacher' || role === 'admin') && activeTab === 'offline-tests' && <ManageOfflineTests />}
         {(role === 'teacher' || role === 'admin') && activeTab === 'grading' && <ManageSubmissions />}

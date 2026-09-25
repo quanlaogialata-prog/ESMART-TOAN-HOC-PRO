@@ -38,12 +38,15 @@ import {
   ChevronDown,
   AlertTriangle,
   Check,
-  Pencil
+  Pencil,
+  BookOpen
 } from 'lucide-react';
 import MathText from '../../components/MathText';
 import { generateTestVariants, TestVariant, groupQuestionsByExamStructure, detectQuestionType, QuestionType, ExamSection } from '../../utils/variantGenerator';
 import { stripOptionPrefix, detectAnswerDiscrepancy, autoReconcileQuestion } from '../../utils/gradeEngine';
 import EditQuestionsModal from '../../components/teacher/EditQuestionsModal';
+import DocumentReferenceSelectorModal, { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
+import { dataUrlToFile } from '../../lib/fileUtils';
 
 interface OfflineTest {
   id: string;
@@ -58,6 +61,9 @@ interface OfflineTest {
   sourceType: 'online_conversion' | 'uploaded_original';
   sourceOnlineTestId?: string;
   sourceOnlineTestTitle?: string;
+  referenceDocId?: string;
+  referenceDocTitle?: string;
+  referenceTopicName?: string;
   variantMethod?: 'shuffle' | 'isomorphic' | 'keep' | 'none';
   variantCodes: string[];
   variants: TestVariant[];
@@ -685,6 +691,8 @@ export default function ManageOfflineTests() {
 
   // Part 2: Upload Original & Multi-Variant State
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [selectedOfflineRef, setSelectedOfflineRef] = useState<SelectedDocumentReference | null>(null);
+  const [showOfflineRefModal, setShowOfflineRefModal] = useState(false);
   const [isExtractingQuestions, setIsExtractingQuestions] = useState(false);
   const [extractedQuestions, setExtractedQuestions] = useState<any[]>([]);
   const [uploadVariantMethod, setUploadVariantMethod] = useState<'shuffle' | 'isomorphic' | 'none'>('shuffle');
@@ -962,6 +970,27 @@ export default function ManageOfflineTests() {
 
   useEffect(() => {
     loadData();
+
+    // Tự động nhận diện tài liệu tham chiếu từ Thư viện khi chuyển từ tab Thư viện tài liệu
+    const pending = sessionStorage.getItem('pendingOfflineReference');
+    if (pending) {
+      try {
+        const ref = JSON.parse(pending);
+        sessionStorage.removeItem('pendingOfflineReference');
+        setSelectedOfflineRef(ref);
+        setExamTitle(ref.lessonTitle || ref.attachment?.name || 'Đề thi');
+        if (ref.grade) setExamGrade(Number(ref.grade) || 10);
+        if (ref.attachment?.dataUrl && ref.attachment?.name) {
+          const file = dataUrlToFile(ref.attachment.dataUrl, ref.attachment.name, ref.attachment.type);
+          setUploadFile(file);
+          handleExtractQuestionsFromFile(file);
+        }
+        setCreateTab('upload_new');
+        setShowCreateModal(true);
+      } catch (e) {
+        console.error("Error reading pending offline reference:", e);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -1147,6 +1176,9 @@ export default function ManageOfflineTests() {
         sourceType: 'online_conversion',
         sourceOnlineTestId: selected.id,
         sourceOnlineTestTitle: selected.title,
+        referenceDocId: selectedOfflineRef?.lessonId || null,
+        referenceDocTitle: selectedOfflineRef?.lessonTitle || null,
+        referenceTopicName: selectedOfflineRef?.topicName || null,
         variantMethod: onlineVariantOption,
         variantCodes: codes,
         variants: finalVariants,
@@ -1175,8 +1207,7 @@ export default function ManageOfflineTests() {
   };
 
   // --- PART 2: UPLOAD ORIGINAL TEST & MULTI-VARIANT CREATION ---
-  const handleUploadFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const handleExtractQuestionsFromFile = async (file: File) => {
     if (!file) return;
     setUploadFile(file);
     if (!examTitle) {
@@ -1248,6 +1279,12 @@ export default function ManageOfflineTests() {
       setIsExtractingQuestions(false);
       setProgressStatus('');
     }
+  };
+
+  const handleUploadFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await handleExtractQuestionsFromFile(file);
   };
 
   const handleCreateOfflineFromUpload = async () => {
@@ -1333,6 +1370,9 @@ export default function ManageOfflineTests() {
         schoolYear: examSchoolYear,
         examStructure: examStructure,
         sourceType: 'uploaded_original',
+        referenceDocId: selectedOfflineRef?.lessonId || null,
+        referenceDocTitle: selectedOfflineRef?.lessonTitle || null,
+        referenceTopicName: selectedOfflineRef?.topicName || null,
         variantMethod: uploadVariantMethod,
         variantCodes: codes,
         variants: finalVariants,
@@ -1698,6 +1738,13 @@ export default function ManageOfflineTests() {
                   <h3 className="font-bold text-gray-900 text-base leading-snug mb-2 line-clamp-2">
                     {t.title}
                   </h3>
+
+                  {(t.referenceDocTitle || t.referenceTopicName) && (
+                    <div className="mb-2 flex items-center gap-1 text-[11px] text-blue-800 font-medium bg-blue-50 border border-blue-200/80 px-2 py-0.5 rounded-md w-fit">
+                      <BookOpen size={12} className="text-blue-600 shrink-0" />
+                      <span>Tham chiếu Thư viện: <strong>{t.referenceDocTitle || t.referenceTopicName}</strong></span>
+                    </div>
+                  )}
 
                   <div className="text-xs text-gray-500 mb-3 space-y-1">
                     <div className="flex items-center gap-1.5">
@@ -2170,17 +2217,49 @@ export default function ManageOfflineTests() {
                       Hệ thống sẽ dùng AI trích xuất tự động toàn bộ câu hỏi, phương án A-B-C-D, đáp án đúng và lời giải chi tiết.
                     </p>
 
-                    <label className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl cursor-pointer shadow-xs transition-colors">
-                      <FileCode size={15} />
-                      <span>{uploadFile ? uploadFile.name : 'Chọn tệp đề thi (.pdf, .doc, .docx, .png, .jpg)'}</span>
-                      <input
-                        type="file"
-                        accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
-                        onChange={handleUploadFileChange}
-                        disabled={isExtractingQuestions}
-                        className="hidden"
-                      />
-                    </label>
+                    <div className="flex flex-wrap items-center justify-center gap-3">
+                      <label className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl cursor-pointer shadow-xs transition-colors">
+                        <FileCode size={15} />
+                        <span>{uploadFile ? uploadFile.name : 'Chọn tệp đề thi (.pdf, .doc, .docx, .png, .jpg)'}</span>
+                        <input
+                          type="file"
+                          accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                          onChange={handleUploadFileChange}
+                          disabled={isExtractingQuestions}
+                          className="hidden"
+                        />
+                      </label>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowOfflineRefModal(true)}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-white hover:bg-indigo-50 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-300 shadow-2xs transition-colors cursor-pointer"
+                        title="Chọn đề gốc hoặc tài liệu tham chiếu từ Thư viện tài liệu"
+                      >
+                        <BookOpen size={15} />
+                        <span>{selectedOfflineRef ? 'Đổi đề từ Thư viện' : '📚 Chọn đề từ Thư viện tài liệu'}</span>
+                      </button>
+                    </div>
+
+                    {selectedOfflineRef && (
+                      <div className="mt-3 p-3 bg-white rounded-xl border border-indigo-200 shadow-2xs text-left max-w-md mx-auto flex items-center justify-between gap-2">
+                        <div className="truncate">
+                          <p className="font-bold text-xs text-indigo-950 truncate">
+                            Đề từ Thư viện: {selectedOfflineRef.lessonTitle}
+                          </p>
+                          <p className="text-[10px] text-gray-500">
+                            Chuyên đề: {selectedOfflineRef.topicName} (Khối {selectedOfflineRef.grade})
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedOfflineRef(null)}
+                          className="text-[11px] font-bold text-red-600 hover:text-red-800 p-1"
+                        >
+                          Hủy
+                        </button>
+                      </div>
+                    )}
 
                     {isExtractingQuestions && (
                       <div className="mt-3 flex items-center justify-center gap-2 text-indigo-800 text-xs font-semibold">
@@ -2788,6 +2867,28 @@ export default function ManageOfflineTests() {
             <X size={18} />
           </button>
         </div>
+      )}
+
+      {/* MODAL CHỌN TÀI LIỆU THAM CHIẾU TỪ THƯ VIỆN CHO ĐỀ OFFLINE */}
+      {showOfflineRefModal && (
+        <DocumentReferenceSelectorModal
+          isOpen={showOfflineRefModal}
+          onClose={() => setShowOfflineRefModal(false)}
+          initialGrade={examGrade || 10}
+          title="Chọn đề gốc hoặc tài liệu tham chiếu từ Thư viện"
+          onSelect={(ref) => {
+            setSelectedOfflineRef(ref);
+            if (ref.grade) setExamGrade(Number(ref.grade) || 10);
+            if (ref.lessonTitle) {
+              setExamTitle(ref.lessonTitle);
+            }
+            if (ref.attachment?.dataUrl && ref.attachment?.name) {
+              const file = dataUrlToFile(ref.attachment.dataUrl, ref.attachment.name, ref.attachment.type);
+              setUploadFile(file);
+              handleExtractQuestionsFromFile(file);
+            }
+          }}
+        />
       )}
     </div>
   );

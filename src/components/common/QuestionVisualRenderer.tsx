@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Maximize2, X, Table as TableIcon, Image as ImageIcon } from 'lucide-react';
 import MathText from '../MathText';
+import { healMathSvg } from '../../lib/vietnameseFont';
 
 interface QuestionVisualRendererProps {
   figureType?: 'none' | 'svg' | 'table' | 'image' | string;
@@ -166,7 +167,7 @@ export default function QuestionVisualRenderer({
         <div className="relative group text-center bg-white p-3 rounded-lg border border-slate-200 shadow-2xs overflow-hidden flex flex-col items-center justify-center">
           <div 
             className="w-full max-w-md mx-auto [&>svg]:w-full [&>svg]:h-auto [&>svg]:max-h-72"
-            dangerouslySetInnerHTML={{ __html: figureSvg }} 
+            dangerouslySetInnerHTML={{ __html: healMathSvg(figureSvg) }} 
           />
           {interactive && (
             <button
@@ -237,7 +238,7 @@ export default function QuestionVisualRenderer({
               {hasSvg && figureSvg && (
                 <div 
                   className="w-full max-w-xl mx-auto [&>svg]:w-full [&>svg]:h-auto"
-                  dangerouslySetInnerHTML={{ __html: figureSvg }} 
+                  dangerouslySetInnerHTML={{ __html: healMathSvg(figureSvg) }} 
                 />
               )}
               {hasTable && figureTable && (
