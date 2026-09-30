@@ -29,49 +29,140 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
+
+    // Safety fallback timeout: tuyệt đối không để ứng dụng bị kẹt ở trạng thái "Đang tải..."
+    const fallbackTimer = setTimeout(() => {
+      if (isMounted) {
+        setLoading(false);
+      }
+    }, 2500);
+
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-        const isRobo = currentUser.email === 'robokien36@gmail.com';
-        
-        if (userDoc.exists()) {
-          let currentRole = userDoc.data().role;
-          // Force admin role if they are the owner but got registered as student previously
-          if (isRobo && currentRole !== 'admin') {
+      if (!isMounted) return;
+      try {
+        if (currentUser) {
+          const isRobo = currentUser.email === 'robokien36@gmail.com' || currentUser.email === 'admin@toanhoc.pro';
+
+          if (isRobo) {
+            setUser(currentUser);
+            setRole('admin');
+            setDoc(doc(db, 'users', currentUser.uid), {
+              role: 'admin',
+              email: currentUser.email,
+              displayName: currentUser.displayName || 'Admin',
+              createdAt: new Date().toISOString()
+            }, { merge: true }).catch(() => {});
+          } else {
+            // For standard accounts (teachers, students), verify presence in Firestore
             try {
-              await updateDoc(doc(db, 'users', currentUser.uid), { role: 'admin' });
-            } catch (e) {
-              console.error("Failed to upgrade self to admin: ", e);
+              const docPromise = getDoc(doc(db, 'users', currentUser.uid));
+              const timeoutPromise = new Promise<null>((_, reject) => 
+                setTimeout(() => reject(new Error('Firestore user doc timeout')), 2500)
+              );
+              const userDoc = await Promise.race([docPromise, timeoutPromise]) as any;
+
+              if (userDoc && typeof userDoc.exists === 'function' && userDoc.exists()) {
+                const userData = userDoc.data();
+                if (userData?.disabled === true || userData?.status === 'deleted') {
+                  console.warn("User account is disabled or deleted:", currentUser.email);
+                  await signOut(auth);
+                  if (isMounted) {
+                    setUser(null);
+                    setRole(null);
+                  }
+                  return;
+                }
+
+                const currentRole = userData?.role || (currentUser.email?.includes('student') || currentUser.email?.includes('hocsinh') ? 'student' : 'teacher');
+                if (isMounted) {
+                  setUser(currentUser);
+                  setRole(currentRole);
+                }
+              } else {
+                // User document does NOT exist in Firestore (was deleted or never authorized)
+                console.warn("User account not found in 'users' collection. Rejecting access:", currentUser.email);
+                await signOut(auth);
+                if (isMounted) {
+                  setUser(null);
+                  setRole(null);
+                }
+              }
+            } catch (docErr) {
+              console.warn("Could not load user role from Firestore:", docErr);
+              // On error, sign out if not authenticated to prevent unauthorized access
+              if (isMounted) {
+                await signOut(auth).catch(() => {});
+                setUser(null);
+                setRole(null);
+              }
             }
           }
-          setRole(isRobo ? 'admin' : currentRole as any);
         } else {
-          const defaultRole = isRobo ? 'admin' : 'student';
-          await setDoc(doc(db, 'users', currentUser.uid), {
-            role: defaultRole,
-            email: currentUser.email,
-            displayName: currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
-            createdAt: new Date().toISOString()
-          });
-          setRole(defaultRole);
+          if (isMounted) {
+            setUser(null);
+            setRole(null);
+          }
         }
-      } else {
-        setRole(null);
+      } catch (authErr) {
+        console.error("Auth state change error:", authErr);
+      } finally {
+        clearTimeout(fallbackTimer);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
-      setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      isMounted = false;
+      clearTimeout(fallbackTimer);
+      unsubscribe();
+    };
   }, []);
 
   const loginWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+    const cred = await signInWithPopup(auth, provider);
+    const currentUser = cred.user;
+    const isRobo = currentUser.email === 'robokien36@gmail.com' || currentUser.email === 'admin@toanhoc.pro';
+    if (!isRobo) {
+      const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+      if (!userDoc.exists()) {
+        await signOut(auth);
+        throw new Error('Tài khoản Google này chưa được cấp quyền trong hệ thống. Vui lòng liên hệ Quản trị viên.');
+      }
+      const data = userDoc.data();
+      if (data?.disabled === true || data?.status === 'deleted') {
+        await signOut(auth);
+        throw new Error('Tài khoản này đã bị khóa hoặc vô hiệu hóa. Vui lòng liên hệ Quản trị viên.');
+      }
+    }
   };
 
   const loginWithEmailPassword = async (email: string, pass: string) => {
-    await signInWithEmailAndPassword(auth, email, pass);
+    const cred = await signInWithEmailAndPassword(auth, email, pass);
+    const currentUser = cred.user;
+    const isRobo = currentUser.email === 'robokien36@gmail.com' || currentUser.email === 'admin@toanhoc.pro';
+    if (!isRobo) {
+      try {
+        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+        if (!userDoc.exists()) {
+          await signOut(auth);
+          throw new Error('Tài khoản này không tồn tại trong danh sách hoặc đã bị xóa bởi Quản trị viên.');
+        }
+        const data = userDoc.data();
+        if (data?.disabled === true || data?.status === 'deleted') {
+          await signOut(auth);
+          throw new Error('Tài khoản này đã bị khóa hoặc vô hiệu hóa. Vui lòng liên hệ Quản trị viên.');
+        }
+      } catch (err: any) {
+        if (err.message && (err.message.includes('không tồn tại') || err.message.includes('bị xóa') || err.message.includes('bị khóa'))) {
+          throw err;
+        }
+        console.error("Login verification error:", err);
+      }
+    }
   };
 
   const logout = async () => {

@@ -1,5 +1,65 @@
 import JSZip from 'jszip';
-import { repairVietnameseDocument, convertTcvn3ToUnicode, hasVietnameseText, rescueVietnameseMathBlocks } from './vietnameseFont';
+import { repairVietnameseDocument, convertTcvn3ToUnicode, convertTcvn3Word, hasVietnameseText, rescueVietnameseMathBlocks } from './vietnameseFont';
+
+/**
+ * Maps Word `<w:sym w:font="..." w:char="..."/>` to standard LaTeX / Unicode math symbols.
+ */
+export function decodeWordSymChar(font: string, hexNum: number): string {
+  const norm = (hexNum & 0xFF); // Extract lower byte (e.g. 0xF0CE -> 0xCE)
+  
+  // Math & Logic Symbols (Font: Symbol / MT Extra)
+  if (norm === 0xCE) return ' \\in ';
+  if (norm === 0xCF) return ' \\notin ';
+  if (norm === 0xA3) return ' \\le ';
+  if (norm === 0xB3) return ' \\ge ';
+  if (norm === 0xA5) return ' \\infty ';
+  if (norm === 0xDB) return ' \\Leftrightarrow ';
+  if (norm === 0xDE) return ' \\Rightarrow ';
+  if (norm === 0x22) return ' \\forall ';
+  if (norm === 0x24) return ' \\exists ';
+  if (norm === 0x44) return ' \\Delta ';
+  if (norm === 0x70) return ' \\pi ';
+  if (norm === 0x61) return ' \\alpha ';
+  if (norm === 0x62) return ' \\beta ';
+  if (norm === 0x67) return ' \\gamma ';
+  if (norm === 0x71) return ' \\theta ';
+  if (norm === 0x2B) return ' \\pm ';
+  if (norm === 0xB4) return ' \\times ';
+  if (norm === 0xB8) return ' \\div ';
+  if (norm === 0xB9) return ' \\neq ';
+  if (norm === 0xBB) return ' \\approx ';
+  if (norm === 0x5E) return ' \\perp ';
+  if (norm === 0x50) return ' \\parallel ';
+  if (norm === 0xC8) return ' \\cup ';
+  if (norm === 0xC7) return ' \\cap ';
+  if (norm === 0xCC) return ' \\subset ';
+  if (norm === 0xCB) return ' \\not\\subset ';
+  if (norm === 0xC6) return ' \\emptyset ';
+  if (norm === 0xAE) return ' \\to ';
+  if (norm === 0xAC) return ' \\leftarrow ';
+  if (norm === 0xB0) return '^\\circ';
+  if (norm === 0x3D) return ' = ';
+  if (norm === 0x3C) return ' < ';
+  if (norm === 0x3E) return ' > ';
+  if (norm === 0x2D) return '-';
+  if (norm === 0x2F) return '/';
+  if (norm === 0x28) return '(';
+  if (norm === 0x29) return ')';
+  if (norm === 0x5B) return '[';
+  if (norm === 0x5D) return ']';
+  if (norm === 0x7B) return '\\{';
+  if (norm === 0x7D) return '\\}';
+
+  // Wingdings checkboxes
+  if (font.toLowerCase().includes('wingding')) {
+    if (norm === 0xFE) return ' [x] ';
+    if (norm === 0xA8) return ' [ ] ';
+    if (norm === 0xFC) return ' ✓ ';
+    if (norm === 0xFB) return ' ✗ ';
+  }
+
+  return '';
+}
 
 /**
  * Converts Word OMML (Office Math Markup Language) XML into standard LaTeX math.
@@ -66,6 +126,11 @@ export function ommlToLatex(ommlXml: string): string {
       const eqArrMatch = dContent.match(/<m:eqArr\b[^>]*>([\s\S]*?)<\/m:eqArr>/);
       if (eqArrMatch) {
         const eMatches = eqArrMatch[1].match(/<m:e\b[^>]*>([\s\S]*?)<\/m:e>/g) || [];
+        const lines = eMatches.map(em => ommlToLatex(em)).filter(Boolean);
+        return `\\begin{cases} ${lines.join(' \\\\ ')} \\end{cases}`;
+      }
+      const eMatches = dContent.match(/<m:e\b[^>]*>([\s\S]*?)<\/m:e>/g) || [];
+      if (eMatches.length > 1) {
         const lines = eMatches.map(em => ommlToLatex(em)).filter(Boolean);
         return `\\begin{cases} ${lines.join(' \\\\ ')} \\end{cases}`;
       }
@@ -264,9 +329,27 @@ function parseDocxParagraph(pXml: string, imageMap?: Record<string, string>): st
       const isBold = /<w:b\b/i.test(token);
       const isItalic = /<w:i\b/i.test(token);
 
+      // Check run font: legacy TCVN3 (.VnTime, .VnTimeH) or VNI
+      const isTcvn3Font = /<w:rFonts\b[^>]*(?:\.Vn|TCVN|ABC|VnTime)/i.test(token);
+      const isVnTimeH = /<w:rFonts\b[^>]*(?:\.VnTimeH|\.VnArialH|\.VnCourierH)/i.test(token);
+      const isVniFont = /<w:rFonts\b[^>]*VNI/i.test(token);
+
       // Check inner math or tabs inside run
       if (/<w:tab\b/i.test(token)) {
         parts.push('    ');
+      }
+
+      // Check for Word Symbol / Wingdings characters (<w:sym>)
+      const symMatches = Array.from(token.matchAll(/<w:sym\b([^>]*)\/?>/gi));
+      for (const sm of symMatches) {
+        const fontAttr = sm[1].match(/w:font="([^"]+)"/i)?.[1] || '';
+        const charAttr = sm[1].match(/w:char="([^"]+)"/i)?.[1] || '';
+        if (charAttr) {
+          const symVal = decodeWordSymChar(fontAttr, parseInt(charAttr, 16));
+          if (symVal) {
+            parts.push(symVal);
+          }
+        }
       }
 
       // Extract all text inside run
@@ -280,6 +363,13 @@ function parseDocxParagraph(pXml: string, imageMap?: Record<string, string>): st
           .replace(/&gt;/g, '>')
           .replace(/&quot;/g, '"')
           .replace(/&apos;/g, "'");
+
+        // If run is explicitly legacy TCVN3 font, convert text immediately
+        if (text && isTcvn3Font) {
+          text = convertTcvn3Word(text, isVnTimeH || isBold);
+        } else if (text && isVniFont) {
+          text = convertTcvn3ToUnicode(text);
+        }
 
         if (text) {
           if (isSuper) {

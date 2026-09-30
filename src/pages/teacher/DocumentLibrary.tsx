@@ -5,13 +5,11 @@ import {
   BookOpen, Plus, FileText, X, ExternalLink, Download, 
   UploadCloud, Trash2, Pencil, AlertTriangle, Sparkles, Loader2,
   CheckCircle2, ArrowRight, Copy, Check, Eye, Edit3,
-  Layers, Search, FileCode, RefreshCw, Filter, Printer, HelpCircle,
-  FileCheck
+  Layers, Search, FileCode, RefreshCw, Filter, HelpCircle,
+  FileCheck, EyeOff, Calendar
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import MathText from '../../components/MathText';
-import LessonPrintExportModal from '../../components/teacher/LessonPrintExportModal';
-import DocumentEditorWorkspace from '../../components/teacher/DocumentEditorWorkspace';
 import { 
   convertTcvn3ToUnicode, 
   formatMathExpressions, 
@@ -22,6 +20,13 @@ import {
 import { extractTextFromPdfInBrowser, cleanPdfWhiteSpaces } from '../../lib/pdfProcessingEngine';
 import { saveFileToIDB, getFileFromIDB } from '../../lib/idbStorage';
 import { ensureAttachmentDataUrl } from '../../lib/fileUtils';
+import { 
+  getCurrentSchoolYear, 
+  formatSchoolYear, 
+  getStandardSchoolYears, 
+  matchesSchoolYear, 
+  compareSchoolYears 
+} from '../../utils/schoolYear';
 // @ts-ignore
 import html2pdf from 'html2pdf.js';
 
@@ -48,12 +53,16 @@ interface DocumentLibraryProps {
 
 export default function DocumentLibrary({ onNavigateToTests, onNavigateToOfflineTests }: DocumentLibraryProps) {
   const { user } = useAuth();
+  // School Year Filter State (Mặc định hiển thị là năm học hiện tại)
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>(getCurrentSchoolYear());
+  const [topicFormSchoolYear, setTopicFormSchoolYear] = useState<string>(getCurrentSchoolYear());
+  const [docFormSchoolYear, setDocFormSchoolYear] = useState<string>(getCurrentSchoolYear());
+
   const [grade, setGrade] = useState<number>(9);
   const [topics, setTopics] = useState<any[]>([]);
   const [lessons, setLessons] = useState<any[]>([]);
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
   const [selectedLesson, setSelectedLesson] = useState<any | null>(null);
-  const [printingLesson, setPrintingLesson] = useState<any | null>(null);
   
   // Search & Filter
   const [searchDocQuery, setSearchDocQuery] = useState('');
@@ -90,10 +99,6 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
   // AI Generation & Extraction state
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingStatus, setGeneratingStatus] = useState('');
-  const [isFixingLesson, setIsFixingLesson] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [modalViewTab, setModalViewTab] = useState<'edit' | 'preview' | 'split'>('edit');
-  const [inputMethod, setInputMethod] = useState<'paste' | 'file' | 'studio'>('studio');
 
   // Delete Document modal state
   const [docToDeleteObj, setDocToDeleteObj] = useState<any | null>(null);
@@ -109,32 +114,31 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
   // Scroll ref
   const modalBodyScrollRef = useRef<HTMLFormElement>(null);
 
-  const handleKnowledgeChange = (val: string) => {
-    const container = modalBodyScrollRef.current;
-    const currentScrollTop = container ? container.scrollTop : 0;
-    setDocForm(prev => ({ ...prev, knowledge: val }));
-    if (container && container.scrollTop !== currentScrollTop) {
-      requestAnimationFrame(() => {
-        if (container) container.scrollTop = currentScrollTop;
-      });
-    }
-  };
-
   useEffect(() => {
     loadTopics();
     setSelectedTopicId(null);
     setSelectedLesson(null);
     setLessons([]);
-  }, [grade]);
+  }, [grade, selectedSchoolYear]);
 
   const loadTopics = async () => {
     try {
       const q = query(collection(db, 'topics'), where('grade', '==', grade));
       const snap = await getDocs(q);
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      let data = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      data = data.filter(t => matchesSchoolYear(t.schoolYear, selectedSchoolYear));
+      data.sort((a, b) => {
+        const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
+        if (yearDiff !== 0) return yearDiff;
+        return (a.name || '').localeCompare(b.name || '');
+      });
       setTopics(data);
-      if (data.length > 0 && !selectedTopicId) {
+      if (data.length > 0) {
         loadLessons(data[0].id);
+      } else {
+        setSelectedTopicId(null);
+        setLessons([]);
+        setSelectedLesson(null);
       }
     } catch (e: any) {
       console.error(e);
@@ -148,7 +152,13 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
       setSelectedTopicId(topicId);
       const q = query(collection(db, 'lessons'), where('topicId', '==', topicId));
       const snap = await getDocs(q);
-      const lessonData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      let lessonData = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      lessonData = lessonData.filter(l => matchesSchoolYear(l.schoolYear, selectedSchoolYear));
+      lessonData.sort((a, b) => {
+        const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
+        if (yearDiff !== 0) return yearDiff;
+        return (a.title || '').localeCompare(b.title || '');
+      });
       setLessons(lessonData);
       if (lessonData.length > 0) {
         setSelectedLesson(lessonData[0]);
@@ -184,43 +194,7 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
     setIsGenerating(true);
     setGeneratingStatus(`Đang đọc tệp "${file.name}"...`);
 
-    // Read TXT
-    if (file.name.toLowerCase().endsWith('.txt') || file.type.startsWith('text/')) {
-      const textReader = new FileReader();
-      textReader.onload = async (re) => {
-        const text = re.target?.result as string;
-        if (text) {
-          const cleanedText = smartFormatLessonLayout(text);
-          const fileId = `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-          const dataUrl = 'data:text/plain;charset=utf-8,' + encodeURIComponent(text);
-          await saveFileToIDB(fileId, dataUrl).catch(() => {});
-
-          setDocForm(prev => ({
-            ...prev,
-            knowledge: cleanedText,
-            title: prev.title.trim() ? prev.title : cleanFileName,
-            attachment: {
-              name: file.name,
-              size: file.size,
-              type: file.type || 'text/plain',
-              dataUrl: dataUrl,
-              fileId: fileId
-            }
-          }));
-          setIsGenerating(false);
-          setGeneratingStatus('');
-        }
-      };
-      textReader.onerror = () => {
-        setIsGenerating(false);
-        setGeneratingStatus('');
-        setModalDocError('Không thể đọc file văn bản.');
-      };
-      textReader.readAsText(file);
-      return;
-    }
-
-    // Read PDF / Docx / Images
+    // Read TXT / PDF / Docx / Images: Giữ nguyên bản gốc tải lên (không trích xuất file)
     const reader = new FileReader();
     reader.onload = async () => {
       const dataUrl = reader.result as string;
@@ -229,9 +203,27 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
       // Immediate browser cache in IndexedDB
       await saveFileToIDB(fileId, dataUrl).catch(() => {});
 
+      // Upload to server cache for cross-session download
+      try {
+        await fetch('/api/upload-document-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileId,
+            fileName: file.name,
+            fileDataUrl: dataUrl,
+            mimeType: file.type || 'application/octet-stream'
+          })
+        });
+      } catch (err) {
+        console.warn('Server file cache warning:', err);
+      }
+
+      // Giữ nguyên bản gốc: Không trích xuất nội dung khi tải lên
       setDocForm(prev => ({
         ...prev,
         title: prev.title.trim() ? prev.title : cleanFileName,
+        knowledge: prev.knowledge || '',
         attachment: {
           name: file.name,
           size: file.size,
@@ -241,41 +233,8 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
         }
       }));
 
-      // Server AI extraction for PDF/Word
-      try {
-        setGeneratingStatus(`Đang trích xuất nội dung và công thức từ "${file.name}"...`);
-        const apiKey = localStorage.getItem('gemini_api_key') || localStorage.getItem('custom_gemini_api_key') || '';
-        const res = await fetch('/api/extract-document', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(apiKey ? { 'x-gemini-api-key': apiKey } : {})
-          },
-          body: JSON.stringify({
-            fileDataUrl: dataUrl,
-            mimeType: file.type,
-            fileName: file.name,
-            title: docForm.title || cleanFileName
-          })
-        });
-
-        if (res.ok) {
-          const resData = await res.json();
-          if (resData.content) {
-            setDocForm(prev => ({
-              ...prev,
-              title: prev.title && prev.title !== cleanFileName ? prev.title : (resData.title || prev.title || cleanFileName),
-              knowledge: resData.content
-            }));
-          }
-        }
-      } catch (err) {
-        console.warn("Server extraction error:", err);
-      } finally {
-        setIsGenerating(false);
-        setGeneratingStatus('');
-        setInputMethod('studio');
-      }
+      setIsGenerating(false);
+      setGeneratingStatus('');
     };
     reader.onerror = () => {
       setIsGenerating(false);
@@ -357,6 +316,9 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
                 const uploadData = await uploadRes.json();
                 fileId = uploadData.fileId || fileId;
                 fileUrl = uploadData.fileUrl || `/api/document-file/${fileId}`;
+                if (uploadData.fileId && docForm.attachment.dataUrl) {
+                  await saveFileToIDB(uploadData.fileId, docForm.attachment.dataUrl).catch(() => {});
+                }
               }
             } catch (errUpload) {
               console.warn("Upload to server warning:", errUpload);
@@ -378,10 +340,11 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
 
       const docData: any = {
         topicId: targetTopicId,
-        title: docForm.title.trim(),
-        knowledge: docForm.knowledge || '',
+        title: repairVietnameseDocument(convertTcvn3ToUnicode(docForm.title.trim())),
+        knowledge: repairVietnameseDocument(convertTcvn3ToUnicode(docForm.knowledge || '')),
         videoUrl: docForm.videoUrl ? docForm.videoUrl.trim() : '',
         grade: grade,
+        schoolYear: docFormSchoolYear || selectedSchoolYear || getCurrentSchoolYear(),
         updatedAt: new Date().toISOString()
       };
 
@@ -451,18 +414,22 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
 
     try {
       if (editingTopic) {
+        const sy = topicFormSchoolYear || editingTopic.schoolYear || getCurrentSchoolYear();
         await updateDoc(doc(db, 'topics', editingTopic.id), {
           name: topicFormName.trim(),
           isSpecial: topicFormSpecial,
+          schoolYear: sy,
           updatedAt: new Date().toISOString()
         });
-        setTopics(prev => prev.map(t => t.id === editingTopic.id ? { ...t, name: topicFormName.trim(), isSpecial: topicFormSpecial } : t));
+        setTopics(prev => prev.map(t => t.id === editingTopic.id ? { ...t, name: topicFormName.trim(), isSpecial: topicFormSpecial, schoolYear: sy } : t));
         setSysMsg(`Đã cập nhật chuyên đề "${topicFormName}" thành công!`);
       } else {
+        const sy = topicFormSchoolYear || selectedSchoolYear || getCurrentSchoolYear();
         const newTopic = {
           name: topicFormName.trim(),
           grade: grade,
           isSpecial: topicFormSpecial,
+          schoolYear: sy,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
@@ -610,6 +577,7 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
           name,
           grade,
           isSpecial: name.includes('Ôn thi'),
+          schoolYear: selectedSchoolYear !== 'all' ? selectedSchoolYear : getCurrentSchoolYear(),
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         });
@@ -632,6 +600,7 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
   const handleOpenAddDoc = () => {
     setModalDocError('');
     setEditingLesson(null);
+    setDocFormSchoolYear(selectedSchoolYear !== 'all' ? selectedSchoolYear : getCurrentSchoolYear());
     setDocForm({
       title: '',
       knowledge: '',
@@ -640,27 +609,27 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
     });
     setModalTargetTopicId(selectedTopicId || (topics[0]?.id || ''));
     setModalNewTopicName(topics.length === 0 ? `Chuyên đề 1: Tài liệu học tập & Đề thi Khối ${grade}` : '');
-    setInputMethod('studio');
     setShowDocModal(true);
   };
 
   // Open Edit Document
-  const handleOpenEditDoc = (docItem: any) => {
+  const handleOpenEditDoc = (item: any) => {
     setModalDocError('');
-    setEditingLesson(docItem);
+    setEditingLesson(item);
+    setDocFormSchoolYear(item.schoolYear || getCurrentSchoolYear());
     setDocForm({
-      title: docItem.title || '',
-      knowledge: docItem.knowledge || '',
-      videoUrl: docItem.videoUrl || '',
-      attachment: docItem.attachment || null
+      title: item.title || '',
+      knowledge: item.knowledge || '',
+      videoUrl: item.videoUrl || '',
+      attachment: item.attachment || null
     });
-    setModalTargetTopicId(docItem.topicId || selectedTopicId || (topics[0]?.id || ''));
-    setInputMethod('studio');
+    setModalTargetTopicId(item.topicId || selectedTopicId || (topics[0]?.id || ''));
+    setModalNewTopicName('');
     setShowDocModal(true);
   };
 
   // Download attachment helper (Tải tệp gốc đính kèm nguyên bản)
-  const handleDownloadAttachment = async (attachment: any, customTitle?: string) => {
+  const handleDownloadAttachment = async (attachment: any, customTitle?: string, lessonItem?: any) => {
     if (!attachment) return;
     try {
       const dataUrl = await ensureAttachmentDataUrl(attachment);
@@ -673,22 +642,54 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
         document.body.removeChild(a);
         setSysMsg(`Đã tải về tệp gốc nguyên bản: ${attachment.name}`);
         setTimeout(() => setSysMsg(''), 4000);
-      } else if (attachment.fileUrl) {
-        window.open(attachment.fileUrl, '_blank');
-      } else {
-        alert('Không tìm thấy dữ liệu tệp gốc trên máy chủ.');
+        return;
       }
+
+      // Thử tải trực tiếp từ server nếu có fileUrl
+      if (attachment.fileUrl) {
+        const fileNameQuery = attachment.name ? `?fileName=${encodeURIComponent(attachment.name)}` : '';
+        const fetchUrl = attachment.fileUrl.includes('?') ? attachment.fileUrl : `${attachment.fileUrl}${fileNameQuery}`;
+        try {
+          const res = await fetch(fetchUrl);
+          if (res.ok) {
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = attachment.name || `${customTitle || 'tai_lieu_goc'}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+            setSysMsg(`Đã tải về tệp gốc nguyên bản: ${attachment.name}`);
+            setTimeout(() => setSysMsg(''), 4000);
+            return;
+          }
+        } catch (eFetch) {
+          console.warn('Direct fetch failed:', eFetch);
+        }
+      }
+
+      // Nếu tệp vật lý không còn trong cache máy chủ:
+      setSysMsg(`Tệp đính kèm gốc (${attachment.name}) không còn trong bộ nhớ tạm máy chủ. Thầy/Cô có thể tải lên lại tệp gốc này.`);
+      setTimeout(() => setSysMsg(''), 5000);
     } catch (err: any) {
       console.error('Download error:', err);
-      alert('Lỗi tải tệp gốc: ' + (err?.message || 'Có lỗi xảy ra'));
+      setSysError('Lỗi tải tệp gốc: ' + (err?.message || 'Có lỗi xảy ra'));
+      setTimeout(() => setSysError(''), 4000);
     }
   };
 
   const handleDirectDownloadOriginal = async (lessonItem: any) => {
-    if (!lessonItem?.attachment) return;
+    if (!lessonItem) return;
+    if (!lessonItem?.attachment) {
+      setSysMsg(`Tài liệu "${lessonItem.title}" không có tệp đính kèm gốc.`);
+      setTimeout(() => setSysMsg(''), 4000);
+      return;
+    }
     setDownloadingDocId(lessonItem.id);
     try {
-      await handleDownloadAttachment(lessonItem.attachment, lessonItem.title);
+      await handleDownloadAttachment(lessonItem.attachment, lessonItem.title, lessonItem);
     } finally {
       setDownloadingDocId(null);
     }
@@ -729,32 +730,34 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
       if (res.ok) {
         const resData = await res.json();
         if (resData.content) {
+          const repairedKnowledge = repairVietnameseDocument(convertTcvn3ToUnicode(resData.content));
+          const repairedTitle = repairVietnameseDocument(convertTcvn3ToUnicode(resData.title || lessonItem.title));
           const lessonRef = doc(db, 'lessons', lessonItem.id);
           await updateDoc(lessonRef, {
-            knowledge: resData.content,
-            title: resData.title || lessonItem.title,
+            knowledge: repairedKnowledge,
+            title: repairedTitle,
             updatedAt: new Date().toISOString()
           });
 
           setLessons(prev => prev.map(l => l.id === lessonItem.id ? {
             ...l,
-            knowledge: resData.content,
-            title: resData.title || l.title
+            knowledge: repairedKnowledge,
+            title: repairedTitle
           } : l));
 
           if (selectedLesson?.id === lessonItem.id) {
             setSelectedLesson((prev: any) => prev ? {
               ...prev,
-              knowledge: resData.content,
-              title: resData.title || prev.title
+              knowledge: repairedKnowledge,
+              title: repairedTitle
             } : null);
           }
 
           if (editingLesson?.id === lessonItem.id) {
             setDocForm(prev => ({
               ...prev,
-              knowledge: resData.content,
-              title: resData.title || prev.title
+              knowledge: repairedKnowledge,
+              title: repairedTitle
             }));
           }
 
@@ -783,21 +786,50 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
         console.warn('Could not resolve dataUrl for online test:', e);
       }
     }
+    let cleanKnowledge = repairVietnameseDocument(convertTcvn3ToUnicode(docItem.knowledge || ''));
+    if (!cleanKnowledge && fullAttachment && fullAttachment.dataUrl) {
+      setSysMsg(`Đang trích xuất nội dung từ tệp "${fullAttachment.name}" để tạo bài thi online...`);
+      try {
+        const apiKey = localStorage.getItem('gemini_api_key') || localStorage.getItem('custom_gemini_api_key') || '';
+        const res = await fetch('/api/extract-document', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(apiKey ? { 'x-gemini-api-key': apiKey } : {})
+          },
+          body: JSON.stringify({
+            fileDataUrl: fullAttachment.dataUrl,
+            mimeType: fullAttachment.type || 'application/octet-stream',
+            fileName: fullAttachment.name,
+            title: docItem.title
+          })
+        });
+        if (res.ok) {
+          const resData = await res.json();
+          if (resData.content) {
+            cleanKnowledge = repairVietnameseDocument(convertTcvn3ToUnicode(resData.content));
+          }
+        }
+      } catch (err) {
+        console.warn('Extraction during online test creation:', err);
+      }
+    }
+    const cleanTitle = repairVietnameseDocument(convertTcvn3ToUnicode(docItem.title || ''));
     const refPayload = {
       docId: docItem.id,
       topicId: docItem.topicId,
-      topicName: curTopic?.name || 'Chuyên đề',
+      topicName: curTopic?.name ? repairVietnameseDocument(convertTcvn3ToUnicode(curTopic.name)) : 'Chuyên đề',
       lessonId: docItem.id,
-      lessonTitle: docItem.title,
+      lessonTitle: cleanTitle,
       grade: grade,
       attachment: fullAttachment,
-      knowledge: docItem.knowledge
+      knowledge: cleanKnowledge
     };
 
     // Always store in session storage so ManageTests can pick it up
     sessionStorage.setItem('pendingTestReference', JSON.stringify(refPayload));
     window.dispatchEvent(new CustomEvent('switch-dashboard-tab', { detail: { tab: 'tests', refPayload } }));
-    setSysMsg(`Đã chọn tài liệu "${docItem.title}" làm tham chiếu. Đang chuyển sang trang Đề thi online...`);
+    setSysMsg(`Đã chọn tài liệu "${cleanTitle}" làm tham chiếu. Đang chuyển sang trang Đề thi online...`);
     setTimeout(() => setSysMsg(''), 3000);
 
     if (onNavigateToTests) {
@@ -817,21 +849,50 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
         console.warn('Could not resolve dataUrl for offline test:', e);
       }
     }
+    let cleanKnowledge = repairVietnameseDocument(convertTcvn3ToUnicode(docItem.knowledge || ''));
+    if (!cleanKnowledge && fullAttachment && fullAttachment.dataUrl) {
+      setSysMsg(`Đang trích xuất nội dung từ tệp "${fullAttachment.name}" để tạo đề thi offline...`);
+      try {
+        const apiKey = localStorage.getItem('gemini_api_key') || localStorage.getItem('custom_gemini_api_key') || '';
+        const res = await fetch('/api/extract-document', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(apiKey ? { 'x-gemini-api-key': apiKey } : {})
+          },
+          body: JSON.stringify({
+            fileDataUrl: fullAttachment.dataUrl,
+            mimeType: fullAttachment.type || 'application/octet-stream',
+            fileName: fullAttachment.name,
+            title: docItem.title
+          })
+        });
+        if (res.ok) {
+          const resData = await res.json();
+          if (resData.content) {
+            cleanKnowledge = repairVietnameseDocument(convertTcvn3ToUnicode(resData.content));
+          }
+        }
+      } catch (err) {
+        console.warn('Extraction during offline test creation:', err);
+      }
+    }
+    const cleanTitle = repairVietnameseDocument(convertTcvn3ToUnicode(docItem.title || ''));
     const refPayload = {
       docId: docItem.id,
       topicId: docItem.topicId,
-      topicName: curTopic?.name || 'Chuyên đề',
+      topicName: curTopic?.name ? repairVietnameseDocument(convertTcvn3ToUnicode(curTopic.name)) : 'Chuyên đề',
       lessonId: docItem.id,
-      lessonTitle: docItem.title,
+      lessonTitle: cleanTitle,
       grade: grade,
       attachment: fullAttachment,
-      knowledge: docItem.knowledge
+      knowledge: cleanKnowledge
     };
 
     // Always store in session storage so ManageOfflineTests can pick it up
     sessionStorage.setItem('pendingOfflineReference', JSON.stringify(refPayload));
     window.dispatchEvent(new CustomEvent('switch-dashboard-tab', { detail: { tab: 'offline-tests', refPayload } }));
-    setSysMsg(`Đã chọn tài liệu "${docItem.title}" làm đề gốc. Đang chuyển sang trang Đề thi offline...`);
+    setSysMsg(`Đã chọn tài liệu "${cleanTitle}" làm đề gốc. Đang chuyển sang trang Đề thi offline...`);
     setTimeout(() => setSysMsg(''), 3000);
 
     if (onNavigateToOfflineTests) {
@@ -947,10 +1008,10 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
       )}
 
       {/* ============================================================== */}
-      {/* 2. GRADE SELECTOR BAR (KHỐI 6 -> KHỐI 12)                       */}
+      {/* 2. GRADE SELECTOR BAR (KHỐI 6 -> KHỐI 12) & SCHOOL YEAR FILTER */}
       {/* ============================================================== */}
-      <div className="bg-white p-2.5 rounded-2xl border border-gray-200/80 shadow-xs flex items-center justify-between gap-2 overflow-x-auto">
-        <div className="flex items-center gap-1.5 shrink-0">
+      <div className="bg-white p-3 rounded-2xl border border-gray-200/80 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-3 overflow-x-auto">
+        <div className="flex items-center gap-1.5 shrink-0 overflow-x-auto w-full md:w-auto pb-1 md:pb-0">
           <span className="text-xs font-extrabold text-gray-500 uppercase tracking-wider px-2">Khối lớp:</span>
           {[6, 7, 8, 9, 10, 11, 12].map(g => (
             <button
@@ -968,8 +1029,24 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
           ))}
         </div>
 
-        <div className="text-xs font-medium text-gray-500 hidden sm:block pr-3">
-          Đang xem thư viện tài liệu môn Toán <strong>Khối {grade}</strong>
+        {/* Bộ lọc Năm học - Mặc định là năm học hiện tại */}
+        <div className="flex items-center gap-2 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 px-3.5 py-1.5 rounded-xl shadow-2xs shrink-0 self-end md:self-auto">
+          <Calendar size={16} className="text-blue-600 shrink-0" />
+          <span className="text-xs font-bold text-blue-900 whitespace-nowrap">Năm học:</span>
+          <select
+            value={selectedSchoolYear}
+            onChange={(e) => setSelectedSchoolYear(e.target.value)}
+            className="bg-white border border-blue-300 rounded-lg text-xs font-bold px-2.5 py-1 text-blue-900 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer shadow-xs"
+          >
+            <option value={getCurrentSchoolYear()}>⭐ Năm học hiện tại ({formatSchoolYear(getCurrentSchoolYear())})</option>
+            <option value="all">🌐 Tất cả các năm học</option>
+            {getStandardSchoolYears().filter(y => y !== getCurrentSchoolYear()).map(sy => (
+              <option key={sy} value={sy}>Năm học {formatSchoolYear(sy)}</option>
+            ))}
+          </select>
+          {selectedSchoolYear === getCurrentSchoolYear() && (
+            <span className="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-full font-bold">Mặc định</span>
+          )}
         </div>
       </div>
 
@@ -997,6 +1074,7 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
                 setEditingTopic(null);
                 setTopicFormName('');
                 setTopicFormSpecial(false);
+                setTopicFormSchoolYear(selectedSchoolYear !== 'all' ? selectedSchoolYear : getCurrentSchoolYear());
                 setShowTopicModal(true);
               }}
               className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
@@ -1058,11 +1136,16 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
                           {topic.name}
                         </h3>
                       </div>
-                      {topic.isSpecial && (
-                        <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.2 rounded-full inline-block">
-                          ★ Ôn thi trọng tâm
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 font-semibold px-1.5 py-0.2 rounded-full">
+                          Năm học: {formatSchoolYear(topic.schoolYear || getCurrentSchoolYear())}
                         </span>
-                      )}
+                        {topic.isSpecial && (
+                          <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.2 rounded-full inline-block">
+                            ★ Ôn thi trọng tâm
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0 opacity-80 group-hover:opacity-100">
@@ -1073,6 +1156,7 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
                           setEditingTopic(topic);
                           setTopicFormName(topic.name);
                           setTopicFormSpecial(Boolean(topic.isSpecial));
+                          setTopicFormSchoolYear(topic.schoolYear || getCurrentSchoolYear());
                           setShowTopicModal(true);
                         }}
                         className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-100/50 rounded-lg transition-colors"
@@ -1206,9 +1290,14 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
                             <h3 className="font-bold text-sm text-gray-900 group-hover:text-blue-600 transition-colors">
                               {item.title}
                             </h3>
-                            <span className="text-[11px] text-gray-400">
-                              Cập nhật: {new Date(item.updatedAt || item.createdAt || Date.now()).toLocaleDateString('vi-VN')}
-                            </span>
+                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                              <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 font-bold px-2 py-0.5 rounded-full">
+                                Năm học: {formatSchoolYear(item.schoolYear || getCurrentSchoolYear())}
+                              </span>
+                              <span className="text-[11px] text-gray-400">
+                                Cập nhật: {new Date(item.updatedAt || item.createdAt || Date.now()).toLocaleDateString('vi-VN')}
+                              </span>
+                            </div>
                           </div>
                         </div>
 
@@ -1234,20 +1323,18 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
                           </div>
                           <button
                             type="button"
-                            onClick={() => handleDownloadAttachment(item.attachment)}
-                            className="px-2.5 py-1 bg-white border border-gray-200 hover:bg-gray-50 text-blue-600 font-bold rounded-lg text-[11px] flex items-center gap-1 shrink-0 cursor-pointer"
-                            title="Tải tệp này về máy"
+                            onClick={() => handleDirectDownloadOriginal(item)}
+                            disabled={downloadingDocId === item.id}
+                            className="px-3 py-1 bg-white border border-blue-300 hover:bg-blue-50 text-blue-700 font-bold rounded-lg text-xs flex items-center gap-1.5 shrink-0 cursor-pointer shadow-2xs transition-colors disabled:opacity-50"
+                            title="Tải tệp gốc nguyên bản về máy (không trích xuất)"
                           >
-                            <Download size={12} />
-                            <span>Tải về</span>
+                            {downloadingDocId === item.id ? (
+                              <Loader2 size={13} className="animate-spin text-blue-600" />
+                            ) : (
+                              <Download size={13} className="text-blue-600" />
+                            )}
+                            <span>Tải file gốc</span>
                           </button>
-                        </div>
-                      )}
-
-                      {/* Content summary */}
-                      {item.knowledge && (
-                        <div className="mt-2.5 p-3 bg-slate-50/70 rounded-xl border border-slate-100 text-xs text-gray-700 max-h-24 overflow-y-auto leading-relaxed">
-                          <MathText content={item.knowledge.substring(0, 200) + (item.knowledge.length > 200 ? '...' : '')} />
                         </div>
                       )}
                     </div>
@@ -1278,42 +1365,18 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
                         </button>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
-                        {/* Nút Tải trực tiếp tệp gốc nguyên bản nếu có */}
-                        {item.attachment && (
-                          <button
-                            type="button"
-                            onClick={() => handleDirectDownloadOriginal(item)}
-                            disabled={downloadingDocId === item.id}
-                            className="px-2.5 py-1 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 hover:border-emerald-300 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
-                            title={`Tải tệp gốc ban đầu (${item.attachment.name}) - Giữ nguyên 100% định dạng, phông chữ và công thức`}
-                          >
-                            {downloadingDocId === item.id ? (
-                              <Loader2 size={12} className="animate-spin" />
-                            ) : (
-                              <FileCheck size={13} className="text-emerald-600" />
-                            )}
-                            <span>Tệp gốc ({item.attachment.name.split('.').pop()?.toUpperCase()})</span>
-                          </button>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() => setPrintingLesson(item)}
-                          className="px-2.5 py-1 text-gray-700 hover:text-blue-700 hover:bg-blue-50 border border-gray-200 hover:border-blue-300 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-                          title="Xuất file bài học (Tải file Word, Tải PDF chuẩn A4, In trực tiếp hoặc Tải tệp gốc)"
-                        >
-                          <Printer size={13} className="text-blue-600" />
-                          <span>Xuất file / In</span>
-                        </button>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* Nút Sửa tài liệu */}
                         <button
                           type="button"
                           onClick={() => handleOpenEditDoc(item)}
-                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                          title="Chỉnh sửa tài liệu"
+                          className="px-2.5 py-1 text-xs font-bold rounded-lg flex items-center gap-1.5 text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200 hover:border-gray-300 transition-all cursor-pointer shadow-2xs"
+                          title="Chỉnh sửa thông tin tài liệu"
                         >
-                          <Edit3 size={15} />
+                          <Pencil size={13} className="text-gray-500" />
+                          <span>Sửa</span>
                         </button>
+
                         <button
                           type="button"
                           onClick={() => setDocToDeleteObj(item)}
@@ -1324,6 +1387,7 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
                         </button>
                       </div>
                     </div>
+
                   </div>
                 );
               })
@@ -1338,7 +1402,7 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
       {/* ============================================================== */}
       {showDocModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-150">
-          <div className="bg-white w-full max-w-4xl max-h-[92vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+          <div className="bg-white w-full max-w-2xl max-h-[94vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
             
             {/* Header */}
             <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-blue-50 to-indigo-50">
@@ -1381,8 +1445,23 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
                 </div>
               )}
 
-              {/* Lựa chọn Khối lớp và Chuyên đề */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 p-3.5 bg-blue-50/60 rounded-2xl border border-blue-200/80">
+              {/* Lựa chọn Năm học, Khối lớp và Chuyên đề */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 p-3.5 bg-blue-50/60 rounded-2xl border border-blue-200/80">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    Năm học *
+                  </label>
+                  <select
+                    value={docFormSchoolYear}
+                    onChange={(e) => setDocFormSchoolYear(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl bg-white font-medium outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs"
+                  >
+                    {getStandardSchoolYears().map(sy => (
+                      <option key={sy} value={sy}>Năm học {formatSchoolYear(sy)} {sy === getCurrentSchoolYear() ? '(Hiện tại)' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+
                 <div>
                   <label className="block text-xs font-bold text-gray-700 mb-1">
                     Khối lớp *
@@ -1471,22 +1550,7 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
 
                   {docForm.attachment && (
                     <div className="flex items-center gap-2">
-                      {editingLesson && editingLesson.attachment && (
-                        <button
-                          type="button"
-                          onClick={() => handleReExtractLesson(editingLesson)}
-                          disabled={Boolean(reExtractingDocId)}
-                          className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-xl text-xs font-bold border border-amber-300 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                          title="Trích xuất lại 100% nội dung và bảng biểu, công thức từ tệp này bằng bộ giải mã mới"
-                        >
-                          {reExtractingDocId ? (
-                            <Loader2 size={13} className="animate-spin" />
-                          ) : (
-                            <Sparkles size={13} className="text-amber-600" />
-                          )}
-                          <span>Trích xuất lại đầy đủ</span>
-                        </button>
-                      )}
+
                       <button
                         type="button"
                         onClick={() => setDocForm(prev => ({ ...prev, attachment: null }))}
@@ -1502,45 +1566,6 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
                   <div className="flex items-center justify-center gap-2 text-blue-700 text-xs font-semibold pt-1">
                     <Loader2 size={16} className="animate-spin" />
                     <span>{generatingStatus || 'Đang xử lý tài liệu...'}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Studio biên tập nội dung / Tóm tắt kiến thức */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold text-gray-700">
-                    Nội dung tóm tắt kiến thức & Công thức toán (KaTeX):
-                  </label>
-                  <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
-                    <button
-                      type="button"
-                      onClick={() => setModalViewTab('edit')}
-                      className={`px-2.5 py-1 text-xs font-bold rounded-md cursor-pointer ${modalViewTab === 'edit' ? 'bg-white text-blue-600 shadow-2xs' : 'text-gray-600'}`}
-                    >
-                      Soạn thảo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setModalViewTab('preview')}
-                      className={`px-2.5 py-1 text-xs font-bold rounded-md cursor-pointer ${modalViewTab === 'preview' ? 'bg-white text-blue-600 shadow-2xs' : 'text-gray-600'}`}
-                    >
-                      Xem trước KaTeX
-                    </button>
-                  </div>
-                </div>
-
-                {modalViewTab === 'edit' ? (
-                  <textarea
-                    rows={8}
-                    value={docForm.knowledge}
-                    onChange={(e) => handleKnowledgeChange(e.target.value)}
-                    placeholder="Nhập nội dung tóm tắt bài học, công thức toán học $...$, bài tập mẫu..."
-                    className="w-full p-3 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none leading-relaxed font-mono resize-y"
-                  />
-                ) : (
-                  <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl min-h-[180px] max-h-[300px] overflow-y-auto text-xs leading-relaxed">
-                    <MathText content={docForm.knowledge || 'Chưa có nội dung để xem trước.'} />
                   </div>
                 )}
               </div>
@@ -1606,6 +1631,19 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
             </div>
 
             <form onSubmit={handleSaveTopic} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Năm học *</label>
+                <select
+                  value={topicFormSchoolYear}
+                  onChange={(e) => setTopicFormSchoolYear(e.target.value)}
+                  className="w-full px-3.5 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                >
+                  {getStandardSchoolYears().map(sy => (
+                    <option key={sy} value={sy}>Năm học {formatSchoolYear(sy)} {sy === getCurrentSchoolYear() ? '(Hiện tại)' : ''}</option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1">Tên chuyên đề *</label>
                 <input
@@ -1774,19 +1812,6 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
             </div>
           </div>
         </div>
-      )}
-
-      {/* ============================================================== */}
-      {/* 9. MODAL IN / XUẤT PDF TÀI LIỆU                               */}
-      {/* ============================================================== */}
-      {printingLesson && (
-        <LessonPrintExportModal
-          isOpen={Boolean(printingLesson)}
-          lesson={printingLesson}
-          topicName={topics.find(t => t.id === printingLesson.topicId)?.name || 'Chuyên đề'}
-          grade={grade}
-          onClose={() => setPrintingLesson(null)}
-        />
       )}
 
     </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, getDocs, addDoc, where, deleteDoc, doc, updateDoc, getDoc, onSnapshot } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
-import { FileText, Plus, Upload, Clock, List, Calendar, X, Trash2, Eye, Pencil, ArrowLeft, Folder, FolderCheck, Layers, Shuffle, CheckCircle, Copy, Sparkles, Printer, FileCheck, ShieldCheck, LayoutGrid, FileSpreadsheet, Check, ChevronRight, ChevronDown, ChevronUp, BookOpen, Sliders, HelpCircle, Info, Users, AlertTriangle } from 'lucide-react';
+import { collection, query, getDocs, getDocsFromCache, addDoc, where, deleteDoc, doc, updateDoc, getDoc, onSnapshot } from 'firebase/firestore';
+import { db, FIRESTORE_UPGRADE_URL } from '../../lib/firebase';
+import { FileText, Plus, Upload, Clock, List, Calendar, X, Trash2, Eye, Pencil, ArrowLeft, Folder, FolderCheck, Layers, Shuffle, CheckCircle, Copy, Sparkles, Printer, FileCheck, ShieldCheck, LayoutGrid, FileSpreadsheet, Check, ChevronRight, ChevronDown, ChevronUp, BookOpen, Sliders, HelpCircle, Info, Users, AlertTriangle, ExternalLink } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import MathText from '../../components/MathText';
 import { generateTestVariants, TestVariant } from '../../utils/variantGenerator';
@@ -15,9 +15,19 @@ import { stripOptionPrefix, checkMcqAnswer, detectAnswerDiscrepancy, autoReconci
 import { exportGradebookPdf, exportGradebookExcel } from '../../utils/gradebookExport';
 import { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
 import { dataUrlToFile } from '../../lib/fileUtils';
+import { repairVietnameseDocument, convertTcvn3ToUnicode } from '../../lib/vietnameseFont';
+import { 
+  getCurrentSchoolYear, 
+  formatSchoolYear, 
+  getStandardSchoolYears, 
+  matchesSchoolYear, 
+  compareSchoolYears 
+} from '../../utils/schoolYear';
 
 export default function ManageTests() {
   const { user, role } = useAuth();
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>(getCurrentSchoolYear());
+  const [newSchoolYear, setNewSchoolYear] = useState<string>(getCurrentSchoolYear());
   const [tests, setTests] = useState<any[]>([]);
   const [topics, setTopics] = useState<any[]>([]);
   const [lessons, setLessons] = useState<any[]>([]);
@@ -33,28 +43,41 @@ export default function ManageTests() {
 
   // Tự động nhận diện tài liệu tham chiếu từ Thư viện khi chuyển từ tab Thư viện tài liệu
   useEffect(() => {
-    const pending = sessionStorage.getItem('pendingTestReference');
-    if (pending) {
-      try {
-        const ref = JSON.parse(pending);
-        sessionStorage.removeItem('pendingTestReference');
-        setSelectedReference(ref);
-        if (ref.grade) setNewGrade(ref.grade.toString());
-        if (ref.topicId) setNewTopicId(ref.topicId);
-        if (ref.lessonTitle) setNewTitle(ref.lessonTitle);
-        if (ref.attachment?.dataUrl && ref.attachment?.name) {
-          const file = dataUrlToFile(ref.attachment.dataUrl, ref.attachment.name, ref.attachment.type);
-          setNewFile(file);
-          setOnlineCreationMode('upload');
+    const handlePendingRef = () => {
+      const pending = sessionStorage.getItem('pendingTestReference');
+      if (pending) {
+        try {
+          const ref = JSON.parse(pending);
+          sessionStorage.removeItem('pendingTestReference');
+          setSelectedReference(ref);
+          if (ref.grade) setNewGrade(ref.grade.toString());
+          if (ref.topicId) setNewTopicId(ref.topicId);
+          if (ref.lessonTitle) setNewTitle(repairVietnameseDocument(convertTcvn3ToUnicode(ref.lessonTitle)));
+          if (ref.attachment?.dataUrl && ref.attachment?.name) {
+            const file = dataUrlToFile(ref.attachment.dataUrl, ref.attachment.name, ref.attachment.type);
+            setNewFile(file);
+            setOnlineCreationMode('upload');
+          } else {
+            setOnlineCreationMode('auto');
+            if (ref.knowledge) {
+              setReferenceNotes(repairVietnameseDocument(convertTcvn3ToUnicode(ref.knowledge)));
+            }
+          }
+          setShowCreateModal(true);
+        } catch (e) {
+          console.error("Error reading pending test reference:", e);
         }
-        setShowCreateModal(true);
-      } catch (e) {
-        console.error("Error reading pending test reference:", e);
       }
-    }
+    };
+
+    handlePendingRef();
+    window.addEventListener('switch-dashboard-tab', handlePendingRef);
+    return () => {
+      window.removeEventListener('switch-dashboard-tab', handlePendingRef);
+    };
   }, []);
   
-  const [selectedGrade, setSelectedGrade] = useState<number | null>(null);
+  const [selectedGrade, setSelectedGrade] = useState<number | null>(9);
   const [selectedTopicId, setSelectedTopicId] = useState<string>('');
   const [selectedLessonId, setSelectedLessonId] = useState<string>('');
 
@@ -100,10 +123,14 @@ export default function ManageTests() {
       
       const unsubscribeAssignments = onSnapshot(collection(db, 'assignments'), (snap) => {
         setAssignmentsList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }, (err) => {
+        console.warn('Assignments onSnapshot warning:', err);
       });
 
       const unsubscribeSubmissions = onSnapshot(collection(db, 'submissions'), (snap) => {
         setSubmissionsList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }, (err) => {
+        console.warn('Submissions onSnapshot warning:', err);
       });
 
       return () => {
@@ -114,43 +141,87 @@ export default function ManageTests() {
   }, [user]);
 
   const loadData = async () => {
+    setLoading(true);
     try {
-    const clsSnap = await getDocs(collection(db, 'classes'));
-    const clsData = clsSnap.docs.map(d => ({id: d.id, ...d.data()}));
-    setSchoolClasses(clsData);
-    if (user) {
-      const uDoc = await getDoc(doc(db, 'users', user.uid));
-      if (uDoc.exists()) {
-        setAssignedClasses(uDoc.data().permissions?.assignedClasses || []);
+      // 1. Classes with cache fallback
+      let clsSnap;
+      try {
+        clsSnap = await getDocs(collection(db, 'classes'));
+      } catch {
+        clsSnap = await getDocsFromCache(collection(db, 'classes'));
       }
-    }
-    const topicsSnap = await getDocs(collection(db, 'topics'));
-    const topicsData = topicsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-    setTopics(topicsData);
+      const clsData = clsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setSchoolClasses(clsData);
 
-    const lessonsSnap = await getDocs(collection(db, 'lessons'));
-    const lessonsData = lessonsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-    setLessons(lessonsData);
+      if (user) {
+        try {
+          const uDoc = await getDoc(doc(db, 'users', user.uid));
+          if (uDoc.exists()) {
+            setAssignedClasses(uDoc.data().permissions?.assignedClasses || []);
+          }
+        } catch (e) {
+          console.warn('Error reading user doc:', e);
+        }
+      }
 
-    const testsSnap = await getDocs(collection(db, 'tests'));
-    const testsData = testsSnap.docs.map(d => {
-      const data = d.data();
-      const topic = topicsData.find(t => t.id === data.topicId);
-      return { 
-        id: d.id, 
-        ...data, 
-        grade: data.grade || (topic ? topic.grade : null) 
-      };
-    });
-    setTests(testsData);
+      // 2. Topics with cache fallback
+      let topicsSnap;
+      try {
+        topicsSnap = await getDocs(collection(db, 'topics'));
+      } catch {
+        topicsSnap = await getDocsFromCache(collection(db, 'topics'));
+      }
+      const topicsData = topicsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      setTopics(topicsData);
 
+      // 3. Tests with cache fallback
+      let testsSnap;
+      try {
+        testsSnap = await getDocs(collection(db, 'tests'));
+      } catch {
+        testsSnap = await getDocsFromCache(collection(db, 'tests'));
+      }
+      const testsData = testsSnap.docs.map(d => {
+        const data = d.data();
+        const topic = topicsData.find(t => t.id === data.topicId);
+        return { 
+          id: d.id, 
+          ...data, 
+          grade: data.grade || (topic ? topic.grade : null) 
+        };
+      });
+      testsData.sort((a: any, b: any) => {
+        const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
+        if (yearDiff !== 0) return yearDiff;
+        return (b.createdAt || '').localeCompare(a.createdAt || '');
+      });
+      setTests(testsData);
 
+      // 4. Students
+      try {
+        let stuSnap;
+        try {
+          stuSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'student')));
+        } catch {
+          stuSnap = await getDocsFromCache(query(collection(db, 'users'), where('role', '==', 'student')));
+        }
+        setStudentsList(stuSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch (e) {
+        console.warn('Error loading students list:', e);
+      }
 
-    const stuSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'student')));
-    setStudentsList(stuSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-    setLoading(false);
-    } catch (e) {
-      console.error(e);
+      setLoading(false);
+    } catch (e: any) {
+      console.error('Error in ManageTests loadData:', e);
+      const isQuota = e?.message?.includes('Quota') || e?.message?.includes('quota') || e?.code === 'resource-exhausted';
+      if (isQuota) {
+        setSysError(
+          'Hạn mức đọc dữ liệu miễn phí trong ngày của Firestore đã đạt giới hạn (Quota exceeded for free daily read units). ' +
+          'Dữ liệu sẽ tự động được phục hồi khi sang ngày mới hoặc thầy/cô có thể nâng cấp gói cước trên Firebase Console.'
+        );
+      } else {
+        setSysError('Có lỗi khi tải danh sách đề thi: ' + (e?.message || 'Lỗi mạng'));
+      }
       setLoading(false);
     }
   };
@@ -619,6 +690,7 @@ export default function ManageTests() {
     setMatrixSourceType('preset');
     setNewGrade(selectedGrade ? selectedGrade.toString() : '9');
     setNewTopicId(selectedTopicId || '');
+    setNewSchoolYear(selectedSchoolYear === 'ALL' ? getCurrentSchoolYear() : selectedSchoolYear);
     setCreateMultiVariant(false);
     setVariantCount('4');
     setCustomVariantCodes('101, 102, 103, 104');
@@ -707,6 +779,7 @@ export default function ManageTests() {
     setNewDuration(test.durationMinutes.toString());
     setNewGrade(test.grade ? test.grade.toString() : '9');
     setNewTopicId(test.topicId || '');
+    setNewSchoolYear(test.schoolYear || getCurrentSchoolYear());
     setCreateMultiVariant(test.isMultiVariant || (test.variants && test.variants.length > 1));
     setCustomVariantCodes(test.variantCodes?.join(', ') || '101, 102, 103, 104');
     setNewFile(null); // Require re-uploading file if they want to change it
@@ -839,6 +912,7 @@ export default function ManageTests() {
           answerFileName: variantModalTest.answerFileName || '',
           isCustom: true,
           rubricUrl: variantModalTest.rubricUrl || '',
+          schoolYear: variantModalTest.schoolYear || getCurrentSchoolYear(),
           createdAt: new Date().toISOString(),
           createdBy: variantModalTest.createdBy || user?.displayName || user?.email || 'Giáo viên',
           isMultiVariant: true,
@@ -941,6 +1015,7 @@ export default function ManageTests() {
           answerFileName: variantModalTest.answerFileName || '',
           isCustom: true,
           rubricUrl: variantModalTest.rubricUrl || '',
+          schoolYear: variantModalTest.schoolYear || getCurrentSchoolYear(),
           createdAt: new Date().toISOString(),
           createdBy: variantModalTest.createdBy || user?.displayName || user?.email || 'Giáo viên',
           isMultiVariant: true,
@@ -1199,8 +1274,18 @@ export default function ManageTests() {
         const resolvedExamFormat = t.examFormat || (essayC > 0 && (mcqC > 0 || tfC > 0 || shortC > 0) ? 'mixed' : (mcqC > 0 && tfC > 0 ? 'mcq_3part' : (essayC > 0 ? 'essay' : 'mcq_3part')));
         const resolvedType = (resolvedExamFormat === 'essay') ? 'essay' : ((resolvedExamFormat === 'mixed') ? 'mixed' : 'mcq');
 
+        const sanitizedQuestions = (t.questions || []).map((q: any) => ({
+          ...q,
+          question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+          options: Array.isArray(q.options) 
+            ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+            : [],
+          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : (q.correctAnswer || ''),
+          explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || ''))
+        }));
+
         const testData: any = {
-          title: t.title,
+          title: repairVietnameseDocument(convertTcvn3ToUnicode(t.title || 'Bài kiểm tra')),
           type: resolvedType,
           durationMinutes: Number(t.durationMinutes) || 45,
           topicId: targetTopicId,
@@ -1209,7 +1294,7 @@ export default function ManageTests() {
           examFormat: resolvedExamFormat,
           formatType: resolvedExamFormat,
           autoGenType: resolvedExamFormat,
-          questionsData: JSON.stringify(questions),
+          questionsData: JSON.stringify(sanitizedQuestions),
           mcqCount: mcqC,
           part1Count: mcqC,
           part2Count: tfC,
@@ -1217,6 +1302,7 @@ export default function ManageTests() {
           essayCount: essayC,
           isCustom: true,
           rubricUrl: "",
+          schoolYear: newSchoolYear || (selectedSchoolYear !== 'ALL' ? selectedSchoolYear : getCurrentSchoolYear()),
           createdAt: new Date().toISOString(),
           createdBy: user?.displayName || user?.email || 'Giáo viên'
         };
@@ -1310,11 +1396,12 @@ export default function ManageTests() {
       }
       
       const testData: any = {
-        title: newTitle,
+        title: repairVietnameseDocument(convertTcvn3ToUnicode(newTitle)),
         type: resolvedType,
         durationMinutes: parseInt(newDuration, 10),
         topicId: targetTopicId,
         grade: gradeNum,
+        schoolYear: newSchoolYear || (selectedSchoolYear !== 'ALL' ? selectedSchoolYear : getCurrentSchoolYear()),
         creationMode: onlineCreationMode,
         examFormat: examFormat,
         autoGenType: (onlineCreationMode === 'matrix' ? 'matrix' : examFormat),
@@ -1366,7 +1453,7 @@ export default function ManageTests() {
         }
         if (onlineCreationMode === 'auto' || onlineCreationMode === 'matrix') {
           testData.referenceFileName = referenceFile ? referenceFile.name : 'SGK Kết nối tri thức & Học liệu chủ đề';
-          if (referenceNotes) testData.referenceNotes = referenceNotes;
+          if (referenceNotes) testData.referenceNotes = repairVietnameseDocument(convertTcvn3ToUnicode(referenceNotes));
         }
 
         if (!editingTestId) {
@@ -1390,6 +1477,7 @@ export default function ManageTests() {
 
           let referenceFileDataUrl = "";
           let referenceFileMimeType = "";
+          let referenceFileName = "";
           if ((onlineCreationMode === 'auto' || onlineCreationMode === 'matrix') && referenceFile) {
             referenceFileDataUrl = await new Promise<string>((resolve, reject) => {
               const reader = new FileReader();
@@ -1398,19 +1486,29 @@ export default function ManageTests() {
               reader.readAsDataURL(referenceFile);
             });
             referenceFileMimeType = referenceFile.type;
+            referenceFileName = referenceFile.name;
+          } else if (selectedReference) {
+            if (selectedReference.attachment?.dataUrl) {
+              referenceFileDataUrl = selectedReference.attachment.dataUrl;
+              referenceFileMimeType = selectedReference.attachment.type || '';
+              referenceFileName = selectedReference.attachment.name || '';
+            }
           }
 
           const currentTopicObj = topics.find(t => t.id === newTopicId);
           const topicLessonsList = lessons
             .filter(l => l.topicId === newTopicId)
-            .map(l => ({ title: l.title, knowledge: l.knowledge || '' }));
+            .map(l => ({ 
+              title: repairVietnameseDocument(convertTcvn3ToUnicode(l.title || '')), 
+              knowledge: repairVietnameseDocument(convertTcvn3ToUnicode(l.knowledge || '')) 
+            }));
 
           try {
             const res = await fetch('/api/generate-test', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'x-gemini-api-key': localStorage.getItem('gemini_api_key') || '' },
               body: JSON.stringify({
-                title: newTitle,
+                title: repairVietnameseDocument(convertTcvn3ToUnicode(newTitle)),
                 grade: gradeNum,
                 autoGenType: (onlineCreationMode === 'matrix' ? 'matrix' : examFormat),
                 formatType: examFormat,
@@ -1432,15 +1530,25 @@ export default function ManageTests() {
                 mimeType,
                 referenceFileDataUrl,
                 referenceFileMimeType,
-                referenceFileName: referenceFile ? referenceFile.name : undefined,
+                referenceFileName: referenceFileName || (referenceFile ? referenceFile.name : undefined),
                 referenceNotes,
+                referenceKnowledge: selectedReference?.knowledge ? repairVietnameseDocument(convertTcvn3ToUnicode(selectedReference.knowledge)) : undefined,
                 topicTitle: currentTopicObj?.title || currentTopicObj?.name || '',
                 topicLessons: topicLessonsList
               })
             });
             if (res.ok) {
-              const generated = await res.json();
-              if (Array.isArray(generated) && generated.length > 0) {
+              const rawGenerated = await res.json();
+              if (Array.isArray(rawGenerated) && rawGenerated.length > 0) {
+                const generated = rawGenerated.map((q: any) => ({
+                  ...q,
+                  question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+                  options: Array.isArray(q.options) 
+                    ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+                    : [],
+                  explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+                  correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+                }));
                 if (createMultiVariant) {
                   const codes = customVariantCodes.split(',').map(s => s.trim()).filter(Boolean);
                   const validCodes = codes.length > 0 ? codes : ['101', '102', '103', '104'];
@@ -1590,7 +1698,16 @@ export default function ManageTests() {
         }
 
         if (customQuestions && customQuestions.length > 0) {
-          testData.questionsData = JSON.stringify(customQuestions);
+          const sanitizedCustom = customQuestions.map((q: any) => ({
+            ...q,
+            question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+            options: Array.isArray(q.options) 
+              ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+              : [],
+            explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+            correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+          }));
+          testData.questionsData = JSON.stringify(sanitizedCustom);
           const mcqC = customQuestions.filter((q: any) => q.type === 'mcq').length;
           const tfC = customQuestions.filter((q: any) => q.type === 'tf').length;
           const shortC = customQuestions.filter((q: any) => q.type === 'short').length;
@@ -1613,11 +1730,25 @@ export default function ManageTests() {
             const res = await fetch('/api/extract-questions', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'x-gemini-api-key': localStorage.getItem('gemini_api_key') || '' },
-              body: JSON.stringify({ fileDataUrl: extractionFileUrl, mimeType: newFile.type })
+              body: JSON.stringify({ 
+                fileDataUrl: extractionFileUrl, 
+                fileName: newFile?.name || '', 
+                mimeType: newFile?.type,
+                extractedText: selectedReference?.knowledge || undefined
+              })
             });
             if (res.ok) {
-              const extracted = await res.json();
-              if (Array.isArray(extracted) && extracted.length > 0) {
+              const rawExtracted = await res.json();
+              if (Array.isArray(rawExtracted) && rawExtracted.length > 0) {
+                const extracted = rawExtracted.map((q: any) => ({
+                  ...q,
+                  question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+                  options: Array.isArray(q.options) 
+                    ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+                    : [],
+                  explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+                  correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+                }));
                 testData.questionsData = JSON.stringify(extracted);
                 const mcqC = extracted.filter((q: any) => q.type === 'mcq').length;
                 const tfC = extracted.filter((q: any) => q.type === 'tf').length;
@@ -1718,6 +1849,7 @@ export default function ManageTests() {
         grade: cls.grade,
         classId: cls.id,
         className: cls.name,
+        schoolYear: assigningTest.schoolYear || cls.schoolYear || getCurrentSchoolYear(),
         assignedDate: new Date().toISOString(),
         dueDate: assignDate,
         assignedBy: user?.uid,
@@ -1871,7 +2003,14 @@ export default function ManageTests() {
   };
 
   const grades = [6, 7, 8, 9, 10, 11, 12];
-  const filteredTopics = topics.filter(t => t.grade === selectedGrade);
+  const filteredTopics = topics
+    .filter(t => t.grade === selectedGrade && matchesSchoolYear(t.schoolYear, selectedSchoolYear))
+    .sort((a, b) => {
+      const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
+      if (yearDiff !== 0) return yearDiff;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+  const schoolYearFilteredTests = tests.filter(t => matchesSchoolYear(t.schoolYear, selectedSchoolYear));
   
   
   
@@ -1909,6 +2048,10 @@ export default function ManageTests() {
                 {t.title}
               </div>
               <div className="text-[11px] text-gray-400 flex items-center gap-2 mt-0.5">
+                <span className="text-blue-700 bg-blue-50 border border-blue-200 font-bold px-1.5 py-0.2 rounded">
+                  NH {formatSchoolYear(t.schoolYear)}
+                </span>
+                <span>•</span>
                 <span className={isMulti ? 'text-indigo-600 font-semibold' : 'text-gray-500 font-medium'}>
                   {isMulti ? `${variantCodesList.length} mã đề` : '1 mã đề'}
                 </span>
@@ -1935,8 +2078,12 @@ export default function ManageTests() {
       <div key={t.id} className="bg-white p-5 rounded-2xl shadow-md border-2 border-blue-400/80 ring-4 ring-blue-50 flex flex-col transition-all">
         <div className="mb-2 mt-1">
           <div className="flex items-center justify-between gap-2 mb-1.5">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Tên đề kiểm tra</span>
+              <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-[11px] font-bold px-2 py-0.5 rounded-full border border-blue-200">
+                <Calendar size={11} className="text-blue-600" />
+                NH {formatSchoolYear(t.schoolYear)}
+              </span>
               {isMulti ? (
                 <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-[11px] font-bold px-2 py-0.5 rounded-full border border-indigo-200">
                   <Layers size={12} className="text-indigo-600" />
@@ -2169,9 +2316,9 @@ export default function ManageTests() {
     );
   };
 
-  const filteredLessons = lessons.filter(l => l.topicId === selectedTopicId);
+  const filteredLessons = lessons.filter(l => l.topicId === selectedTopicId && matchesSchoolYear(l.schoolYear, selectedSchoolYear));
 
-  const displayedTests = tests.filter(t => {
+  const displayedTests = schoolYearFilteredTests.filter(t => {
     if (selectedGrade && t.grade !== selectedGrade) return false;
     if (selectedTopicId && t.topicId !== selectedTopicId) return false;
     if (selectedLessonId && t.lessonId !== selectedLessonId) return false;
@@ -2180,44 +2327,99 @@ export default function ManageTests() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-10">
-      {sysError && !showCreateModal && <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl">{sysError}</div>}
-      {sysMsg && !showCreateModal && <div className="p-4 bg-green-50 border border-green-200 text-green-700 rounded-xl">{sysMsg}</div>}
-      <div className="flex justify-between items-center bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <div>
-          <h2 className="text-xl font-bold text-gray-800">Bài kiểm tra và thi online</h2>
-          <p className="text-sm text-gray-500 mt-1">Quản lý và giao đề trắc nghiệm, tự luận theo khối lớp</p>
-        </div>
-        {(role === 'admin' || role === 'teacher') && (
-          <div className="flex flex-wrap items-center gap-2.5">
-            <button 
-              type="button"
-              onClick={() => openCreateModal('auto', 'mcq_3part')}
-              className="flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-700 px-4 py-2.5 rounded-xl font-semibold shadow-sm shadow-blue-200 transition-all text-sm"
-              title="Tạo đề thi tự động bằng AI & Ngân hàng đề: Trắc nghiệm 3 phần, tùy biến, tự luận hoặc tổng hợp"
-            >
-              <Sparkles size={17} />
-              <span>Tạo đề thi tự động</span>
-            </button>
-            <button 
-              type="button"
-              onClick={() => openCreateModal('upload', 'mcq_3part')}
-              className="flex items-center gap-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-4 py-2.5 rounded-xl font-semibold transition-all text-sm"
-              title="Tạo đề online từ tệp đề tải lên (PDF, Word, Ảnh): AI tự động trích xuất thành đề tương tác"
-            >
-              <Upload size={17} className="text-indigo-600" />
-              <span>Tạo đề từ đề tải lên</span>
-            </button>
-            <button 
-              type="button"
-              onClick={() => openCreateModal('matrix', 'mcq_3part')}
-              className="flex items-center gap-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 px-3.5 py-2.5 rounded-xl font-semibold transition-all text-sm"
-              title="Tạo đề theo ma trận có sẵn: Khung ma trận chuẩn Bộ GD&ĐT hoặc tệp ma trận của trường"
-            >
-              <LayoutGrid size={17} className="text-emerald-600" />
-              <span>Tạo đề theo ma trận</span>
+      {sysError && !showCreateModal && (
+        <div className={`p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs ${
+          sysError.includes('Hạn mức') || sysError.includes('Quota')
+            ? 'bg-amber-50 border border-amber-300 text-amber-900'
+            : 'bg-red-50 border border-red-200 text-red-700'
+        }`}>
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className={sysError.includes('Hạn mức') || sysError.includes('Quota') ? 'text-amber-600 shrink-0 mt-0.5' : 'text-red-600 shrink-0 mt-0.5'} size={20} />
+            <div>
+              <span className="text-sm font-semibold block">{sysError}</span>
+              {(sysError.includes('Hạn mức') || sysError.includes('Quota')) && (
+                <span className="text-xs text-amber-700 mt-1 block">
+                  Giới hạn đọc miễn phí là 50.000 lượt/ngày. Bạn có thể mở trực tiếp Firebase Console để nâng cấp gói cước Blaze hoặc chờ sang ngày mới để hệ thống tự động reset.
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {(sysError.includes('Hạn mức') || sysError.includes('Quota')) && (
+              <a
+                href={FIRESTORE_UPGRADE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 shadow-xs whitespace-nowrap"
+              >
+                <span>Nâng cấp Firebase</span>
+                <ExternalLink size={13} />
+              </a>
+            )}
+            <button onClick={() => setSysError('')} className="text-gray-400 hover:text-gray-600 p-1 cursor-pointer">
+              <X size={16} />
             </button>
           </div>
-        )}
+        </div>
+      )}
+      {sysMsg && !showCreateModal && <div className="p-4 bg-green-50 border border-green-200 text-green-700 rounded-xl">{sysMsg}</div>}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+        <div>
+          <h2 className="text-xl font-bold text-gray-800">Bài kiểm tra và thi online</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Quản lý và giao đề trắc nghiệm, tự luận theo khối lớp • Năm học: <span className="font-bold text-blue-600">{selectedSchoolYear === 'ALL' ? 'Tất cả năm học' : formatSchoolYear(selectedSchoolYear)}</span>
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+          <div className="flex items-center gap-2 bg-blue-50/80 border border-blue-200 px-3 py-2 rounded-xl">
+            <Calendar size={16} className="text-blue-600 shrink-0" />
+            <span className="text-xs font-bold text-blue-900 whitespace-nowrap">Năm học:</span>
+            <select
+              value={selectedSchoolYear}
+              onChange={(e) => setSelectedSchoolYear(e.target.value)}
+              className="bg-white border border-blue-200 text-blue-900 text-xs font-bold rounded-lg px-2.5 py-1 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value={getCurrentSchoolYear()}>{formatSchoolYear(getCurrentSchoolYear())} (Hiện tại)</option>
+              <option value="ALL">Tất cả năm học</option>
+              {getStandardSchoolYears()
+                .filter(sy => sy !== getCurrentSchoolYear())
+                .map(sy => (
+                  <option key={sy} value={sy}>{formatSchoolYear(sy)}</option>
+                ))}
+            </select>
+          </div>
+          {(role === 'admin' || role === 'teacher') && (
+            <>
+              <button 
+                type="button"
+                onClick={() => openCreateModal('auto', 'mcq_3part')}
+                className="flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-700 px-4 py-2.5 rounded-xl font-semibold shadow-sm shadow-blue-200 transition-all text-sm"
+                title="Tạo đề thi tự động bằng AI & Ngân hàng đề: Trắc nghiệm 3 phần, tùy biến, tự luận hoặc tổng hợp"
+              >
+                <Sparkles size={17} />
+                <span>Tạo đề thi tự động</span>
+              </button>
+              <button 
+                type="button"
+                onClick={() => openCreateModal('upload', 'mcq_3part')}
+                className="flex items-center gap-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-4 py-2.5 rounded-xl font-semibold transition-all text-sm"
+                title="Tạo đề online từ tệp đề tải lên (PDF, Word, Ảnh): AI tự động trích xuất thành đề tương tác"
+              >
+                <Upload size={17} className="text-indigo-600" />
+                <span>Tạo đề từ đề tải lên</span>
+              </button>
+              <button 
+                type="button"
+                onClick={() => openCreateModal('matrix', 'mcq_3part')}
+                className="flex items-center gap-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 px-3.5 py-2.5 rounded-xl font-semibold transition-all text-sm"
+                title="Tạo đề theo ma trận có sẵn: Khung ma trận chuẩn Bộ GD&ĐT hoặc tệp ma trận của trường"
+              >
+                <LayoutGrid size={17} className="text-emerald-600" />
+                <span>Tạo đề theo ma trận</span>
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Grade Selection */}
@@ -2301,10 +2503,10 @@ export default function ManageTests() {
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
-                Tất cả chủ đề ({tests.filter(t => t.grade === selectedGrade).length})
+                Tất cả chủ đề ({schoolYearFilteredTests.filter(t => t.grade === selectedGrade).length})
               </button>
               {filteredTopics.map(tp => {
-                const count = tests.filter(t => t.grade === selectedGrade && t.topicId === tp.id).length;
+                const count = schoolYearFilteredTests.filter(t => t.grade === selectedGrade && t.topicId === tp.id).length;
                 return (
                   <button
                     key={tp.id}
@@ -2337,7 +2539,7 @@ export default function ManageTests() {
               topicsToDisplay = filteredTopics.filter(tp => tp.id === selectedTopicTab);
             }
 
-            const unassignedTests = tests.filter(t => t.grade === selectedGrade && (!t.topicId || !filteredTopics.some(tp => tp.id === t.topicId)));
+            const unassignedTests = schoolYearFilteredTests.filter(t => t.grade === selectedGrade && (!t.topicId || !filteredTopics.some(tp => tp.id === t.topicId)));
             const allSections = [...topicsToDisplay];
             if (unassignedTests.length > 0 && (selectedTopicTab === 'all' || selectedTopicTab === 'general') && !selectedTopicId) {
               allSections.push({ id: 'general', name: 'Chủ đề chung / Khác', grade: selectedGrade } as any);
@@ -2346,19 +2548,23 @@ export default function ManageTests() {
             if (allSections.length === 0) {
               return (
                 <div className="py-12 text-center text-gray-400 bg-white rounded-xl border border-gray-100 border-dashed">
-                  <p>Không có chủ đề nào phù hợp với bộ lọc.</p>
+                  <p>Không có chủ đề hoặc bài kiểm tra nào trong năm học {selectedSchoolYear === 'ALL' ? 'này' : formatSchoolYear(selectedSchoolYear)}.</p>
                 </div>
               );
             }
 
             return allSections.map(topic => {
-              const topicTests = tests.filter(t => {
+              const topicTests = schoolYearFilteredTests.filter(t => {
                 if (t.grade !== selectedGrade) return false;
                 if (selectedLessonId && t.lessonId !== selectedLessonId) return false;
                 if (topic.id === 'general') {
                   return !t.topicId || !filteredTopics.some(tp => tp.id === t.topicId);
                 }
                 return t.topicId === topic.id;
+              }).sort((a, b) => {
+                const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
+                if (yearDiff !== 0) return yearDiff;
+                return (b.createdAt || '').localeCompare(a.createdAt || '');
               });
 
               const singleVariantTests = topicTests.filter(t => !t.isMultiVariant && (!t.variants || t.variants.length <= 1));
@@ -2610,10 +2816,10 @@ export default function ManageTests() {
                 >
                   <option value="">-- Chọn lớp --</option>
                   {(role === 'admin' 
-                    ? schoolClasses.filter(c => Number(c.grade) === Number(assigningTest.grade || selectedGrade))
-                    : schoolClasses.filter(c => Number(c.grade) === Number(assigningTest.grade || selectedGrade) && assignedClasses.includes(c.id))
+                    ? schoolClasses.filter(c => Number(c.grade) === Number(assigningTest.grade || selectedGrade) && matchesSchoolYear(c.schoolYear, assigningTest.schoolYear || selectedSchoolYear))
+                    : schoolClasses.filter(c => Number(c.grade) === Number(assigningTest.grade || selectedGrade) && assignedClasses.includes(c.id) && matchesSchoolYear(c.schoolYear, assigningTest.schoolYear || selectedSchoolYear))
                   ).map(c => (
-                    <option key={c.id} value={c.id}>Khối {c.grade} - Lớp {c.name}</option>
+                    <option key={c.id} value={c.id}>Khối {c.grade} - Lớp {c.name} ({formatSchoolYear(c.schoolYear)})</option>
                   ))}
                 </select>
                 {(role === 'admin' 
@@ -2795,6 +3001,8 @@ export default function ManageTests() {
         setNewGrade={setNewGrade}
         newTopicId={newTopicId}
         setNewTopicId={setNewTopicId}
+        newSchoolYear={newSchoolYear}
+        setNewSchoolYear={setNewSchoolYear}
         topics={topics}
         part1Count={part1Count}
         setPart1Count={setPart1Count}

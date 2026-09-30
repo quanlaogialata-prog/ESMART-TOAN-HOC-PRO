@@ -41,9 +41,15 @@ export async function generatePdfFromElements(
       onProgress?.('Đang kết xuất nội dung bản in chất lượng cao...');
     }
 
-    // Capture using html2canvas-pro with high DPI (scale: 2)
+    // Capture using html2canvas-pro with adaptive DPI scale to prevent browser canvas height overflow (> 16384px)
+    const elHeight = el.scrollHeight || el.offsetHeight || 1000;
+    let targetScale = 2;
+    if (elHeight > 16000) targetScale = 1.0;
+    else if (elHeight > 8000) targetScale = 1.25;
+    else if (elHeight > 4000) targetScale = 1.5;
+
     const canvas = await html2canvasPro(el, {
-      scale: 2,
+      scale: targetScale,
       useCORS: true,
       logging: false,
       backgroundColor: '#ffffff'

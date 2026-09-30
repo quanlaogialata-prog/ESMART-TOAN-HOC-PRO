@@ -125,13 +125,25 @@ export function canonicalMathText(text: string | null | undefined): string {
   // 3. Chuẩn hóa phân số LaTeX
   str = str.replace(/\\d?frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/g, '($1)/($2)');
 
-  // 4. Chuẩn hóa căn thức
+  // 4. Chuẩn hóa căn thức (căn bậc 2, căn bậc 3, ký hiệu √, ∛, \sqrt, \cbrt)
+  str = str.replace(/\\sqrt\[3\]\s*\{([^{}]+)\}/g, 'cbrt($1)');
+  str = str.replace(/∛\s*\{([^{}]+)\}/g, 'cbrt($1)');
+  str = str.replace(/∛\s*\(([^()]+)\)/g, 'cbrt($1)');
+  str = str.replace(/∛\s*([0-9a-zA-Z.]+)/g, 'cbrt($1)');
   str = str.replace(/\\sqrt\s*\{([^{}]+)\}/g, 'sqrt($1)');
-  str = str.replace(/\\sqrt\s*(\d+)/g, 'sqrt($1)');
+  str = str.replace(/\\sqrt\s*([0-9.]+)/g, 'sqrt($1)');
+  str = str.replace(/√\s*\{([^{}]+)\}/g, 'sqrt($1)');
+  str = str.replace(/√\s*\(([^()]+)\)/g, 'sqrt($1)');
+  str = str.replace(/√\s*([0-9.]+)/g, 'sqrt($1)');
+  str = str.replace(/căn\s*([0-9.]+)/gi, 'sqrt($1)');
+  str = str.replace(/(\d)\s*(sqrt|cbrt)/g, '$1*$2');
 
-  // 5. Chuẩn hóa dấu nhân, vector
+  // 5. Chuẩn hóa dấu nhân, vector, ký hiệu đặc biệt
   str = str.replace(/\\cdot|\\times/g, '*');
   str = str.replace(/\\vec\s*\{?([a-zA-Z]+)\}?/g, 'vec($1)');
+  str = str.replace(/π|\\pi\b/g, 'pi');
+  str = str.replace(/±|\\pm\b/g, '+-');
+  str = str.replace(/²/g, '^2').replace(/³/g, '^3');
 
   // 6. Bỏ cặp ngoặc nhọn xung quanh số mũ / chỉ số
   str = str.replace(/\^\{([^{}]+)\}/g, '^$1');
@@ -448,6 +460,81 @@ export function gradeTfQuestion(
 }
 
 /**
+ * Tính giá trị số thực từ một biểu thức toán học chứa căn, phân số, số thập phân
+ */
+export function evaluateMathNumericValue(text: any): number | null {
+  if (text === null || text === undefined) return null;
+  let expr = text.toString().trim();
+  if (!expr) return null;
+
+  // Bỏ dấu $ và $$
+  expr = expr.replace(/^\$+|\$+$/g, '').trim();
+  // Bỏ tiền tố gán biến hoặc lời dẫn
+  expr = expr.replace(/^[a-zA-Z](?:_[0-9a-zA-Z]+)?\s*=\s*/, '');
+  expr = expr.replace(/^(?:đáp\s*số|đáp\s*án|kết\s*quả|kết\s*quả\s*là|giá\s*trị|nghiệm|phương\s*trình\s*có\s*nghiệm)\s*[:=]?\s*/i, '');
+  expr = expr.replace(/;+$/, '').replace(/\.+$/, '').trim();
+  expr = expr.replace(/\s*(cm|m|km|dm|mm|kg|g|rad|độ|°|đvdt|đvtt|cm\^2|cm\^3|m\^2|m\^3)$/i, '').trim();
+
+  // 1. Căn bậc 3
+  expr = expr.replace(/\\sqrt\[3\]\s*\{([^{}]+)\}/g, '__CBRT__($1)');
+  expr = expr.replace(/∛\s*\{([^{}]+)\}/g, '__CBRT__($1)');
+  expr = expr.replace(/∛\s*\(([^()]+)\)/g, '__CBRT__($1)');
+  expr = expr.replace(/∛\s*([0-9.]+)/g, '__CBRT__($1)');
+
+  // 2. Căn bậc 2: Thay thế trước phân số để tránh lỗi curly braces lồng nhau trong LaTeX
+  expr = expr.replace(/\\sqrt\s*\{([^{}]+)\}/g, '__SQRT__($1)');
+  expr = expr.replace(/\\sqrt\s*([0-9.]+)/g, '__SQRT__($1)');
+  expr = expr.replace(/√\s*\{([^{}]+)\}/g, '__SQRT__($1)');
+  expr = expr.replace(/√\s*\(([^()]+)\)/g, '__SQRT__($1)');
+  expr = expr.replace(/√\s*([0-9.]+)/g, '__SQRT__($1)');
+  expr = expr.replace(/sqrt\s*\(([^()]+)\)/gi, '__SQRT__($1)');
+  expr = expr.replace(/căn\s*([0-9.]+)/gi, '__SQRT__($1)');
+
+  // 3. Phân số LaTeX \frac{A}{B} đệ quy
+  let prev = '';
+  while (expr.includes('frac') && expr !== prev) {
+    prev = expr;
+    expr = expr.replace(/\\d?frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/g, '(($1)/($2))');
+  }
+
+  // 4. Số Pi
+  expr = expr.replace(/\\pi\b|π/g, '__PI__');
+
+  // 5. Phép nhân ngầm định: 2__SQRT__(3) -> 2*__SQRT__(3)
+  expr = expr.replace(/(\d)\s*(__[A-Z]+__)/g, '$1*$2');
+  expr = expr.replace(/(__[A-Z]+__\([^)]+\))\s*(\d)/g, '$1*$2');
+  expr = expr.replace(/(\d)\s*\(/g, '$1*(');
+  expr = expr.replace(/\)\s*(\d)/g, ')*$1');
+  expr = expr.replace(/\)\s*\(/g, ')*(');
+  expr = expr.replace(/\^/g, '**');
+
+  // 6. Số thập phân kiểu Việt Nam: 3,5 -> 3.5
+  expr = expr.replace(/(\d+),(\d+)/g, '$1.$2');
+
+  // 7. Thay thế placeholder sang hàm JavaScript an toàn
+  expr = expr.replace(/__SQRT__/g, 'Math.sqrt');
+  expr = expr.replace(/__CBRT__/g, 'Math.cbrt');
+  expr = expr.replace(/__PI__/g, 'Math.PI');
+
+  // Kiểm tra chỉ chứa các ký tự toán học an toàn
+  const testSafe = expr.replace(/Math\.(sqrt|cbrt|PI)/g, '');
+  if (/[^0-9+\-*/().\s*]/.test(testSafe)) {
+    return null;
+  }
+
+  try {
+    const fn = new Function('return (' + expr + ');');
+    const val = fn();
+    if (typeof val === 'number' && !isNaN(val) && isFinite(val)) {
+      return val;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
  * Chuẩn hóa một biểu thức số / toán học trả lời ngắn
  */
 export function normalizeShortMathAnswer(text: any): { raw: string; num: number | null; clean: string } {
@@ -456,53 +543,24 @@ export function normalizeShortMathAnswer(text: any): { raw: string; num: number 
   let str = text.toString().trim();
   if (!str) return { raw: '', num: null, clean: '' };
 
-  // 1. Bỏ dấu bọc công thức $ và $$
+  // 1. Tính toán giá trị số thực toàn diện (hỗ trợ căn thức, phân số, số thập phân, biểu thức)
+  const numericVal = evaluateMathNumericValue(str);
+
+  // 2. Bỏ dấu bọc công thức $ và $$
   str = str.replace(/^\$+|\$+$/g, '').trim();
 
-  // 2. Bỏ các tiền tố gán biến hoặc lời dẫn: "x = 2", "x_1 = 3", "r = 5", "R = 5", "h = 10", "S = 24", "V = 100", "I = 2"
+  // 3. Bỏ các tiền tố gán biến hoặc lời dẫn: "x = 2", "x_1 = 3", "r = 5", "R = 5", "h = 10", "S = 24", "V = 100", "I = 2"
   str = str.replace(/^[a-zA-Z](?:_[0-9a-zA-Z]+)?\s*=\s*/, '');
   str = str.replace(/^(?:đáp\s*số|đáp\s*án|kết\s*quả|kết\s*quả\s*là|giá\s*trị|nghiệm|phương\s*trình\s*có\s*nghiệm)\s*[:=]?\s*/i, '');
   str = str.replace(/;+$/, '').replace(/\.+$/, '').trim();
 
-  // 3. Xóa đơn vị phổ biến nếu có (cm, m, km, dm, mm, kg, g, rad, độ, °, đvdt, đvtt...)
+  // 4. Xóa đơn vị phổ biến nếu có (cm, m, km, dm, mm, kg, g, rad, độ, °, đvdt, đvtt...)
   str = str.replace(/\s*(cm|m|km|dm|mm|kg|g|rad|độ|°|đvdt|đvtt|cm\^2|cm\^3|m\^2|m\^3)$/i, '').trim();
 
-  // 4. Chuẩn hóa phân số LaTeX: \frac{a}{b} hoặc \dfrac{a}{b}
-  str = str.replace(/-\\d?frac\s*\{([+-]?\d+(?:\.\d+)?)\}\s*\{([+-]?\d+(?:\.\d+)?)\}/g, '-$1/$2');
-  str = str.replace(/\\d?frac\s*\{([+-]?\d+(?:\.\d+)?)\}\s*\{([+-]?\d+(?:\.\d+)?)\}/g, '$1/$2');
+  // 5. Chuẩn hóa chuỗi sạch chuẩn canonical
+  const cleanStr = canonicalMathText(str);
 
-  // 5. Kiểm tra phân số: ví dụ "-3/4", "1/2", "7/2"
-  const fracMatch = str.match(/^([+-]?\d+(?:\.\d+)?)\s*\/\s*([+-]?\d+(?:\.\d+)?)$/);
-  if (fracMatch) {
-    const n = parseFloat(fracMatch[1]);
-    const d = parseFloat(fracMatch[2]);
-    if (d !== 0) {
-      return { raw: text.toString(), num: n / d, clean: `${n}/${d}` };
-    }
-  }
-
-  // 6. Đổi dấu phẩy thập phân kiểu Việt Nam (3,5) sang chấm (3.5)
-  const decimalNormalized = str.replace(/^([+-]?\d+),(\d+)$/, '$1.$2');
-  const parsedNum = parseFloat(decimalNormalized);
-
-  if (!isNaN(parsedNum) && !str.includes(';') && !str.includes(' ') && !str.includes('(') && !str.includes('[')) {
-    return { raw: text.toString(), num: parsedNum, clean: decimalNormalized };
-  }
-
-  // 7. Chuỗi căn bậc hai: \sqrt{2}, sqrt(2), căn 2
-  const sqrtClean = str.replace(/\\sqrt\s*\{?(\d+)\}?/g, 'sqrt($1)').replace(/căn\s*(\d+)/i, 'sqrt($1)');
-  const sqrtNumMatch = sqrtClean.match(/^([+-]?\d*)\s*\*?\s*sqrt\((\d+)\)(?:\s*\/\s*(\d+))?$/i);
-  if (sqrtNumMatch) {
-    const mult = sqrtNumMatch[1] === '-' ? -1 : sqrtNumMatch[1] ? parseFloat(sqrtNumMatch[1]) : 1;
-    const base = parseFloat(sqrtNumMatch[2]);
-    const div = sqrtNumMatch[3] ? parseFloat(sqrtNumMatch[3]) : 1;
-    const val = (mult * Math.sqrt(base)) / div;
-    return { raw: text.toString(), num: val, clean: sqrtClean.replace(/\s+/g, '') };
-  }
-
-  // 8. Chuỗi tọa độ hoặc khoảng/đoạn: loại bỏ khoảng trắng dư thừa
-  const cleanStr = str.replace(/\s+/g, '').replace(/;/g, ',');
-  return { raw: text.toString(), num: null, clean: cleanStr };
+  return { raw: text.toString(), num: numericVal, clean: cleanStr };
 }
 
 /**
@@ -519,7 +577,7 @@ export function checkShortAnswer(
     return { isCorrect: false, cleanStudent: st.clean, cleanCorrect: cr.clean };
   }
 
-  // 1. So sánh bằng giá trị số học (dung sai 0.005 cho số thập phân / phân số tương đương)
+  // 1. So sánh bằng giá trị số học (dung sai 0.005 cho số thập phân / phân số / căn thức tương đương)
   if (st.num !== null && cr.num !== null) {
     const diff = Math.abs(st.num - cr.num);
     if (diff < 0.005) {
@@ -527,18 +585,24 @@ export function checkShortAnswer(
     }
   }
 
-  // 2. So sánh chuỗi sạch (bỏ khoảng trắng, đồng nhất dấu phẩy/chấm)
-  if (st.clean.toLowerCase() === cr.clean.toLowerCase()) {
+  // 2. So sánh chuỗi sạch canonical toán học
+  if (st.clean && cr.clean && st.clean.toLowerCase() === cr.clean.toLowerCase()) {
     return { isCorrect: true, cleanStudent: st.clean, cleanCorrect: cr.clean };
   }
 
-  // 3. So sánh chuỗi tọa độ hoặc khoảng đoạn bỏ ngoặc ngoài: (1,2) vs 1,2
+  // 3. Chuỗi canonical sau khi bỏ ngoặc đơn dư thừa: ((sqrt(3))/(2)) vs (sqrt(3))/2 vs sqrt(3)/2
+  const stripParens = (s: string) => s.replace(/[\(\)]/g, '');
+  if (stripParens(st.clean) && stripParens(st.clean) === stripParens(cr.clean)) {
+    return { isCorrect: true, cleanStudent: st.clean, cleanCorrect: cr.clean };
+  }
+
+  // 4. So sánh chuỗi tọa độ hoặc khoảng đoạn bỏ ngoặc ngoài: (1,2) vs 1,2
   const unwrapParens = (s: string) => s.replace(/^[\(\[\{]/, '').replace(/[\)\]\}]$/, '').trim();
   if (unwrapParens(st.clean).toLowerCase() === unwrapParens(cr.clean).toLowerCase()) {
     return { isCorrect: true, cleanStudent: st.clean, cleanCorrect: cr.clean };
   }
 
-  // 4. So sánh chuỗi gốc sau khi bỏ dấu cách
+  // 5. So sánh chuỗi gốc sau khi bỏ dấu cách
   const origSt = st.raw.toLowerCase().replace(/\s+/g, '');
   const origCr = cr.raw.toLowerCase().replace(/\s+/g, '');
   if (origSt === origCr) {

@@ -1,12 +1,21 @@
-import React, { useState, useEffect } from 'react';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import React, { useState, useEffect, useRef } from 'react';
+import { collection, getDocs, query, where, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { 
   X, BookOpen, Search, FileText, CheckCircle2, ChevronRight, 
-  Layers, Sparkles, Filter, Download, Eye, AlertCircle, FileCode, Check
+  Layers, Sparkles, Filter, Download, Eye, AlertCircle, FileCode, Check,
+  Pencil, Plus, Trash2, Loader2, Calendar
 } from 'lucide-react';
 import MathText from '../MathText';
 import { ensureAttachmentDataUrl } from '../../lib/fileUtils';
+import { repairVietnameseDocument, convertTcvn3ToUnicode } from '../../lib/vietnameseFont';
+import { 
+  getCurrentSchoolYear, 
+  formatSchoolYear, 
+  getStandardSchoolYears, 
+  matchesSchoolYear, 
+  compareSchoolYears 
+} from '../../utils/schoolYear';
 
 export interface SelectedDocumentReference {
   docId: string;
@@ -40,6 +49,7 @@ export default function DocumentReferenceSelectorModal({
   initialGrade = 9,
   title = "Chọn tài liệu tham chiếu từ Thư viện"
 }: DocumentReferenceSelectorModalProps) {
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>(getCurrentSchoolYear());
   const [selectedGrade, setSelectedGrade] = useState<number>(initialGrade);
   const [topics, setTopics] = useState<any[]>([]);
   const [lessons, setLessons] = useState<any[]>([]);
@@ -47,12 +57,119 @@ export default function DocumentReferenceSelectorModal({
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<any | null>(null);
+  const [isEditingInPreview, setIsEditingInPreview] = useState(false);
+  const [previewKnowledge, setPreviewKnowledge] = useState('');
+  const [editingBlockIdx, setEditingBlockIdx] = useState<number | null>(null);
+  const [tempBlock, setTempBlock] = useState('');
+  const [isSavingPreview, setIsSavingPreview] = useState(false);
+  const previewTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const getDocBlocks = (content: string): string[] => {
+    if (!content || !content.trim()) return [];
+    return content.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+  };
+
+  const handleOpenDocPreview = (lesson: any) => {
+    setPreviewDoc(lesson);
+    setPreviewKnowledge(lesson.knowledge || '');
+    setIsEditingInPreview(false);
+    setEditingBlockIdx(null);
+    setTempBlock('');
+  };
+
+  const startEditingBlock = (idx: number, val: string) => {
+    setEditingBlockIdx(idx);
+    setTempBlock(val);
+    setTimeout(() => {
+      if (previewTextareaRef.current) {
+        previewTextareaRef.current.focus();
+        previewTextareaRef.current.selectionStart = previewTextareaRef.current.value.length;
+        previewTextareaRef.current.selectionEnd = previewTextareaRef.current.value.length;
+      }
+    }, 50);
+  };
+
+  const saveEditingBlock = (idx: number) => {
+    const blocks = getDocBlocks(previewKnowledge);
+    if (idx >= 0 && idx < blocks.length) {
+      blocks[idx] = tempBlock;
+      setPreviewKnowledge(blocks.join('\n\n'));
+    }
+    setEditingBlockIdx(null);
+    setTempBlock('');
+  };
+
+  const cancelEditingBlock = () => {
+    setEditingBlockIdx(null);
+    setTempBlock('');
+  };
+
+  const deleteBlock = (idx: number) => {
+    const blocks = getDocBlocks(previewKnowledge);
+    const filtered = blocks.filter((_, i) => i !== idx);
+    setPreviewKnowledge(filtered.join('\n\n'));
+    setEditingBlockIdx(null);
+    setTempBlock('');
+  };
+
+  const insertBlockAfter = (idx: number) => {
+    const blocks = getDocBlocks(previewKnowledge);
+    const newBlock = 'Nhập nội dung mới hoặc công thức toán học $...$ tại đây...';
+    blocks.splice(idx + 1, 0, newBlock);
+    setPreviewKnowledge(blocks.join('\n\n'));
+    startEditingBlock(idx + 1, newBlock);
+  };
+
+  const addNewBlockAtEnd = () => {
+    const blocks = getDocBlocks(previewKnowledge);
+    const newBlock = 'Nhập nội dung mới hoặc công thức toán học $...$ tại đây...';
+    blocks.push(newBlock);
+    setPreviewKnowledge(blocks.join('\n\n'));
+    startEditingBlock(blocks.length - 1, newBlock);
+  };
+
+  const insertSnippet = (snippet: string) => {
+    const textarea = previewTextareaRef.current;
+    if (!textarea) {
+      setTempBlock(prev => prev + snippet);
+      return;
+    }
+    const start = textarea.selectionStart || 0;
+    const end = textarea.selectionEnd || 0;
+    const updated = tempBlock.substring(0, start) + snippet + tempBlock.substring(end);
+    setTempBlock(updated);
+    setTimeout(() => {
+      textarea.focus();
+      const cursorOffset = snippet.includes('{') ? snippet.indexOf('{') + 1 : snippet.length;
+      textarea.setSelectionRange(start + cursorOffset, start + cursorOffset);
+    }, 20);
+  };
+
+  const handleSavePreviewDoc = async () => {
+    if (!previewDoc) return;
+    setIsSavingPreview(true);
+    try {
+      await updateDoc(doc(db, 'lessons', previewDoc.id), {
+        knowledge: previewKnowledge,
+        updatedAt: Date.now()
+      });
+      setLessons(prev => prev.map(l => l.id === previewDoc.id ? { ...l, knowledge: previewKnowledge } : l));
+      setPreviewDoc((prev: any) => prev ? { ...prev, knowledge: previewKnowledge } : null);
+      setIsEditingInPreview(false);
+      setEditingBlockIdx(null);
+      setTempBlock('');
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSavingPreview(false);
+    }
+  };
 
   useEffect(() => {
     if (isOpen) {
       loadData(selectedGrade);
     }
-  }, [isOpen, selectedGrade]);
+  }, [isOpen, selectedGrade, selectedSchoolYear]);
 
   const loadData = async (grade: number) => {
     setLoading(true);
@@ -60,21 +177,35 @@ export default function DocumentReferenceSelectorModal({
       // 1. Load topics for grade
       const qTopics = query(collection(db, 'topics'), where('grade', '==', grade));
       const topicsSnap = await getDocs(qTopics);
-      const topicsList = topicsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const topicsList = topicsSnap.docs
+        .map(d => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            ...data,
+            name: repairVietnameseDocument(convertTcvn3ToUnicode(data.name || ''))
+          };
+        })
+        .filter(t => matchesSchoolYear(t.schoolYear, selectedSchoolYear))
+        .sort((a, b) => compareSchoolYears(a.schoolYear, b.schoolYear));
       setTopics(topicsList);
 
       // 2. Load all lessons for these topics
       const topicIds = topicsList.map(t => t.id);
-      if (topicIds.length > 0) {
-        // Fetch lessons
-        const allLessonsSnap = await getDocs(collection(db, 'lessons'));
-        const gradeLessons = allLessonsSnap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .filter((l: any) => topicIds.includes(l.topicId) || l.grade === grade);
-        setLessons(gradeLessons);
-      } else {
-        setLessons([]);
-      }
+      const allLessonsSnap = await getDocs(collection(db, 'lessons'));
+      const gradeLessons = allLessonsSnap.docs
+        .map(d => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            ...data,
+            title: repairVietnameseDocument(convertTcvn3ToUnicode(data.title || '')),
+            knowledge: repairVietnameseDocument(convertTcvn3ToUnicode(data.knowledge || ''))
+          };
+        })
+        .filter((l: any) => (topicIds.includes(l.topicId) || l.grade === grade) && matchesSchoolYear(l.schoolYear, selectedSchoolYear))
+        .sort((a, b) => compareSchoolYears(a.schoolYear, b.schoolYear));
+      setLessons(gradeLessons);
     } catch (err) {
       console.error("Error loading library data:", err);
     } finally {
@@ -114,15 +245,18 @@ export default function DocumentReferenceSelectorModal({
         console.warn('Could not resolve attachment dataUrl:', e);
       }
     }
+    const cleanTopicName = topic ? repairVietnameseDocument(convertTcvn3ToUnicode(topic.name)) : 'Chuyên đề chung';
+    const cleanLessonTitle = repairVietnameseDocument(convertTcvn3ToUnicode(lesson.title || 'Tài liệu tham chiếu'));
+    const cleanKnowledge = repairVietnameseDocument(convertTcvn3ToUnicode(lesson.knowledge || ''));
     const refData: SelectedDocumentReference = {
       docId: lesson.id,
       topicId: lesson.topicId || '',
-      topicName: topic ? topic.name : 'Chuyên đề chung',
+      topicName: cleanTopicName,
       lessonId: lesson.id,
-      lessonTitle: lesson.title || 'Tài liệu tham chiếu',
+      lessonTitle: cleanLessonTitle,
       grade: selectedGrade,
       attachment: fullAttachment,
-      knowledge: lesson.knowledge || '',
+      knowledge: cleanKnowledge,
       videoUrl: lesson.videoUrl || ''
     };
     onSelect(refData);
@@ -185,23 +319,40 @@ export default function DocumentReferenceSelectorModal({
 
         {/* CONTROLS BAR: GRADES & TOPIC FILTER & SEARCH */}
         <div className="p-4 border-b border-gray-100 bg-gray-50/70 space-y-3">
-          {/* Grade selection pills */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-            <span className="text-xs font-bold text-gray-700 mr-1 shrink-0">Khối lớp:</span>
-            {[6, 7, 8, 9, 10, 11, 12].map(g => (
-              <button
-                key={g}
-                type="button"
-                onClick={() => setSelectedGrade(g)}
-                className={`px-3 py-1 text-xs font-bold rounded-lg transition-all shrink-0 cursor-pointer ${
-                  selectedGrade === g
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'bg-white text-gray-600 hover:bg-gray-200 border border-gray-200'
-                }`}
+          {/* Grade selection pills & School Year filter */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
+            <div className="flex items-center gap-1.5 overflow-x-auto">
+              <span className="text-xs font-bold text-gray-700 mr-1 shrink-0">Khối lớp:</span>
+              {[6, 7, 8, 9, 10, 11, 12].map(g => (
+                <button
+                  key={g}
+                  type="button"
+                  onClick={() => setSelectedGrade(g)}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-all shrink-0 cursor-pointer ${
+                    selectedGrade === g
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-white text-gray-600 hover:bg-gray-200 border border-gray-200'
+                  }`}
+                >
+                  Khối {g}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-xl shrink-0">
+              <Calendar size={14} className="text-blue-600" />
+              <span className="text-[11px] font-bold text-blue-900">Năm học:</span>
+              <select
+                value={selectedSchoolYear}
+                onChange={(e) => setSelectedSchoolYear(e.target.value)}
+                className="bg-white border border-blue-300 rounded-lg text-xs font-bold px-2 py-0.5 text-blue-900 outline-none cursor-pointer"
               >
-                Khối {g}
-              </button>
-            ))}
+                <option value={getCurrentSchoolYear()}>⭐ Năm học hiện tại ({formatSchoolYear(getCurrentSchoolYear())})</option>
+                <option value="all">🌐 Tất cả các năm học</option>
+                {getStandardSchoolYears().filter(y => y !== getCurrentSchoolYear()).map(sy => (
+                  <option key={sy} value={sy}>Năm học {formatSchoolYear(sy)}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Search and Topic dropdown */}
@@ -308,11 +459,11 @@ export default function DocumentReferenceSelectorModal({
                     <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
                       <button
                         type="button"
-                        onClick={() => setPreviewDoc(lesson)}
+                        onClick={() => handleOpenDocPreview(lesson)}
                         className="text-xs font-semibold text-gray-600 hover:text-blue-600 flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100 transition-colors"
                       >
                         <Eye size={13} />
-                        <span>Xem chi tiết</span>
+                        <span>Xem & Sửa</span>
                       </button>
 
                       <button
@@ -389,10 +540,178 @@ export default function DocumentReferenceSelectorModal({
               )}
 
               <div>
-                <h4 className="font-bold text-gray-800 mb-2">Tóm tắt kiến thức / Nội dung tham chiếu:</h4>
-                <div className="p-4 bg-gray-50 rounded-xl border border-gray-200 leading-relaxed font-sans text-gray-800 max-h-[350px] overflow-y-auto">
-                  <MathText content={previewDoc.knowledge || 'Không có nội dung tóm tắt.'} />
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <h4 className="font-bold text-gray-800 flex items-center gap-1.5">
+                    <FileText size={15} className="text-blue-600" />
+                    <span>Nội dung tham chiếu & Khung xem trước KaTeX:</span>
+                  </h4>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const repaired = repairVietnameseDocument(previewKnowledge || '');
+                        setPreviewKnowledge(repaired);
+                      }}
+                      className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                      title="Tự động sửa lỗi phông chữ tiếng Việt (.VnTime, TCVN3, VNI) và chuẩn hóa công thức KaTeX"
+                    >
+                      <Sparkles size={12} className="text-amber-600" />
+                      <span>Sửa lỗi phông</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingInPreview(!isEditingInPreview)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer ${
+                        isEditingInPreview
+                          ? 'bg-amber-600 text-white'
+                          : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
+                      }`}
+                    >
+                      <Pencil size={12} />
+                      <span>{isEditingInPreview ? 'Đang sửa trực tiếp' : 'Sửa trực tiếp (KaTeX)'}</span>
+                    </button>
+                    {isEditingInPreview && (
+                      <button
+                        type="button"
+                        onClick={handleSavePreviewDoc}
+                        disabled={isSavingPreview}
+                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        {isSavingPreview ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                        <span>Lưu thay đổi</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {isEditingInPreview ? (
+                  <div className="p-3 bg-blue-50/40 rounded-xl border border-blue-200 space-y-2.5">
+                    {/* Thanh chèn nhanh công thức toán */}
+                    <div className="flex flex-wrap items-center gap-1 p-1 bg-white rounded-lg border border-blue-200 text-xs">
+                      <span className="text-[10px] font-bold text-gray-400 px-1">Chèn nhanh:</span>
+                      <button
+                        type="button"
+                        onClick={() => insertSnippet('$\\frac{a}{b}$')}
+                        className="px-1.5 py-0.5 bg-slate-100 hover:bg-blue-100 rounded text-xs font-mono border border-slate-200 cursor-pointer"
+                      >
+                        \frac&#123;a&#125;&#123;b&#125;
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => insertSnippet('$\\sqrt{x}$')}
+                        className="px-1.5 py-0.5 bg-slate-100 hover:bg-blue-100 rounded text-xs font-mono border border-slate-200 cursor-pointer"
+                      >
+                        \sqrt&#123;x&#125;
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => insertSnippet('$x^2$')}
+                        className="px-1.5 py-0.5 bg-slate-100 hover:bg-blue-100 rounded text-xs font-mono border border-slate-200 cursor-pointer"
+                      >
+                        x^2
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => insertSnippet('$\\overgroup{AB}$')}
+                        className="px-1.5 py-0.5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded text-xs font-mono font-bold border border-amber-300 cursor-pointer"
+                      >
+                        \overgroup&#123;AB&#125;
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => insertSnippet('$\\vec{u}$')}
+                        className="px-1.5 py-0.5 bg-slate-100 hover:bg-blue-100 rounded text-xs font-mono border border-slate-200 cursor-pointer"
+                      >
+                        \vec&#123;u&#125;
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => insertSnippet(' $\\Leftrightarrow$ ')}
+                        className="px-1 py-0.5 hover:bg-blue-50 rounded text-xs text-gray-700 cursor-pointer"
+                      >
+                        $\Leftrightarrow$
+                      </button>
+                    </div>
+
+                    <div className="p-3 bg-white border border-gray-200 rounded-xl max-h-[300px] overflow-y-auto space-y-2 shadow-inner">
+                      {getDocBlocks(previewKnowledge).length === 0 ? (
+                        <div className="text-center py-4 text-xs text-gray-500">
+                          <p>Chưa có nội dung. Bấm bên dưới để thêm đoạn mới.</p>
+                          <button
+                            type="button"
+                            onClick={addNewBlockAtEnd}
+                            className="mt-2 px-3 py-1 bg-blue-600 text-white rounded text-xs font-bold inline-flex items-center gap-1"
+                          >
+                            <Plus size={12} />
+                            <span>Thêm đoạn mới</span>
+                          </button>
+                        </div>
+                      ) : (
+                        getDocBlocks(previewKnowledge).map((blockText, bIdx) => {
+                          const isThis = editingBlockIdx === bIdx;
+
+                          if (isThis) {
+                            return (
+                              <div key={bIdx} className="p-2.5 bg-blue-50/80 border-2 border-blue-500 rounded-lg space-y-2">
+                                <div className="flex items-center justify-between text-xs font-bold text-blue-900 pb-1 border-b border-blue-200">
+                                  <span>Sửa đoạn {bIdx + 1}:</span>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => saveEditingBlock(bIdx)}
+                                      className="px-2 py-0.5 bg-emerald-600 text-white rounded text-xs font-bold"
+                                    >
+                                      Xong
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={cancelEditingBlock}
+                                      className="px-2 py-0.5 bg-white text-gray-700 border border-gray-300 rounded text-xs"
+                                    >
+                                      Hủy
+                                    </button>
+                                  </div>
+                                </div>
+                                <textarea
+                                  ref={previewTextareaRef}
+                                  rows={Math.min(6, Math.max(2, tempBlock.split('\n').length + 1))}
+                                  value={tempBlock}
+                                  onChange={(e) => setTempBlock(e.target.value)}
+                                  className="w-full p-2 text-xs border border-blue-300 rounded font-mono bg-white"
+                                  placeholder="Nhập nội dung đoạn hoặc công thức $...$"
+                                />
+                                <div className="p-1.5 bg-white rounded border border-blue-200 text-xs">
+                                  <MathText content={tempBlock || 'Đoạn trống.'} isDocument={true} />
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div
+                              key={bIdx}
+                              onClick={() => startEditingBlock(bIdx, blockText)}
+                              className="group relative p-2 rounded border border-transparent hover:border-blue-300 hover:bg-blue-50/40 cursor-pointer"
+                              title="Bấm vào để sửa đoạn này"
+                            >
+                              <div className="opacity-0 group-hover:opacity-100 absolute right-2 top-2 z-10 flex items-center gap-1 bg-blue-600 text-white px-2 py-0.5 rounded text-[10px] font-bold pointer-events-none">
+                                <Pencil size={10} />
+                                <span>Sửa</span>
+                              </div>
+                              <div className="text-xs leading-relaxed text-gray-800 pointer-events-none">
+                                <MathText content={blockText} isDocument={true} />
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-gray-50 rounded-xl border border-gray-200 leading-relaxed font-sans text-gray-800 max-h-[350px] overflow-y-auto">
+                    <MathText content={previewKnowledge || previewDoc.knowledge || 'Không có nội dung tóm tắt.'} isDocument={true} />
+                  </div>
+                )}
               </div>
             </div>
 

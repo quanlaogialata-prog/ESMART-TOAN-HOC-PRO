@@ -150,8 +150,10 @@ export default function MathText({ content, isDocument = false, className = '' }
       // F. Tự động nhận diện đa thức chứa lũy thừa chưa có $ trong văn bản (ví dụ: 3x^2 - 3, 3x^2 + 3, x^2 - 3, 3x^2)
       parts[i] = parts[i].replace(/(?<![a-zA-Z0-9\$\\])([0-9]*[a-zA-Z\)]\s*\^\s*\{?[0-9a-zA-Z\+\-]+\}?(?:\s*[+\-]\s*[0-9a-zA-Z]+)*)(?![a-zA-Z0-9\$\^])/g, '$$$1$$');
 
-      // G. Tự động nhận diện dãy số / chỉ số dưới chứa dấu bằng chưa có $ (ví dụ: u_2 = 3, u_3 = 7, u_n = 2n + 1)
-      parts[i] = parts[i].replace(/(?<![a-zA-Z0-9\$\\])([a-zA-Z])_([0-9a-zA-Z]+)(\s*=\s*[0-9a-zA-Z\+\-\*\/]+)?(?![a-zA-Z0-9\$_])/g, (_m, p1, p2, p3) => `$${p1}_${p2}${p3 || ''}$`);
+      // G. Tự động nhận diện dãy số / chỉ số dưới toán học (u_1, u_2, x_0, y_0, a_n hoặc có dấu bằng u_2 = 3, u_n = 2n + 1)
+      // CHỈ áp dụng cho các biến toán học đơn lẻ (u, x, y, z, a, b, c, n, k, m) theo sau bởi số hoặc n, k, m
+      // Tuyệt đối không khớp với từ tiếng Việt có dấu gạch dưới như giai_Toan, tap_hop, file_name
+      parts[i] = parts[i].replace(/(?<![\p{L}\p{N}\$\\])([uxyzabcnkm])_([0-9]+|[nkm])(\s*=\s*[0-9a-zA-Z\+\-\*\/]+)?(?![\p{L}\p{N}\$_])/gu, (_m, p1, p2, p3) => `$${p1}_${p2}${p3 || ''}$`);
 
       // H. Tự động nhận diện khoảng đoạn toán học (ví dụ: (-1; 2), [0; 3], (-\infty; 1))
       parts[i] = parts[i].replace(/(?<![a-zA-Z0-9\$\\])([\(\[][\+\-]?(?:\d+|\\infty)\s*;\s*[\+\-]?(?:\d+|\\infty)[\)\]])/g, '$$$1$$');

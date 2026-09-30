@@ -3,13 +3,14 @@ import {
   collection, 
   query, 
   getDocs, 
+  getDocsFromCache,
   addDoc, 
   deleteDoc, 
   doc, 
   updateDoc, 
   orderBy 
 } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { db, FIRESTORE_UPGRADE_URL } from '../../lib/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { generatePdfFromElements } from '../../utils/offlinePdfExport';
 import { 
@@ -39,7 +40,8 @@ import {
   AlertTriangle,
   Check,
   Pencil,
-  BookOpen
+  BookOpen,
+  Calendar
 } from 'lucide-react';
 import MathText from '../../components/MathText';
 import { generateTestVariants, TestVariant, groupQuestionsByExamStructure, detectQuestionType, QuestionType, ExamSection } from '../../utils/variantGenerator';
@@ -47,6 +49,14 @@ import { stripOptionPrefix, detectAnswerDiscrepancy, autoReconcileQuestion } fro
 import EditQuestionsModal from '../../components/teacher/EditQuestionsModal';
 import DocumentReferenceSelectorModal, { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
 import { dataUrlToFile } from '../../lib/fileUtils';
+import { repairVietnameseDocument, convertTcvn3ToUnicode } from '../../lib/vietnameseFont';
+import { 
+  getCurrentSchoolYear, 
+  formatSchoolYear, 
+  getStandardSchoolYears, 
+  matchesSchoolYear, 
+  compareSchoolYears 
+} from '../../utils/schoolYear';
 
 interface OfflineTest {
   id: string;
@@ -84,7 +94,7 @@ function ExamPaperContent({ test, variant }: { test: OfflineTest; variant: TestV
         {/* Left Header */}
         <div className="w-[58%] text-center">
           <div className="font-bold uppercase text-[13px] tracking-wide text-gray-900">
-            {test.schoolName || 'TRUNG TÂM LUYỆN THI ESMART KB'}
+            {test.schoolName ? test.schoolName.replace(/ESMART\s+KB/gi, 'ESMART') : 'TRUNG TÂM LUYỆN THI ESMART'}
           </div>
           <div className="font-semibold text-xs mt-0.5 text-gray-800">
             TỔ CHUYÊN MÔN: {test.subject?.toUpperCase() || 'TOÁN HỌC'}
@@ -646,6 +656,7 @@ export default function ManageOfflineTests() {
   const [sysError, setSysError] = useState('');
 
   // Filters
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>(getCurrentSchoolYear());
   const [selectedGradeFilter, setSelectedGradeFilter] = useState<number | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'online_conversion' | 'uploaded_original'>('all');
@@ -671,12 +682,12 @@ export default function ManageOfflineTests() {
 
   // --- FORM STATE FOR CREATE MODAL ---
   // Common exam header configuration
-  const [schoolName, setSchoolName] = useState('TRUNG TÂM LUYỆN THI ESMART KB');
+  const [schoolName, setSchoolName] = useState('TRUNG TÂM LUYỆN THI ESMART');
   const [examHeader, setExamHeader] = useState('ĐỀ KIỂM TRA ĐỊNH KỲ MÔN TOÁN');
   const [examSubject, setExamSubject] = useState('Toán học');
   const [examGrade, setExamGrade] = useState<number>(10);
   const [examDuration, setExamDuration] = useState<number>(45);
-  const [examSchoolYear, setExamSchoolYear] = useState('2025 - 2026');
+  const [examSchoolYear, setExamSchoolYear] = useState(getCurrentSchoolYear());
   const [examTitle, setExamTitle] = useState('');
   const [examStructure, setExamStructure] = useState<'standard_3parts' | 'mixed' | 'mcq_only' | 'essay_only'>('standard_3parts');
   const [showReviewQuestions, setShowReviewQuestions] = useState(false);
@@ -745,110 +756,64 @@ export default function ManageOfflineTests() {
   // Hidden print container ref
   const printContainerRef = useRef<HTMLDivElement>(null);
 
+  // Lazy load online tests for conversion when needed
+  const loadOnlineTestsForConversion = async () => {
+    if (onlineTests.length > 0) return;
+    try {
+      let onlineSnap;
+      try {
+        onlineSnap = await getDocs(collection(db, 'tests'));
+      } catch (err: any) {
+        onlineSnap = await getDocsFromCache(collection(db, 'tests'));
+      }
+      const onlineList = onlineSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+      setOnlineTests(onlineList);
+    } catch (err: any) {
+      console.warn('Could not load online tests for conversion:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (showCreateModal && createTab === 'from_online' && onlineTests.length === 0) {
+      loadOnlineTestsForConversion();
+    }
+  }, [showCreateModal, createTab, onlineTests.length]);
+
   // Load Data
   const loadData = async () => {
     setLoading(true);
+    setSysError('');
     try {
-      // 1. Fetch offline tests & auto-heal discrepancies
-      const offlineSnap = await getDocs(query(collection(db, 'offline_tests'), orderBy('createdAt', 'desc')));
-      const offlineList: OfflineTest[] = [];
-      let healedOfflineCount = 0;
+      // 1. Fetch offline tests with cache fallback
+      let offlineSnap;
+      try {
+        offlineSnap = await getDocs(query(collection(db, 'offline_tests'), orderBy('createdAt', 'desc')));
+      } catch (networkErr: any) {
+        console.warn('Network getDocs failed, attempting to read from local IndexedDB cache:', networkErr);
+        try {
+          offlineSnap = await getDocsFromCache(query(collection(db, 'offline_tests'), orderBy('createdAt', 'desc')));
+        } catch {
+          throw networkErr;
+        }
+      }
 
+      const offlineList: OfflineTest[] = [];
       for (const docSnap of offlineSnap.docs) {
         const data = docSnap.data() as OfflineTest;
-        let testNeedsUpdate = false;
-
-        const updatedVariants = (data.variants || []).map(v => {
-          let variantNeedsUpdate = false;
-          const updatedQuestions = (v.questions || []).map(q => {
-            const res = autoReconcileQuestion(q);
-            if (res.changed) {
-              variantNeedsUpdate = true;
-              healedOfflineCount++;
-              return res.question;
-            }
-            return q;
-          });
-
-          if (variantNeedsUpdate) {
-            testNeedsUpdate = true;
-            return {
-              ...v,
-              questions: updatedQuestions,
-              questionsData: JSON.stringify(updatedQuestions)
-            };
-          }
-          return v;
-        });
-
-        if (testNeedsUpdate) {
-          try {
-            await updateDoc(doc(db, 'offline_tests', docSnap.id), {
-              variants: updatedVariants
-            });
-          } catch (e) {
-            console.error('Failed to persist healed test:', e);
-          }
-          offlineList.push({ ...data, id: docSnap.id, variants: updatedVariants });
-        } else {
-          offlineList.push({ id: docSnap.id, ...data });
-        }
+        offlineList.push({ id: docSnap.id, ...data });
       }
       setOfflineTests(offlineList);
-
-      // 2. Fetch online tests for conversion & auto-heal
-      const onlineSnap = await getDocs(collection(db, 'tests'));
-      const onlineList: any[] = [];
-      let healedOnlineCount = 0;
-
-      for (const docSnap of onlineSnap.docs) {
-        const data = docSnap.data();
-        let testNeedsUpdate = false;
-
-        let parsedQuestions: any[] = [];
-        if (data.questionsData) {
-          try {
-            parsedQuestions = typeof data.questionsData === 'string' ? JSON.parse(data.questionsData) : data.questionsData;
-          } catch (e) {
-            parsedQuestions = [];
-          }
-        } else if (Array.isArray(data.questions)) {
-          parsedQuestions = data.questions;
-        }
-
-        const reconciled = parsedQuestions.map(q => {
-          const res = autoReconcileQuestion(q);
-          if (res.changed) {
-            testNeedsUpdate = true;
-            healedOnlineCount++;
-            return res.question;
-          }
-          return q;
-        });
-
-        if (testNeedsUpdate) {
-          try {
-            await updateDoc(doc(db, 'tests', docSnap.id), {
-              questions: reconciled,
-              questionsData: JSON.stringify(reconciled)
-            });
-          } catch (e) {
-            console.error('Failed to persist healed online test:', e);
-          }
-          onlineList.push({ ...data, id: docSnap.id, questions: reconciled, questionsData: JSON.stringify(reconciled) });
-        } else {
-          onlineList.push({ id: docSnap.id, ...data });
-        }
-      }
-      setOnlineTests(onlineList);
-
-      if (healedOfflineCount > 0 || healedOnlineCount > 0) {
-        setSysMsg(`Hệ thống đã tự động đối soát và chuẩn hóa ${healedOfflineCount + healedOnlineCount} đáp án khớp chính xác với lời giải chi tiết!`);
-        setTimeout(() => setSysMsg(''), 6000);
-      }
     } catch (err: any) {
       console.error('Error loading tests:', err);
-      setSysError('Không thể tải danh sách đề thi: ' + (err?.message || 'Lỗi mạng'));
+      const isQuota = err?.message?.includes('Quota') || err?.message?.includes('quota') || err?.code === 'resource-exhausted';
+      if (isQuota) {
+        setSysError(
+          'Hạn mức đọc dữ liệu miễn phí trong ngày của Firestore đã đạt giới hạn (Quota exceeded for free daily read units). ' +
+          'Dữ liệu sẽ tự động được phục hồi khi sang ngày mới hoặc thầy/cô có thể nâng cấp gói cước trên Firebase Console.'
+        );
+      } else {
+        setSysError('Không thể tải danh sách đề thi: ' + (err?.message || 'Lỗi mạng'));
+      }
     } finally {
       setLoading(false);
     }
@@ -972,25 +937,35 @@ export default function ManageOfflineTests() {
     loadData();
 
     // Tự động nhận diện tài liệu tham chiếu từ Thư viện khi chuyển từ tab Thư viện tài liệu
-    const pending = sessionStorage.getItem('pendingOfflineReference');
-    if (pending) {
-      try {
-        const ref = JSON.parse(pending);
-        sessionStorage.removeItem('pendingOfflineReference');
-        setSelectedOfflineRef(ref);
-        setExamTitle(ref.lessonTitle || ref.attachment?.name || 'Đề thi');
-        if (ref.grade) setExamGrade(Number(ref.grade) || 10);
-        if (ref.attachment?.dataUrl && ref.attachment?.name) {
-          const file = dataUrlToFile(ref.attachment.dataUrl, ref.attachment.name, ref.attachment.type);
-          setUploadFile(file);
-          handleExtractQuestionsFromFile(file);
+    const handlePendingOfflineRef = () => {
+      const pending = sessionStorage.getItem('pendingOfflineReference');
+      if (pending) {
+        try {
+          const ref = JSON.parse(pending);
+          sessionStorage.removeItem('pendingOfflineReference');
+          setSelectedOfflineRef(ref);
+          setExamTitle(repairVietnameseDocument(convertTcvn3ToUnicode(ref.lessonTitle || ref.attachment?.name || 'Đề thi')));
+          if (ref.grade) setExamGrade(Number(ref.grade) || 10);
+          if (ref.attachment?.dataUrl && ref.attachment?.name) {
+            const file = dataUrlToFile(ref.attachment.dataUrl, ref.attachment.name, ref.attachment.type);
+            setUploadFile(file);
+            handleExtractQuestionsFromFile(file);
+          } else if (ref.knowledge) {
+            handleExtractQuestionsFromText(ref.knowledge, ref.lessonTitle);
+          }
+          setCreateTab('upload_new');
+          setShowCreateModal(true);
+        } catch (e) {
+          console.error("Error reading pending offline reference:", e);
         }
-        setCreateTab('upload_new');
-        setShowCreateModal(true);
-      } catch (e) {
-        console.error("Error reading pending offline reference:", e);
       }
-    }
+    };
+
+    handlePendingOfflineRef();
+    window.addEventListener('switch-dashboard-tab', handlePendingOfflineRef);
+    return () => {
+      window.removeEventListener('switch-dashboard-tab', handlePendingOfflineRef);
+    };
   }, []);
 
   useEffect(() => {
@@ -1035,6 +1010,7 @@ export default function ManageOfflineTests() {
     setExamGrade(test.grade ? Number(test.grade) : 10);
     setExamSubject(test.subject || 'Toán học');
     setExamDuration(test.durationMinutes ? Number(test.durationMinutes) : 45);
+    setExamSchoolYear(test.schoolYear || getCurrentSchoolYear());
     setExamHeader(`ĐỀ KIỂM TRA ĐỊNH KỲ MÔN ${test.subject?.toUpperCase() || 'TOÁN HỌC'}`);
     
     // Auto-detect exam structure from online test
@@ -1166,7 +1142,7 @@ export default function ManageOfflineTests() {
       // Create new offline test document in Firestore
       const newOfflineTest: Omit<OfflineTest, 'id'> = {
         title: examTitle.trim() || `${selected.title} (Bản in Offline)`,
-        schoolName: schoolName.trim() || 'TRUNG TÂM LUYỆN THI ESMART KB',
+        schoolName: schoolName.trim() || 'TRUNG TÂM LUYỆN THI ESMART',
         examHeader: examHeader.trim() || 'ĐỀ KIỂM TRA ĐỊNH KỲ MÔN TOÁN',
         grade: examGrade,
         subject: examSubject,
@@ -1206,12 +1182,71 @@ export default function ManageOfflineTests() {
     }
   };
 
+  // Trích xuất câu hỏi từ văn bản học liệu trong thư viện
+  const handleExtractQuestionsFromText = async (text: string, title?: string) => {
+    if (!text || text.trim().length === 0) return;
+    if (title && !examTitle) {
+      setExamTitle(repairVietnameseDocument(convertTcvn3ToUnicode(title)));
+    }
+    setIsExtractingQuestions(true);
+    setProgressStatus('AI đang đọc và bóc tách câu hỏi, đáp án từ học liệu thư viện...');
+    setSysError('');
+    try {
+      const apiKey = localStorage.getItem('gemini_api_key') || localStorage.getItem('custom_gemini_api_key') || '';
+      const res = await fetch('/api/extract-questions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { 'x-gemini-api-key': apiKey } : {})
+        },
+        body: JSON.stringify({
+          extractedText: repairVietnameseDocument(convertTcvn3ToUnicode(text))
+        })
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.details || errData.error || 'Không thể trích xuất câu hỏi từ học liệu.');
+      }
+      const rawQuestions = await res.json();
+      if (Array.isArray(rawQuestions) && rawQuestions.length > 0) {
+        const questions = rawQuestions.map((q: any) => ({
+          ...q,
+          question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+          options: Array.isArray(q.options) ? q.options.map((o: string) => repairVietnameseDocument(convertTcvn3ToUnicode(o || ''))) : [],
+          explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+        }));
+        setExtractedQuestions(questions);
+
+        const hasEssay = questions.some((q: any) => detectQuestionType(q) === 'essay');
+        const hasTfOrShort = questions.some((q: any) => {
+          const t = detectQuestionType(q);
+          return t === 'tf' || t === 'short';
+        });
+        if (hasEssay) {
+          setExamStructure('mixed');
+        } else if (hasTfOrShort) {
+          setExamStructure('standard_3parts');
+        } else {
+          setExamStructure('standard_3parts');
+        }
+        setSysMsg(`Đã trích xuất thành công ${questions.length} câu hỏi từ học liệu thư viện!`);
+        setTimeout(() => setSysMsg(''), 5000);
+      }
+    } catch (err: any) {
+      setSysError(err.message || 'Lỗi khi trích xuất học liệu.');
+    } finally {
+      setIsExtractingQuestions(false);
+      setProgressStatus('');
+    }
+  };
+
   // --- PART 2: UPLOAD ORIGINAL TEST & MULTI-VARIANT CREATION ---
   const handleExtractQuestionsFromFile = async (file: File) => {
     if (!file) return;
     setUploadFile(file);
     if (!examTitle) {
-      const cleanName = file.name.replace(/\.[^/.]+$/, "");
+      const cleanName = repairVietnameseDocument(convertTcvn3ToUnicode(file.name.replace(/\.[^/.]+$/, "")));
       setExamTitle(cleanName);
     }
 
@@ -1232,7 +1267,9 @@ export default function ManageOfflineTests() {
           },
           body: JSON.stringify({
             fileDataUrl,
-            mimeType: file.type || 'application/pdf'
+            fileName: file.name,
+            mimeType: file.type || 'application/pdf',
+            extractedText: selectedOfflineRef?.knowledge ? repairVietnameseDocument(convertTcvn3ToUnicode(selectedOfflineRef.knowledge)) : undefined
           })
         });
 
@@ -1241,8 +1278,15 @@ export default function ManageOfflineTests() {
           throw new Error(errData.details || errData.error || 'Không thể trích xuất câu hỏi từ file.');
         }
 
-        const questions = await res.json();
-        if (Array.isArray(questions) && questions.length > 0) {
+        const rawQuestions = await res.json();
+        if (Array.isArray(rawQuestions) && rawQuestions.length > 0) {
+          const questions = rawQuestions.map((q: any) => ({
+            ...q,
+            question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+            options: Array.isArray(q.options) ? q.options.map((o: string) => repairVietnameseDocument(convertTcvn3ToUnicode(o || ''))) : [],
+            explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+            correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+          }));
           setExtractedQuestions(questions);
 
           // Auto-detect exam structure
@@ -1361,9 +1405,9 @@ export default function ManageOfflineTests() {
       }
 
       const newOfflineTest: Omit<OfflineTest, 'id'> = {
-        title: examTitle.trim() || 'Đề thi offline',
-        schoolName: schoolName.trim() || 'TRUNG TÂM LUYỆN THI ESMART KB',
-        examHeader: examHeader.trim() || 'ĐỀ KIỂM TRA ĐỊNH KỲ MÔN TOÁN',
+        title: repairVietnameseDocument(convertTcvn3ToUnicode(examTitle.trim() || 'Đề thi offline')),
+        schoolName: repairVietnameseDocument(convertTcvn3ToUnicode(schoolName.trim() || 'TRUNG TÂM LUYỆN THI ESMART')),
+        examHeader: repairVietnameseDocument(convertTcvn3ToUnicode(examHeader.trim() || 'ĐỀ KIỂM TRA ĐỊNH KỲ MÔN TOÁN')),
         grade: examGrade,
         subject: examSubject,
         durationMinutes: examDuration,
@@ -1371,11 +1415,20 @@ export default function ManageOfflineTests() {
         examStructure: examStructure,
         sourceType: 'uploaded_original',
         referenceDocId: selectedOfflineRef?.lessonId || null,
-        referenceDocTitle: selectedOfflineRef?.lessonTitle || null,
+        referenceDocTitle: selectedOfflineRef?.lessonTitle ? repairVietnameseDocument(convertTcvn3ToUnicode(selectedOfflineRef.lessonTitle)) : null,
         referenceTopicName: selectedOfflineRef?.topicName || null,
         variantMethod: uploadVariantMethod,
         variantCodes: codes,
-        variants: finalVariants,
+        variants: finalVariants.map(v => ({
+          ...v,
+          questions: (v.questions || []).map((q: any) => ({
+            ...q,
+            question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+            options: Array.isArray(q.options) ? q.options.map((o: string) => repairVietnameseDocument(convertTcvn3ToUnicode(o || ''))) : [],
+            explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+            correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+          }))
+        })),
         createdAt: new Date().toISOString(),
         createdBy: user?.displayName || user?.email || 'Giáo viên',
         note: `Tải lên từ file "${uploadFile?.name || 'Đề gốc'}" (${uploadVariantMethod === 'shuffle' ? 'Đảo câu & đáp án' : uploadVariantMethod === 'isomorphic' ? 'AI đổi số liệu' : '1 mã đề'})`
@@ -1493,30 +1546,44 @@ export default function ManageOfflineTests() {
   };
 
   // Filtered offline tests
-  const filteredOfflineTests = offlineTests.filter(t => {
-    if (selectedGradeFilter !== 'all' && t.grade !== selectedGradeFilter) return false;
-    if (sourceFilter !== 'all' && t.sourceType !== sourceFilter) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchTitle = t.title.toLowerCase().includes(q);
-      const matchHeader = (t.examHeader || '').toLowerCase().includes(q);
-      const matchCodes = (t.variantCodes || []).join(' ').toLowerCase().includes(q);
-      if (!matchTitle && !matchHeader && !matchCodes) return false;
-    }
-    return true;
-  });
+  const filteredOfflineTests = offlineTests
+    .filter(t => {
+      if (!matchesSchoolYear(t.schoolYear, selectedSchoolYear)) return false;
+      if (selectedGradeFilter !== 'all' && t.grade !== selectedGradeFilter) return false;
+      if (sourceFilter !== 'all' && t.sourceType !== sourceFilter) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchTitle = t.title.toLowerCase().includes(q);
+        const matchHeader = (t.examHeader || '').toLowerCase().includes(q);
+        const matchCodes = (t.variantCodes || []).join(' ').toLowerCase().includes(q);
+        if (!matchTitle && !matchHeader && !matchCodes) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
+      if (yearDiff !== 0) return yearDiff;
+      return (b.createdAt || '').localeCompare(a.createdAt || '');
+    });
 
   // Filtered online tests in Modal
-  const filteredOnlineTests = onlineTests.filter(t => {
-    if (onlineGradeFilter !== 'all' && t.grade !== onlineGradeFilter) return false;
-    if (onlineSearch.trim()) {
-      const q = onlineSearch.toLowerCase();
-      const matchTitle = (t.title || '').toLowerCase().includes(q);
-      const matchTopic = (t.topic || '').toLowerCase().includes(q);
-      if (!matchTitle && !matchTopic) return false;
-    }
-    return true;
-  });
+  const filteredOnlineTests = onlineTests
+    .filter(t => {
+      if (!matchesSchoolYear(t.schoolYear, selectedSchoolYear)) return false;
+      if (onlineGradeFilter !== 'all' && t.grade !== onlineGradeFilter) return false;
+      if (onlineSearch.trim()) {
+        const q = onlineSearch.toLowerCase();
+        const matchTitle = (t.title || '').toLowerCase().includes(q);
+        const matchTopic = (t.topic || '').toLowerCase().includes(q);
+        if (!matchTitle && !matchTopic) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
+      if (yearDiff !== 0) return yearDiff;
+      return (b.createdAt || '').localeCompare(a.createdAt || '');
+    });
 
   // Current active variant in preview
   const currentVariant = previewTest?.variants?.find(v => v.code === activePreviewVariantCode) || previewTest?.variants?.[0];
@@ -1536,11 +1603,38 @@ export default function ManageOfflineTests() {
         </div>
       )}
       {sysError && (
-        <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl flex items-center justify-between shadow-2xs">
-          <span className="text-sm font-medium">{sysError}</span>
-          <button onClick={() => setSysError('')} className="text-red-500 hover:text-red-700">
-            <X size={16} />
-          </button>
+        <div className={`p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs ${
+          sysError.includes('Hạn mức') || sysError.includes('Quota')
+            ? 'bg-amber-50 border border-amber-300 text-amber-900'
+            : 'bg-red-50 border border-red-200 text-red-800'
+        }`}>
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className={sysError.includes('Hạn mức') || sysError.includes('Quota') ? 'text-amber-600 shrink-0 mt-0.5' : 'text-red-600 shrink-0 mt-0.5'} size={20} />
+            <div>
+              <span className="text-sm font-semibold block">{sysError}</span>
+              {(sysError.includes('Hạn mức') || sysError.includes('Quota')) && (
+                <span className="text-xs text-amber-700 mt-1 block">
+                  Giới hạn miễn phí là 50.000 lượt đọc/ngày. Bạn có thể mở trực tiếp Firebase Console để nâng cấp gói cước Blaze hoặc chờ sang ngày mới để hệ thống tự động reset.
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {(sysError.includes('Hạn mức') || sysError.includes('Quota')) && (
+              <a
+                href={FIRESTORE_UPGRADE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 shadow-xs whitespace-nowrap"
+              >
+                <span>Nâng cấp Firebase</span>
+                <ExternalLink size={13} />
+              </a>
+            )}
+            <button onClick={() => setSysError('')} className="text-gray-400 hover:text-gray-600 p-1 cursor-pointer">
+              <X size={16} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -1554,16 +1648,34 @@ export default function ManageOfflineTests() {
             <div>
               <h2 className="text-xl font-bold text-gray-900 tracking-tight">Bài kiểm tra và thi offline</h2>
               <p className="text-sm text-gray-500">
-                Tạo đề thi giấy chuẩn in ấn Bộ GD&ĐT, chuyển đổi từ đề online, trộn nhiều mã đề và tải xuống PDF
+                Tạo đề thi giấy chuẩn in ấn Bộ GD&ĐT • Năm học: <span className="font-bold text-blue-600">{selectedSchoolYear === 'ALL' ? 'Tất cả năm học' : formatSchoolYear(selectedSchoolYear)}</span>
               </p>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5 shrink-0 w-full md:w-auto">
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0 w-full md:w-auto">
+          <div className="flex items-center gap-2 bg-blue-50/80 border border-blue-200 px-3 py-2 rounded-xl">
+            <Calendar size={16} className="text-blue-600 shrink-0" />
+            <span className="text-xs font-bold text-blue-900 whitespace-nowrap">Năm học:</span>
+            <select
+              value={selectedSchoolYear}
+              onChange={(e) => setSelectedSchoolYear(e.target.value)}
+              className="bg-white border border-blue-200 text-blue-900 text-xs font-bold rounded-lg px-2.5 py-1 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value={getCurrentSchoolYear()}>{formatSchoolYear(getCurrentSchoolYear())} (Hiện tại)</option>
+              <option value="ALL">Tất cả năm học</option>
+              {getStandardSchoolYears()
+                .filter(sy => sy !== getCurrentSchoolYear())
+                .map(sy => (
+                  <option key={sy} value={sy}>{formatSchoolYear(sy)}</option>
+                ))}
+            </select>
+          </div>
           <button
             onClick={() => {
               setCreateTab('from_online');
+              setExamSchoolYear(selectedSchoolYear === 'ALL' ? getCurrentSchoolYear() : selectedSchoolYear);
               setShowCreateModal(true);
             }}
             className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl shadow-2xs transition-colors"
@@ -1699,6 +1811,9 @@ export default function ManageOfflineTests() {
                 <div>
                   <div className="flex items-start justify-between gap-2 mb-2.5">
                     <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-[11px] font-bold rounded-md border border-indigo-200">
+                        NH {formatSchoolYear(t.schoolYear)}
+                      </span>
                       <span className="px-2.5 py-0.5 bg-blue-50 text-blue-700 text-[11px] font-bold rounded-md border border-blue-100">
                         Khối {t.grade}
                       </span>
@@ -1753,7 +1868,7 @@ export default function ManageOfflineTests() {
                     </div>
                     <div className="flex items-center gap-1.5">
                       <Clock size={13} className="text-gray-400 shrink-0" />
-                      <span>{qCount} câu hỏi • Năm học: {t.schoolYear || '2025 - 2026'}</span>
+                      <span>{qCount} câu hỏi • Năm học: {formatSchoolYear(t.schoolYear)}</span>
                     </div>
                   </div>
 
@@ -1916,7 +2031,7 @@ export default function ManageOfflineTests() {
                       type="text"
                       value={schoolName}
                       onChange={e => setSchoolName(e.target.value)}
-                      placeholder="TRUNG TÂM ESMART KB..."
+                      placeholder="TRUNG TÂM ESMART..."
                       className="w-full px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs"
                     />
                   </div>
@@ -1963,13 +2078,17 @@ export default function ManageOfflineTests() {
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-gray-700 mb-1">Năm học</label>
-                    <input
-                      type="text"
+                    <select
                       value={examSchoolYear}
                       onChange={e => setExamSchoolYear(e.target.value)}
-                      placeholder="2025 - 2026"
-                      className="w-full px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs"
-                    />
+                      className="w-full px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs font-bold text-blue-900"
+                    >
+                      {getStandardSchoolYears().map(sy => (
+                        <option key={sy} value={sy}>
+                          {formatSchoolYear(sy)} {sy === getCurrentSchoolYear() ? '(Hiện tại)' : ''}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="sm:col-span-2 md:col-span-3 pt-1 border-t border-gray-200/80">

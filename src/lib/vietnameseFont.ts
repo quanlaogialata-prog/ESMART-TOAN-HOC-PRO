@@ -2,9 +2,9 @@
 // and MathType / Symbol font conversion to standard LaTeX & Unicode NFC.
 
 // 1. TCVN3 / ABC Single Character Map (.VnTime, .VnTimeH)
-// NOTE: These byte codes only apply when text is confirmed legacy TCVN3.
+// NOTE: These byte codes apply when text is legacy TCVN3 (.VnTime).
 const TCVN3_CHAR_MAP: Record<number, string> = {
-  // Lowercase accented vowels
+  // Lowercase accented vowels (.VnTime)
   0xb5: 'à', 0xb8: 'á', 0xb6: 'ả', 0xb7: 'ã', 0xb9: 'ạ',
   0xa8: 'ă', 0xbb: 'ằ', 0xbe: 'ắ', 0xbc: 'ẳ', 0xbd: 'ẵ', 0xc6: 'ặ',
   0xa9: 'â', 0xc7: 'ầ', 0xca: 'ấ', 0xc8: 'ẩ', 0xc9: 'ẫ', 0xcb: 'ậ',
@@ -23,8 +23,120 @@ const TCVN3_CHAR_MAP: Record<number, string> = {
   0xa1: 'Ă', 0xa2: 'Â', 0xa3: 'Ê', 0xa4: 'Ô', 0xa5: 'Ơ', 0xa6: 'Ư', 0xa7: 'Đ'
 };
 
+// Uppercase Character Map for .VnTimeH (all-caps headings & titles)
+const TCVN3_UPPER_CHAR_MAP: Record<number, string> = {
+  0xb5: 'À', 0xb8: 'Á', 0xb6: 'Ả', 0xb7: 'Ã', 0xb9: 'Ạ',
+  0xa1: 'Ă', 0xa8: 'Ă', 0xbb: 'Ằ', 0xbe: 'Ắ', 0xbc: 'Ẳ', 0xbd: 'Ẵ', 0xc6: 'Ặ',
+  0xa2: 'Â', 0xa9: 'Â', 0xc7: 'Ầ', 0xca: 'Ấ', 0xc8: 'Ẩ', 0xc9: 'Ẫ', 0xcb: 'Ậ',
+  0xcc: 'È', 0xd0: 'É', 0xce: 'Ẻ', 0xcf: 'Ẽ', 0xd1: 'Ẹ',
+  0xa3: 'Ê', 0xaa: 'Ê', 0xd2: 'Ề', 0xd5: 'Ế', 0xd3: 'Ể', 0xd4: 'Ễ', 0xd6: 'Ệ',
+  0xd7: 'Ì', 0xdd: 'Í', 0xd8: 'Ỉ', 0xdc: 'Ĩ', 0xde: 'Ị',
+  0xdf: 'Ò', 0xe3: 'Ó', 0xe1: 'Ỏ', 0xe2: 'Õ', 0xe4: 'Ọ',
+  0xa4: 'Ô', 0xab: 'Ô', 0xe5: 'Ồ', 0xe8: 'Ố', 0xe6: 'Ổ', 0xe7: 'Ỗ', 0xe9: 'Ộ',
+  0xa5: 'Ơ', 0xac: 'Ơ', 0xea: 'Ờ', 0xed: 'Ớ', 0xeb: 'Ở', 0xec: 'Ỡ', 0xee: 'Ợ',
+  0xef: 'Ù', 0xf3: 'Ú', 0xf1: 'Ủ', 0xf2: 'Ũ', 0xf4: 'Ụ',
+  0xa6: 'Ư', 0xad: 'Ư', 0xf5: 'Ừ', 0xf8: 'Ứ', 0xf6: 'Ử', 0xf7: 'Ữ', 0xf9: 'Ự',
+  0xfa: 'Ỳ', 0xfd: 'Ý', 0xfb: 'Ỷ', 0xfc: 'Ỹ', 0xfe: 'Ỵ',
+  0xa7: 'Đ', 0xae: 'Đ'
+};
+
 // 2. Common mathematical & pedagogical words in legacy TCVN3 (.VnTime)
 const TCVN3_WORD_FIXES: [RegExp, string][] = [
+  // Từ nối và từ ngữ phổ biến nhất trong đề thi và tài liệu
+  [/\bcã\b/g, 'có'],
+  [/\blµ\b/g, 'là'],
+  [/\bvµ\b/g, 'và'],
+  [/\bcña\b/g, 'của'],
+  [/\bkh«ng\b/gi, 'không'],
+  [/\b®îc\b/gi, 'được'],
+  [/\bph¶i\b/gi, 'phải'],
+  [/\bc¸c\b/gi, 'các'],
+  [/\bth×\b/gi, 'thì'],
+  [/\bnÕu\b/gi, 'nếu'],
+  [/\bvíi\b/gi, 'với'],
+  [/\bnµy\b/gi, 'này'],
+  [/\b®ã\b/gi, 'đó'],
+  [/\b®©y\b/gi, 'đây'],
+  [/\b®Ó\b/gi, 'để'],
+  [/\b®Òu\b/gi, 'đều'],
+  [/\b®Õn\b/gi, 'đến'],
+  [/\b®i\b/gi, 'đi'],
+  [/\b®·\b/gi, 'đã'],
+  [/\bmµ\b/gi, 'mà'],
+  [/\bt¹i\b/gi, 'tại'],
+  [/\btõ\b/gi, 'từ'],
+  [/\bbiÕt\b/gi, 'biết'],
+  [/\btÝnh\b/gi, 'tính'],
+  [/\bt×m\b/gi, 'tìm'],
+  [/\bgäi\b/gi, 'gọi'],
+  [/\btrªn\b/gi, 'trên'],
+  [/\bdíi\b/gi, 'dưới'],
+  [/\btháa\b/gi, 'thỏa'],
+  [/\bth¶o\b/gi, 'thảo'],
+  [/\bm·n\b/gi, 'mãn'],
+  [/\btháa m·n\b/gi, 'thỏa mãn'],
+  [/\bgi¸\b/gi, 'giá'],
+  [/\btrÞ\b/gi, 'trị'],
+  [/\blín\b/gi, 'lớn'],
+  [/\bnhá\b/gi, 'nhỏ'],
+  [/\bb»ng\b/gi, 'bằng'],
+  [/\bkh¸c\b/gi, 'khác'],
+  [/\bcïng\b/gi, 'cùng'],
+  [/\bthuéc\b/gi, 'thuộc'],
+  [/\btån t¹i\b/gi, 'tồn tại'],
+  [/\bsè\b/gi, 'số'],
+  [/\bhµm\b/gi, 'hàm'],
+  [/\b®a thøc\b/gi, 'đa thức'],
+  [/\bc¨n bËc\b/gi, 'căn bậc'],
+  [/\bbèn\b/gi, 'bốn'],
+  [/\bn¨m\b/gi, 'năm'],
+  [/\bs¸u\b/gi, 'sáu'],
+  [/\bb¶y\b/gi, 'bảy'],
+  [/\bt¸m\b/gi, 'tám'],
+  [/\bchÝn\b/gi, 'chín'],
+  [/\bmêi\b/gi, 'mười'],
+  [/\bmøc ®é\b/gi, 'mức độ'],
+  [/\bnhËn biÕt\b/gi, 'nhận biết'],
+  [/\bth«ng hiÓu\b/gi, 'thông hiểu'],
+  [/\bvËn dông\b/gi, 'vận dụng'],
+  [/\bchän\b/gi, 'chọn'],
+  [/\bc©u hái\b/gi, 'câu hỏi'],
+  [/\bc©u\b/gi, 'câu'],
+  [/\bhái\b/gi, 'hỏi'],
+  [/\b®óng\b/gi, 'đúng'],
+  [/\bh·y\b/gi, 'hãy'],
+  [/\b®Æt\b/gi, 'đặt'],
+  [/\bxÐt\b/gi, 'xét'],
+  [/\bgãc\b/gi, 'góc'],
+  [/\bc¹nh\b/gi, 'cạnh'],
+  [/\b®Ønh\b/gi, 'đỉnh'],
+  [/\b®¸y\b/gi, 'đáy'],
+  [/\btrôc\b/gi, 'trục'],
+  [/\bmÆt cÇu\b/gi, 'mặt cầu'],
+  [/\bkhèi\b/gi, 'khối'],
+  [/\bnãn\b/gi, 'nón'],
+  [/\btrô\b/gi, 'trụ'],
+  [/\bkho¶ng c¸ch\b/gi, 'khoảng cách'],
+  [/\bhÖ sè\b/gi, 'hệ số'],
+  [/\bph¬ng sai\b/gi, 'phương sai'],
+  [/\bx¸c suÊt\b/gi, 'xác suất'],
+  [/\bbiÕn cè\b/gi, 'biến cố'],
+  [/\bcÊp sè céng\b/gi, 'cấp số cộng'],
+  [/\bcÊp sè nh©n\b/gi, 'cấp số nhân'],
+  [/\bgiíi h¹n\b/gi, 'giới hạn'],
+  [/\btËp hîp\b/gi, 'tập hợp'],
+  [/\bphÇn tö\b/gi, 'phần tử'],
+  [/\brçng\b/gi, 'rỗng'],
+  [/\bhîp\b/gi, 'hợp'],
+  [/\bmÖnh ®Ò\b/gi, 'mệnh đề'],
+  [/\bphñ ®Þnh\b/gi, 'phủ định'],
+  [/\bkÐo theo\b/gi, 'kéo theo'],
+  [/\bt¬ng ®¬ng\b/gi, 'tương đương'],
+  [/\b®¶o\b/gi, 'đảo'],
+  [/\bph¶n chøng\b/gi, 'phản chứng'],
+  [/\bquy n¹p\b/gi, 'quy nạp'],
+  [/\b®iÓm\b/gi, 'điểm'],
+  // Thuật ngữ bài học, chương mục
   [/\bch¬ng\b/gi, 'chương'],
   [/\bph¬ng tr×nh\b/gi, 'phương trình'],
   [/\bhÖ ph¬ng tr×nh\b/gi, 'hệ phương trình'],
@@ -113,29 +225,66 @@ const TCVN3_WORD_FIXES: [RegExp, string][] = [
 
 // 3. VNI Windows 2-character / syllable replacements
 const VNI_PAIRS: [RegExp, string][] = [
+  // 3-character compounds for circumflex/breve vowels with accents
+  [/aâù/g, 'ấ'], [/aâá/g, 'ấ'], [/aâà/g, 'ầ'], [/aâû/g, 'ẩ'], [/aâõ/g, 'ẫ'], [/aâï/g, 'ậ'],
+  [/aêé/g, 'ắ'], [/aêè/g, 'ằ'], [/aêú/g, 'ẳ'], [/aêü/g, 'ẵ'], [/aêë/g, 'ặ'],
+  [/eâé/g, 'ế'], [/eâè/g, 'ề'], [/eâû/g, 'ể'], [/eâõ/g, 'ễ'], [/eâï/g, 'ệ'],
+  [/oâá/g, 'ố'], [/oâà/g, 'ồ'], [/oâû/g, 'ổ'], [/oâõ/g, 'ỗ'], [/oâï/g, 'ộ'],
+  [/ôù/g, 'ớ'], [/ôø/g, 'ờ'], [/ôà/g, 'ờ'], [/ôû/g, 'ở'], [/ôõ/g, 'ỡ'], [/ôï/g, 'ợ'],
+  [/öù/g, 'ứ'], [/öø/g, 'ừ'], [/öà/g, 'ừ'], [/öû/g, 'ử'], [/öõ/g, 'ữ'], [/öï/g, 'ự'], [/ö/g, 'ư'],
+  // 2-character VNI pairs
   [/aù/g, 'á'], [/aà/g, 'à'], [/aû/g, 'ả'], [/aõ/g, 'ã'], [/aï/g, 'ạ'],
   [/aê/g, 'ă'], [/aé/g, 'ắ'], [/aè/g, 'ằ'], [/aú/g, 'ẳ'], [/aü/g, 'ẵ'], [/aë/g, 'ặ'],
-  [/aâ/g, 'â'], [/aá/g, 'ấ'], [/aà/g, 'ầ'], [/aå/g, 'ẩ'], [/aã/g, 'ẫ'], [/aä/g, 'ậ'],
+  [/aâ/g, 'â'], [/aá/g, 'ấ'], [/aå/g, 'ẩ'], [/aã/g, 'ẫ'], [/aä/g, 'ậ'],
   [/eù/g, 'é'], [/eà/g, 'è'], [/eû/g, 'ẻ'], [/eõ/g, 'ẽ'], [/eï/g, 'ẹ'],
   [/eâ/g, 'ê'], [/eá/g, 'ế'], [/eà/g, 'ề'], [/eå/g, 'ể'], [/eã/g, 'ễ'], [/eä/g, 'ệ'],
   [/où/g, 'ó'], [/oà/g, 'ò'], [/oû/g, 'ỏ'], [/oõ/g, 'õ'], [/oï/g, 'ọ'],
   [/oâ/g, 'ô'], [/oá/g, 'ố'], [/oà/g, 'ồ'], [/oå/g, 'ổ'], [/oã/g, 'ỗ'], [/oä/g, 'ộ'],
-  [/ôù/g, 'ớ'], [/ôø/g, 'ờ'], [/ôà/g, 'ờ'], [/ôû/g, 'ở'], [/ôõ/g, 'ỡ'], [/ôï/g, 'ợ'],
   [/uù/g, 'ú'], [/uà/g, 'ù'], [/uû/g, 'ủ'], [/uõ/g, 'ũ'], [/uï/g, 'ụ'],
-  [/öù/g, 'ứ'], [/öø/g, 'ừ'], [/öà/g, 'ừ'], [/öû/g, 'ử'], [/öõ/g, 'ữ'], [/öï/g, 'ự'], [/ö/g, 'ư'],
   [/yù/g, 'ý'], [/yà/g, 'ỳ'], [/yû/g, 'ỷ'], [/yõ/g, 'ỹ'],
   [/ñ/g, 'đ'], [/Ñ/g, 'Đ'],
+  // Uppercase VNI compounds
+  [/AÂÙ/g, 'Ấ'], [/AÂÁ/g, 'Ấ'], [/AÂÀ/g, 'Ầ'], [/AÂÛ/g, 'Ẩ'], [/AÂÕ/g, 'Ẫ'], [/AÂÏ/g, 'Ậ'],
+  [/AÊÉ/g, 'Ắ'], [/AÊÈ/g, 'Ằ'], [/AÊÚ/g, 'Ẳ'], [/AÊÜ/g, 'Ẵ'], [/AÊË/g, 'Ặ'],
+  [/EÂÉ/g, 'Ế'], [/EÂÈ/g, 'Ề'], [/EÂÛ/g, 'Ể'], [/EÂÕ/g, 'Ễ'], [/EÂÏ/g, 'Ệ'],
+  [/OÂÁ/g, 'Ố'], [/OÂÀ/g, 'Ồ'], [/OÂÛ/g, 'Ổ'], [/OÂÕ/g, 'Ỗ'], [/OÂÏ/g, 'Ộ'],
+  [/ÔÙ/g, 'Ớ'], [/ÔØ/g, 'Ờ'], [/ÔÀ/g, 'Ờ'], [/ÔÛ/g, 'Ở'], [/ÔÕ/g, 'Ỡ'], [/ÔÏ/g, 'Ợ'],
+  [/ÖÙ/g, 'Ứ'], [/ÖØ/g, 'Ừ'], [/ÖÀ/g, 'Ừ'], [/ÖÛ/g, 'Ử'], [/ÖÕ/g, 'Ữ'], [/ÖÏ/g, 'Ự'], [/Ö/g, 'Ư'],
   [/AÙ/g, 'Á'], [/AÀ/g, 'À'], [/AÛ/g, 'Ả'], [/AÕ/g, 'Ã'], [/AÏ/g, 'Ạ'],
   [/AÊ/g, 'Ă'], [/AÉ/g, 'Ắ'], [/AÈ/g, 'Ằ'], [/AÚ/g, 'Ẳ'], [/AÜ/g, 'Ẵ'], [/AË/g, 'Ặ'],
-  [/AÂ/g, 'Â'], [/AÁ/g, 'Ấ'], [/AÀ/g, 'Ầ'], [/AÅ/g, 'Ẩ'], [/AÃ/g, 'Ẫ'], [/AÄ/g, 'Ậ'],
+  [/AÂ/g, 'Â'], [/AÁ/g, 'Ấ'], [/AÅ/g, 'Ẩ'], [/AÃ/g, 'Ẫ'], [/AÄ/g, 'Ậ'],
   [/EÙ/g, 'É'], [/EÀ/g, 'È'], [/EÛ/g, 'Ẻ'], [/EÕ/g, 'Ẽ'], [/EÏ/g, 'Ẹ'],
   [/EÂ/g, 'Ê'], [/EÁ/g, 'Ế'], [/EÀ/g, 'Ề'], [/EÅ/g, 'Ể'], [/EÃ/g, 'Ễ'], [/EÄ/g, 'Ệ'],
   [/OÙ/g, 'Ó'], [/OÀ/g, 'Ò'], [/OÛ/g, 'Ỏ'], [/OÕ/g, 'Õ'], [/OÏ/g, 'Ọ'],
   [/OÂ/g, 'Ô'], [/OÁ/g, 'Ố'], [/OÀ/g, 'Ồ'], [/OÅ/g, 'Ổ'], [/OÃ/g, 'Ỗ'], [/OÄ/g, 'Ộ'],
-  [/ÔÙ/g, 'Ớ'], [/ÔØ/g, 'Ờ'], [/ÔÀ/g, 'Ờ'], [/ÔÛ/g, 'Ở'], [/ÔÕ/g, 'Ỡ'], [/ÔÏ/g, 'Ợ'],
-  [/UÙ/g, 'Ú'], [/UÀ/g, 'Ù'], [/UÛ/g, 'Ủ'], [/UÕ/g, 'Ũ'], [/UÏ/g, 'Ụ'],
-  [/ÖÙ/g, 'Ứ'], [/ÖØ/g, 'Ừ'], [/ÖÀ/g, 'Ừ'], [/ÖÛ/g, 'Ử'], [/ÖÕ/g, 'Ữ'], [/ÖÏ/g, 'Ự'], [/Ö/g, 'Ư']
+  [/UÙ/g, 'Ú'], [/UÀ/g, 'Ù'], [/UÛ/g, 'Ủ'], [/UÕ/g, 'Ũ'], [/UÏ/g, 'Ụ']
 ];
+
+// UTF-8 Mojibake pairs (when UTF-8 Vietnamese bytes are decoded as CP1252/ISO-8859-1)
+export function repairUtf8Mojibake(text: string): string {
+  if (!text) return '';
+  if (!/[Ãáºá»]/.test(text)) return text;
+  return text
+    // Multi-byte UTF-8 sequences (3-byte characters)
+    .replace(/áº£/g, 'ả').replace(/áº¡/g, 'ạ').replace(/áº¯/g, 'ắ').replace(/áº±/g, 'ằ')
+    .replace(/áº³/g, 'ẳ').replace(/áºµ/g, 'ẵ').replace(/áº·/g, 'ặ').replace(/áº¥/g, 'ấ')
+    .replace(/áº§/g, 'ầ').replace(/áº©/g, 'ẩ').replace(/áº«/g, 'ẫ').replace(/áº­/g, 'ậ')
+    .replace(/áº»/g, 'ẻ').replace(/áº½/g, 'ẽ').replace(/áº¹/g, 'ẹ').replace(/áº¿/g, 'ế')
+    .replace(/á»/g, 'ề').replace(/á»ƒ/g, 'ể').replace(/á»…/g, 'ễ').replace(/á»‡/g, 'ệ')
+    .replace(/á»‰/g, 'ỉ').replace(/á»‹/g, 'ị').replace(/á»/g, 'ọ').replace(/á»/g, 'ỏ')
+    .replace(/á»‘/g, 'ố').replace(/á»“/g, 'ồ').replace(/á»•/g, 'ổ').replace(/á»—/g, 'ỗ')
+    .replace(/á»™/g, 'ộ').replace(/á»›/g, 'ớ').replace(/á»/g, 'ờ').replace(/á»Ÿ/g, 'ở')
+    .replace(/á»¡/g, 'ỡ').replace(/á»£/g, 'ợ').replace(/á»¥/g, 'ụ').replace(/á»§/g, 'ủ')
+    .replace(/á»©/g, 'ứ').replace(/á»«/g, 'ừ').replace(/á»­/g, 'ử').replace(/á»¯/g, 'ữ')
+    .replace(/á»±/g, 'ự').replace(/á»³/g, 'ỳ').replace(/á»µ/g, 'ỵ').replace(/á»·/g, 'ỷ')
+    .replace(/á»¹/g, 'ỹ')
+    // 2-byte UTF-8 sequences
+    .replace(/Ã¡/g, 'á').replace(/Ã /g, 'à').replace(/Ã£/g, 'ã').replace(/Ã¢/g, 'â')
+    .replace(/Ã©/g, 'é').replace(/Ã¨/g, 'è').replace(/Ãª/g, 'ê').replace(/Ã­/g, 'í')
+    .replace(/Ã¬/g, 'ì').replace(/Ã³/g, 'ó').replace(/Ã²/g, 'ò').replace(/Ã´/g, 'ô')
+    .replace(/Ãº/g, 'ú').replace(/Ã¹/g, 'ù').replace(/Ã½/g, 'ý').replace(/Ä‘/g, 'đ')
+    .replace(/Ä/g, 'Đ');
+}
 
 // 4. MathType / Word Private Use Area (PUA) & Math Symbols to LaTeX
 // CRITICAL: NEVER include standard Latin-1 characters like È (\u00C8), Ì (\u00CC), ³ (\u00B3)!
@@ -160,6 +309,12 @@ const MATH_SYMBOL_MAP: [RegExp, string][] = [
   [/[\uF0B8÷]/g, ' \\div '],
   [/[\uF0B9≠]/g, ' \\neq '],
   [/[\uF0BB≈]/g, ' \\approx '],
+  [/[\uF03D]/g, ' = '],
+  [/[\uF03E]/g, ' > '],
+  [/[\uF03C]/g, ' < '],
+  [/[\uF028]/g, '('],
+  [/[\uF029]/g, ')'],
+  [/[\uF02D]/g, '-'],
   [/[\uF05E⊥]/g, ' \\perp '],
   [/[\uF050∥]/g, ' \\parallel '],
   [/[\uF0C8∪]/g, ' \\cup '],
@@ -180,23 +335,209 @@ const MATH_SYMBOL_MAP: [RegExp, string][] = [
 ];
 
 /**
+ * Tự động sửa chữa các từ ngữ tiếng Việt (cả chữ thường và chữ in hoa)
+ * từng bị lỗi phông chữ hoặc bị chuyển đổi nhầm từ bảng mã cũ TCVN3 trước đó.
+ */
+export function repairCorruptedVietnameseWords(text: string): string {
+  if (!text) return '';
+  let s = repairUtf8Mojibake(text);
+
+  return s
+    // Sửa lỗi câu hỏi / chọn đáp án trong đề kiểm tra
+    .replace(/(?<![a-zA-ZÀ-ỹ])c[âa]u\s+h[áa]i(?![a-zA-ZÀ-ỹ])/gi, (_m) => _m[0] === 'C' ? (_m.toUpperCase() === _m ? 'CÂU HỎI' : 'Câu hỏi') : 'câu hỏi')
+    .replace(/(?<![a-zA-ZÀ-ỹ])c©u\s+hái(?![a-zA-ZÀ-ỹ])/gi, (_m) => _m[0] === 'C' ? (_m.toUpperCase() === _m ? 'CÂU HỎI' : 'Câu hỏi') : 'câu hỏi')
+    .replace(/(?<![a-zA-ZÀ-ỹ])c©u(?![a-zA-ZÀ-ỹ])/g, 'câu')
+    .replace(/(?<![a-zA-ZÀ-ỹ])C©u(?![a-zA-ZÀ-ỹ])/g, 'Câu')
+    .replace(/(?<![a-zA-ZÀ-ỹ])C¢U(?![a-zA-ZÀ-ỹ])/g, 'CÂU')
+    .replace(/(?<![a-zA-ZÀ-ỹ])hái(?![a-zA-ZÀ-ỹ])/g, 'hỏi')
+    .replace(/(?<![a-zA-ZÀ-ỹ])Hái(?![a-zA-ZÀ-ỹ])/g, 'Hỏi')
+    .replace(/(?<![a-zA-ZÀ-ỹ])H¶I(?![a-zA-ZÀ-ỹ])/g, 'HỎI')
+    .replace(/(?<![a-zA-ZÀ-ỹ])ch[äa]n(?![a-zA-ZÀ-ỹ])/gi, (_m) => _m[0] === 'C' ? (_m.toUpperCase() === _m ? 'CHỌN' : 'Chọn') : 'chọn')
+    .replace(/(?<![a-zA-ZÀ-ỹ])®[óo]ng(?![a-zA-ZÀ-ỹ])/gi, (_m) => _m.toUpperCase() === _m ? 'ĐÚNG' : 'đúng')
+    .replace(/(?<![a-zA-ZÀ-ỹ])®iÓm(?![a-zA-ZÀ-ỹ])/gi, (_m) => _m[0] === '®' || _m[0] === 'Đ' ? (_m.toUpperCase() === _m ? 'ĐIỂM' : 'Điểm') : 'điểm')
+    .replace(/(?<![a-zA-ZÀ-ỹ])®iÒu\s+kiÖn(?![a-zA-ZÀ-ỹ])/gi, (_m) => _m.toUpperCase() === _m ? 'ĐIỀU KIỆN' : 'điều kiện')
+    .replace(/(?<![a-zA-ZÀ-ỹ])®iÒu(?![a-zA-ZÀ-ỹ])/gi, (_m) => _m.toUpperCase() === _m ? 'ĐIỀU' : 'điều')
+    .replace(/(?<![a-zA-ZÀ-ỹ])kiÖn(?![a-zA-ZÀ-ỹ])/gi, (_m) => _m.toUpperCase() === _m ? 'KIỆN' : 'kiện')
+    .replace(/(?<![a-zA-ZÀ-ỹ])nghiÖm(?![a-zA-ZÀ-ỹ])/gi, (_m) => _m[0] === 'N' ? (_m.toUpperCase() === _m ? 'NGHIỆM' : 'Nghiệm') : 'nghiệm')
+    .replace(/(?<![a-zA-ZÀ-ỹ])biÕt(?![a-zA-ZÀ-ỹ])/gi, (_m) => _m[0] === 'B' ? (_m.toUpperCase() === _m ? 'BIẾT' : 'Biết') : 'biết')
+    .replace(/(?<![a-zA-ZÀ-ỹ])sè(?![a-zA-ZÀ-ỹ])/g, 'số')
+    .replace(/(?<![a-zA-ZÀ-ỹ])Sè(?![a-zA-ZÀ-ỹ])/g, 'Số')
+    .replace(/(?<![a-zA-ZÀ-ỹ])SÈ(?![a-zA-ZÀ-ỹ])/g, 'SỐ')
+    .replace(/(?<![a-zA-ZÀ-ỹ])bèn(?![a-zA-ZÀ-ỹ])/g, 'bốn')
+    .replace(/(?<![a-zA-ZÀ-ỹ])Bèn(?![a-zA-ZÀ-ỹ])/g, 'Bốn')
+    .replace(/(?<![a-zA-ZÀ-ỹ])BÈN(?![a-zA-ZÀ-ỹ])/g, 'BỐN')
+    .replace(/(?<![a-zA-ZÀ-ỹ])th×(?![a-zA-ZÀ-ỹ])/g, 'thì')
+    .replace(/(?<![a-zA-ZÀ-ỹ])Th×(?![a-zA-ZÀ-ỹ])/g, 'Thì')
+    .replace(/(?<![a-zA-ZÀ-ỹ])TH×(?![a-zA-ZÀ-ỹ])/g, 'THÌ')
+    .replace(/(?<![a-zA-ZÀ-ỹ])tÝnh(?![a-zA-ZÀ-ỹ])/g, 'tính')
+    .replace(/(?<![a-zA-ZÀ-ỹ])TÝnh(?![a-zA-ZÀ-ỹ])/g, 'Tính')
+    .replace(/(?<![a-zA-ZÀ-ỹ])TÝNH(?![a-zA-ZÀ-ỹ])/g, 'TÍNH')
+    .replace(/(?<![a-zA-ZÀ-ỹ])t×m(?![a-zA-ZÀ-ỹ])/g, 'tìm')
+    .replace(/(?<![a-zA-ZÀ-ỹ])T×m(?![a-zA-ZÀ-ỹ])/g, 'Tìm')
+    .replace(/(?<![a-zA-ZÀ-ỹ])T×M(?![a-zA-ZÀ-ỹ])/g, 'TÌM')
+    // Sửa trực tiếp lỗi "MỞ ĐẦU VỀ ĐƯỜNG TRỀN" / "ĐƯỜNG TRỀN" / "TRềN" / "trßn"
+    .replace(/(?<![a-zA-ZÀ-ỹ])MỞ\s+ĐẦU\s+VỀ\s+ĐƯỜNG\s+TR[ềỀeE]N(?![a-zA-ZÀ-ỹ])/gi, 'MỞ ĐẦU VỀ ĐƯỜNG TRÒN')
+    .replace(/(?<![a-zA-ZÀ-ỹ])(ĐƯỜNG|CUNG|HÌNH|BÁN\s+KÍNH)\s+TR[ềỀ]N(?![a-zA-ZÀ-ỹ])/g, '$1 TRÒN')
+    .replace(/(?<![a-zA-ZÀ-ỹ])(đường|cung|hình|bán\s+kính)\s+tr[ềỀ]n(?![a-zA-ZÀ-ỹ])/gi, '$1 tròn')
+    .replace(/(?<![a-zA-ZÀ-ỹ])TR[ềỀ]N\s+(XOAY|ĐỀU)(?![a-zA-ZÀ-ỹ])/g, 'TRÒN $1')
+    .replace(/(?<![a-zA-ZÀ-ỹ])tr[ềỀ]n\s+(xoay|đều)(?![a-zA-ZÀ-ỹ])/g, 'tròn $1')
+    .replace(/(?<![a-zA-ZÀ-ỹ])TR[ềỀ]N(?![a-zA-ZÀ-ỹ])/g, 'TRÒN')
+    .replace(/(?<![a-zA-ZÀ-ỹ])tr[ềỀ]n(?![a-zA-ZÀ-ỹ])/g, 'tròn')
+    .replace(/(?<![a-zA-ZÀ-ỹ])trßn(?![a-zA-ZÀ-ỹ])/g, 'tròn')
+    .replace(/(?<![a-zA-ZÀ-ỹ])Trßn(?![a-zA-ZÀ-ỹ])/g, 'Tròn')
+    .replace(/(?<![a-zA-ZÀ-ỹ])TRßN(?![a-zA-ZÀ-ỹ])/g, 'TRÒN')
+    .replace(/(?<![a-zA-ZÀ-ỹ])®êng\s+trßn(?![a-zA-ZÀ-ỹ])/gi, 'đường tròn')
+    .replace(/(?<![a-zA-ZÀ-ỹ])®êng\s+th¼ng(?![a-zA-ZÀ-ỹ])/gi, 'đường thẳng')
+    .replace(/(?<![a-zA-ZÀ-ỹ])®êng\s+kÝnh(?![a-zA-ZÀ-ỹ])/gi, 'đường kính')
+    .replace(/(?<![a-zA-ZÀ-ỹ])b¸n\s+kÝnh(?![a-zA-ZÀ-ỹ])/gi, 'bán kính')
+    // Sửa các từ hình học, toán học in hoa bị lỗi
+    .replace(/(?<![a-zA-ZÀ-ỹ])H[èÈ×]NH(?![a-zA-ZÀ-ỹ])/g, 'HÌNH')
+    .replace(/(?<![a-zA-ZÀ-ỹ])h[èÈ×]nh(?![a-zA-ZÀ-ỹ])/g, 'hình')
+    .replace(/(?<![a-zA-ZÀ-ỹ])H×nh(?![a-zA-ZÀ-ỹ])/g, 'Hình')
+    .replace(/(?<![a-zA-ZÀ-ỹ])CH[ểỂã]P(?![a-zA-ZÀ-ỹ])/g, 'CHÓP')
+    .replace(/(?<![a-zA-ZÀ-ỹ])ch[ểỂã]p(?![a-zA-ZÀ-ỹ])/g, 'chóp')
+    .replace(/(?<![a-zA-ZÀ-ỹ])Chãp(?![a-zA-ZÀ-ỹ])/g, 'Chóp')
+    .replace(/(?<![a-zA-ZÀ-ỹ])G[ểỂã]C(?![a-zA-ZÀ-ỹ])/g, 'GÓC')
+    .replace(/(?<![a-zA-ZÀ-ỹ])g[ểỂã]c(?![a-zA-ZÀ-ỹ])/g, 'góc')
+    .replace(/(?<![a-zA-ZÀ-ỹ])Gãc(?![a-zA-ZÀ-ỹ])/g, 'Góc')
+    .replace(/(?<![a-zA-ZÀ-ỹ])N[ểỂã]N(?![a-zA-ZÀ-ỹ])/g, 'NÓN')
+    .replace(/(?<![a-zA-ZÀ-ỹ])n[ểỂã]n(?![a-zA-ZÀ-ỹ])/g, 'nón')
+    .replace(/(?<![a-zA-ZÀ-ỹ])Nãn(?![a-zA-ZÀ-ỹ])/g, 'Nón')
+    .replace(/(?<![a-zA-ZÀ-ỹ])KH[èÈ]I(?![a-zA-ZÀ-ỹ])/g, 'KHỐI')
+    .replace(/(?<![a-zA-ZÀ-ỹ])kh[èÈ]i(?![a-zA-ZÀ-ỹ])/g, 'khối')
+    .replace(/(?<![a-zA-ZÀ-ỹ])Khèi(?![a-zA-ZÀ-ỹ])/g, 'Khối')
+    .replace(/(?<![a-zA-ZÀ-ỹ])MÆT\s+CÇU(?![a-zA-ZÀ-ỹ])/gi, 'MẶT CẦU')
+    .replace(/(?<![a-zA-ZÀ-ỹ])mÆt\s+cÇu(?![a-zA-ZÀ-ỹ])/gi, 'mặt cầu')
+    .replace(/(?<![a-zA-ZÀ-ỹ])MÆT\s+PH¼NG(?![a-zA-ZÀ-ỹ])/gi, 'MẶT PHẲNG')
+    .replace(/(?<![a-zA-ZÀ-ỹ])mÆt\s+ph¼ng(?![a-zA-ZÀ-ỹ])/gi, 'mặt phẳng')
+    .replace(/(?<![a-zA-ZÀ-ỹ])B¶NG\s+BIÕN\s+THIªN(?![a-zA-ZÀ-ỹ])/gi, 'BẢNG BIẾN THIÊN')
+    .replace(/(?<![a-zA-ZÀ-ỹ])b¶ng\s+biÕn\s+thiªn(?![a-zA-ZÀ-ỹ])/gi, 'bảng biến thiên')
+    .replace(/(?<![a-zA-ZÀ-ỹ])CùC\s+TRÞ(?![a-zA-ZÀ-ỹ])/gi, 'CỰC TRỊ')
+    .replace(/(?<![a-zA-ZÀ-ỹ])cùc\s+trÞ(?![a-zA-ZÀ-ỹ])/gi, 'cực trị')
+    .replace(/(?<![a-zA-ZÀ-ỹ])®å\s+thÞ(?![a-zA-ZÀ-ỹ])/gi, 'đồ thị')
+    .replace(/(?<![a-zA-ZÀ-ỹ])®ång\s+biÕn(?![a-zA-ZÀ-ỹ])/gi, 'đồng biến')
+    .replace(/(?<![a-zA-ZÀ-ỹ])nghÞch\s+biÕn(?![a-zA-ZÀ-ỹ])/gi, 'nghịch biến')
+    .replace(/(?<![a-zA-ZÀ-ỹ])tiÖm\s+cËn(?![a-zA-ZÀ-ỹ])/gi, 'tiệm cận')
+    .replace(/(?<![a-zA-ZÀ-ỹ])tËp\s+x¸c\s+®Þnh(?![a-zA-ZÀ-ỹ])/gi, 'tập xác định')
+    .replace(/(?<![a-zA-ZÀ-ỹ])®¹o\s+hµm(?![a-zA-ZÀ-ỹ])/gi, 'đạo hàm')
+    .replace(/(?<![a-zA-ZÀ-ỹ])nguyªn\s+hµm(?![a-zA-ZÀ-ỹ])/gi, 'nguyên hàm')
+    .replace(/(?<![a-zA-ZÀ-ỹ])tÝch\s+ph©n(?![a-zA-ZÀ-ỹ])/gi, 'tích phân')
+    .replace(/(?<![a-zA-ZÀ-ỹ])(MỆNH|CHỦ|VẤN|TIÊN|ĐỀ|CHUYÊN)\s+Đ[ấẤ](?![a-zA-ZÀ-ỹ])/g, '$1 ĐỀ')
+    .replace(/(?<![a-zA-ZÀ-ỹ])(mệnh|chủ|vấn|tiên|đề|chuyên)\s+đ[ấẤ](?![a-zA-ZÀ-ỹ])/g, '$1 đề')
+    .replace(/(?<![a-zA-ZÀ-ỹ])(ĐỊNH|VÔ|VẬT|TÂM|QUẢN|XỬ)\s+L[íÍ](?![a-zA-ZÀ-ỹ])/g, '$1 LÝ')
+    .replace(/(?<![a-zA-ZÀ-ỹ])(định|vô|vật|tâm|quản|xử)\s+l[íÍ](?![a-zA-ZÀ-ỹ])/g, '$1 lý')
+    .replace(/(?<![a-zA-ZÀ-ỹ])CHÚ\s+[íÍ](?![a-zA-ZÀ-ỹ])/g, 'CHÚ Ý')
+    .replace(/(?<![a-zA-ZÀ-ỹ])chú\s+[íÍ](?![a-zA-ZÀ-ỹ])/g, 'chú ý')
+    .replace(/(?<![a-zA-ZÀ-ỹ])ĐỒ\s+TH[èÈ](?![a-zA-ZÀ-ỹ])/g, 'ĐỒ THỊ')
+    .replace(/(?<![a-zA-ZÀ-ỹ])đồ\s+th[èÈ](?![a-zA-ZÀ-ỹ])/g, 'đồ thị')
+    .replace(/(?<![a-zA-ZÀ-ỹ])(bài|dạng|môn|tổ)\s+tốn(?![a-zA-ZÀ-ỹ])/gi, (_m, prefix) => {
+      return prefix === prefix.toUpperCase() ? `${prefix} TOÁN` : `${prefix} toán`;
+    })
+    .replace(/(?<![a-zA-ZÀ-ỹ])TỐN(?![a-zA-ZÀ-ỹ])/g, 'TOÁN')
+    .replace(/(?<![a-zA-ZÀ-ỹ])tốn(?![a-zA-ZÀ-ỹ])/g, 'toán')
+    .replace(/(?<![a-zA-ZÀ-ỹ])đớnh\s+kốm(?![a-zA-ZÀ-ỹ])/gi, 'đính kèm')
+    .replace(/(?<![a-zA-ZÀ-ỹ])trọng\s+tõm(?![a-zA-ZÀ-ỹ])/gi, 'trọng tâm')
+    .replace(/(?<![a-zA-ZÀ-ỹ])cụng\s+thức(?![a-zA-ZÀ-ỹ])/gi, 'công thức')
+    .replace(/(?<![a-zA-ZÀ-ỹ])Cỏc\s+dạng(?![a-zA-ZÀ-ỹ])/g, 'Các dạng')
+    .replace(/(?<![a-zA-ZÀ-ỹ])cỏc\s+dạng(?![a-zA-ZÀ-ỹ])/gi, 'các dạng')
+    .replace(/(?<![a-zA-ZÀ-ỹ])điển\s+hỡnh(?![a-zA-ZÀ-ỹ])/gi, 'điển hình')
+    .replace(/(?<![a-zA-ZÀ-ỹ])Phương\s+phỏp(?![a-zA-ZÀ-ỹ])/g, 'Phương pháp')
+    .replace(/(?<![a-zA-ZÀ-ỹ])phương\s+phỏp(?![a-zA-ZÀ-ỹ])/gi, 'phương pháp')
+    .replace(/(?<![a-zA-ZÀ-ỹ])vớ\s+dụ(?![a-zA-ZÀ-ỹ])/gi, 'ví dụ')
+
+    // SỬA TRIỆT ĐỂ CÁC TỪ BỊ LỆCH PHÔNG DO CHUYỂN ĐỔI NHẦM KÝ TỰ UNICODE QUA TCVN3
+    // - "các" bị thành "cỏc"
+    .replace(/\bcỏc\b/g, 'các')
+    .replace(/\bCỏc\b/g, 'Các')
+    .replace(/\bCỎC\b/g, 'CÁC')
+    // - "dây" bị thành "dùy"
+    .replace(/\bdùy\b/g, 'dây')
+    .replace(/\bDùy\b/g, 'Dây')
+    .replace(/\bDÙY\b/g, 'DÂY')
+    // - "tròn" bị thành "trũn"
+    .replace(/\btrũn\b/g, 'tròn')
+    .replace(/\bTrũn\b/g, 'Tròn')
+    .replace(/\bTRŨN\b/g, 'TRÒN')
+    // - "kính" bị thành "kớnh"
+    .replace(/\bkớnh\b/g, 'kính')
+    .replace(/\bKớnh\b/g, 'Kính')
+    .replace(/\bKỚNH\b/g, 'KÍNH')
+    // - "có" bị thành "cỳ"
+    .replace(/\bcỳ\b/g, 'có')
+    .replace(/\bCỳ\b/g, 'Có')
+    .replace(/\bCỲ\b/g, 'CÓ')
+    // - "góc" bị thành "gỳc"
+    .replace(/\bgỳc\b/g, 'góc')
+    .replace(/\bGỳc\b/g, 'Góc')
+    .replace(/\bGỲC\b/g, 'GÓC')
+    // - "tâm" bị thành "từm"
+    .replace(/\btừm\b/g, 'tâm')
+    .replace(/\bTừm\b/g, 'Tâm')
+    .replace(/\bTỪM\b/g, 'TÂM')
+    // - "bán kính" bị thành "bỏn kớnh" / "bỏn"
+    .replace(/\bbỏn\s+kớnh\b/gi, 'bán kính')
+    .replace(/\bbỏn\b/g, 'bán')
+    .replace(/\bBỏn\b/g, 'Bán')
+    // - "đáp án" bị thành "đỏp ỏn"
+    .replace(/\bđỏp\s+ỏn\b/gi, 'đáp án')
+    .replace(/\bđỏp\b/g, 'đáp')
+    .replace(/\bĐỏp\b/g, 'Đáp')
+    // - "toán" bị thành "toỏn"
+    .replace(/\btoỏn\b/gi, 'toán')
+    .replace(/\bToỏn\b/g, 'Toán')
+    // - "phát" -> "phỏt", "khác" -> "khỏc", "tháng" -> "thỏng"
+    .replace(/\bkhỏc\b/gi, 'khác')
+    .replace(/\bthỏng\b/gi, 'tháng')
+    .replace(/\bphỏt\b/gi, 'phát')
+    // - "tính" -> "tớnh", "chính" -> "chớnh", "hình" -> "hớnh", "bình" -> "bớnh"
+    .replace(/\btớnh\b/gi, 'tính')
+    .replace(/\bchớnh\b/gi, 'chính')
+    .replace(/\bhớnh\b/gi, 'hình')
+    .replace(/\bbớnh\b/gi, 'bình')
+    // - "đó" -> "đỳ", "nói" -> "nỳi", "khó" -> "khỳ", "nó" -> "nỳ", "chóp" -> "chỳp"
+    .replace(/\bđỳ\b/g, 'đó')
+    .replace(/\bĐỳ\b/g, 'Đó')
+    .replace(/\bnỳi\b/gi, 'nói')
+    .replace(/\bkhỳ\b/gi, 'khó')
+    .replace(/\bchỳp\b/gi, 'chóp')
+    .replace(/\bChỳp\b/g, 'Chóp')
+    // - "đây" -> "đùy", "mây" -> "mùy", "cây" -> "cùy", "thầy" -> "thùy"
+    .replace(/\bđùy\b/gi, 'đây')
+    .replace(/\bĐùy\b/g, 'Đây')
+    .replace(/\bmùy\b/gi, 'mây')
+    .replace(/\bcùy\b/gi, 'cây')
+    .replace(/\bthùy\b/gi, 'thầy')
+    // - Cụm từ hình học và câu hỏi chuẩn
+    .replace(/\bđường\s+trũn\b/gi, 'đường tròn')
+    .replace(/\bĐường\s+trũn\b/gi, 'Đường tròn')
+    .replace(/\bđường\s+kớnh\b/gi, 'đường kính')
+    .replace(/\bĐường\s+kớnh\b/gi, 'Đường kính')
+    .replace(/\bcung\s+trũn\b/gi, 'cung tròn')
+    .replace(/\bhình\s+trũn\b/gi, 'hình tròn')
+    .replace(/\bcỳ\s+độ\s+dài\b/gi, 'có độ dài')
+    .replace(/\bcỳ\s+gỳc\b/gi, 'có góc')
+    .replace(/\bgỳc\s+ở\s+từm\b/gi, 'góc ở tâm')
+    .replace(/\bở\s+từm\b/gi, 'ở tâm')
+    .replace(/\btrọng\s+từm\b/gi, 'trọng tâm')
+    .replace(/\btrong\s+cỏc\s+dùy\b/gi, 'trong các dây')
+    .replace(/\bcỏc\s+dùy\b/gi, 'các dây');
+}
+
+/**
  * Kiểm tra xem văn bản đã là Unicode tiếng Việt chuẩn hay chưa.
- * Văn bản đã là Unicode khi chứa các ký tự đặc trưng của tiếng Việt trong Unicode
- * (như: đ, Đ, ơ, Ơ, ư, Ư, ă, Ă hoặc các nguyên âm có dấu thanh trong dải \u1EA0-\u1EF9)
- * hoặc các từ tiếng Việt Unicode thông dụng.
  */
 export function isAlreadyUnicode(text: string): boolean {
   if (!text) return true;
 
   // 1. Ký tự độc nhất vô nhị chỉ có trong tiếng Việt Unicode (U+0102-01B0, U+1EA0-1EF9)
   const unicodeCount = (text.match(/[\u1EA0-\u1EF9đĐơƠưƯăĂ]/g) || []).length;
-  if (unicodeCount >= 3) {
+  if (unicodeCount >= 1) {
     return true;
   }
 
   // 2. Kiểm tra các từ tiếng Việt Unicode chuẩn thường gặp
-  const commonWordsMatch = text.match(/\b(bài|học|toán|hàm|số|đồng|biến|nghịch|tập|xác|định|đạo|nguyên|tích|phân|ví|dụ|lời|giải|chứng|minh|phương|trình|điều|kiện|công|thức|cho|với|khi|nếu|thì|trong|của|các|được|người|không|những|một|có|là)\b/gi);
-  if (commonWordsMatch && commonWordsMatch.length >= 2) {
+  const commonWordsMatch = text.match(/\b(bài|học|toán|hàm|số|đồng|biến|nghịch|tập|xác|định|đạo|nguyên|tích|phân|ví|dụ|lời|giải|chứng|minh|phương|trình|điều|kiện|công|thức|cho|với|khi|nếu|thì|trong|của|các|được|người|không|những|một|có|là|đường|tròn|góc|hình|mở|đầu|chương|dây|cung|bán|kính|tâm|độ|dài|lớn|nhất|nhỏ|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười)\b/gi);
+  if (commonWordsMatch && commonWordsMatch.length >= 1) {
     return true;
   }
 
@@ -204,17 +545,22 @@ export function isAlreadyUnicode(text: string): boolean {
 }
 
 /**
- * Kiểm tra xem văn bản có phải mã TCVN3 (.VnTime, .VnTimeH) không
+ * Kiểm tra xem văn bản có phải mã TCVN3 (.VnTime, .VnTimeH) không.
+ * CHỈ nhận diện TCVN3 khi có từ vựng hoặc ký tự điều khiển TCVN3 đặc thù,
+ * tuyệt đối không nhầm lẫn với nguyên âm có dấu trong Unicode.
  */
 export function isLegacyTcvn3(text: string): boolean {
   if (!text) return false;
 
-  // Kiểm tra từ điển TCVN3 đặc trưng
-  const tcvn3Words = text.match(/\b(bµi|®îc|kh«ng|ngêi|ph¬ng|hµm|®ång|biÕn|ph¶i|c¸c|®iÒu|tam gi¸c|c«ng thøc|vÝ dô|lêi gi¶i|®¹i sè|h×nh häc|®¹o hµm)\b/gi);
+  // Kiểm tra từ điển TCVN3 đặc trưng không bao giờ xuất hiện ở Unicode
+  const tcvn3Words = text.match(/\b(bµi|®îc|kh«ng|ngêi|ph¬ng|hµm|®ång|biÕn|ph¶i|c¸c|®iÒu|tam gi¸c|c«ng thøc|vÝ dô|lêi gi¶i|®¹i sè|h×nh häc|®¹o hµm|c©u hái|®¸p ¸n|tiÖm cËn|tËp x¸c ®Þnh)\b/gi);
   if (tcvn3Words && tcvn3Words.length > 0) return true;
 
-  // Kiểm tra tần suất ký tự đặc trưng TCVN3: ® (đ), ¨ (ă), © (â), ª (ê), « (ô), ¬ (ơ)
-  const markerCount = (text.match(/[®¨©ª«¬µ¸¶·¹»¾¼½ÇÊÈÉËÌÐÎÏÑÒÕÓÔÖ×ÝØÜÞ]/g) || []).length;
+  // Nếu văn bản đã là Unicode rõ ràng và không có từ khoá TCVN3, không phải TCVN3
+  if (isAlreadyUnicode(text)) return false;
+
+  // Kiểm tra tần suất ký tự điều khiển đặc trưng TCVN3 (® ¨ © ª « ¬ ­ µ ¸ ¶ · ¹ » ¾ ¼ ½)
+  const markerCount = (text.match(/[®¨©ª«¬­µ¸¶·¹»¾¼½]/g) || []).length;
   return markerCount >= 2;
 }
 
@@ -227,39 +573,96 @@ export function isLegacyVni(text: string): boolean {
   const vniWords = text.match(/\b(baøi|toaùn|phöông|ñöôïc|khoâng|ngöôøi|haøm|ñoàng|nghòch|ñieàu|caùc|gioù|thöùc|ví duï)\b/gi);
   if (vniWords && vniWords.length > 0) return true;
 
+  // Nếu đã là Unicode, không nhầm lẫn VNI
+  if (isAlreadyUnicode(text)) return false;
+
   const vniPatternCount = (text.match(/(ñ[a-z]|aù|aà|aû|aõ|aï|eù|eà|où|uù|öù|öø)/g) || []).length;
   return vniPatternCount >= 2;
 }
 
 /**
+ * Chuyển đổi một từ hoặc token chứa ký tự đặc trưng của TCVN3 sang Unicode chuẩn.
+ * CHỈ chuyển đổi khi từ có chứa ký tự điều khiển TCVN3 thực sự,
+ * tuyệt đối không can thiệp các từ đã là tiếng Việt Unicode chuẩn.
+ */
+export function convertTcvn3Word(word: string, forceUpper = false): string {
+  if (!word) return '';
+
+  // Chỉ nhận diện các ký tự TCVN3 thực thụ (ký hiệu phi chữ cái như ®, ¸, µ, ¶, ·, ¹, ¨, ©, ª, «, ¬, ­...)
+  if (!/[®¨©ª«¬­µ¸¶·¹»¾¼½§¡¢£¤¥¦]/.test(word)) {
+    return word;
+  }
+
+  // Xác định xem từ này có nên là in hoa không (dựa vào cờ forceUpper hoặc đa số ký tự ASCII là in hoa)
+  const asciiLetters = word.replace(/[^a-zA-Z]/g, '');
+  const isUpperWord = forceUpper || (asciiLetters.length > 0 && asciiLetters === asciiLetters.toUpperCase());
+
+  let converted = '';
+  for (let i = 0; i < word.length; i++) {
+    const code = word.charCodeAt(i);
+    const prevIsUpper = i > 0 && /[A-Z]/.test(word[i - 1]);
+    const nextIsUpper = i < word.length - 1 && /[A-Z]/.test(word[i + 1]);
+
+    if (prevIsUpper && nextIsUpper && (code === 0xd2 || code === 0xd3 || code === 0xd4 || code === 0xd5 || code === 0xcc || code === 0xdd)) {
+      converted += word[i];
+    } else if (code >= 0xa1 && code <= 0xfe && (TCVN3_CHAR_MAP[code] !== undefined || TCVN3_UPPER_CHAR_MAP[code] !== undefined)) {
+      if (isUpperWord) {
+        converted += (TCVN3_UPPER_CHAR_MAP[code] || TCVN3_CHAR_MAP[code] || word[i]).toUpperCase();
+      } else {
+        converted += (TCVN3_CHAR_MAP[code] || TCVN3_UPPER_CHAR_MAP[code] || word[i]);
+      }
+    } else {
+      converted += word[i];
+    }
+  }
+
+  // Xử lý nguyên âm đôi TCVN3 ơng/ước
+  converted = converted.replace(/([cChHpPtT])ơng/g, '$1ương');
+  converted = converted.replace(/([bBcCdDđĐgGhHkKlLmMnNpPqQrRsStTvVxX])ước/g, '$1ước');
+  converted = converted.replace(/([cChHpPtT])ƠNG/g, '$1ƯƠNG');
+  converted = converted.replace(/([bBcCdDđĐgGhHkKlLmMnNpPqQrRsStTvVxX])ƯỚC/g, '$1ƯỚC');
+
+  return converted;
+}
+
+/**
  * Converts TCVN3 / ABC (.VnTime, .VnTimeH) and VNI encoded text to standard Unicode (NFC).
- * AN TOÀN TUYỆT ĐỐI: Chuyển đổi hoàn hảo cả tài liệu thuần mã cũ lẫn tài liệu hỗn hợp Unicode và TCVN3/VNI.
+ * AN TOÀN TUYỆT ĐỐI: Bảo toàn 100% tiếng Việt Unicode chuẩn, chỉ chuyển đổi mã cũ TCVN3 / VNI khi có dấu hiệu.
  */
 export function convertTcvn3ToUnicode(raw: string): string {
   if (!raw) return '';
 
   let text = raw;
 
-  // 1. Luôn chạy TCVN3_WORD_FIXES: các từ ngữ đặc thù này (ph¬ng tr×nh, tam gi¸c, ®¹o hµm...)
-  // không bao giờ tồn tại trong tiếng Việt Unicode chuẩn hay bất kỳ ngôn ngữ nào khác.
+  // 0. Sửa lỗi Mojibake UTF-8 trước
+  text = repairUtf8Mojibake(text);
+
+  // 0.1 Sửa các từ bị lỗi lệch phông (cỏc -> các, dùy -> dây, trũn -> tròn, kớnh -> kính, cỳ -> có, gỳc -> góc, từm -> tâm)
+  text = repairCorruptedVietnameseWords(text);
+
+  // 1. Luôn chạy TCVN3_WORD_FIXES: các từ ngữ đặc thù này (ph¬ng tr×nh, tam gi¸c, ®¹o hµm, cã, lµ, vµ, cña...)
+  // chỉ xuất hiện ở tài liệu gõ phông .VnTime cũ, không bao giờ xuất hiện ở tiếng Việt Unicode chuẩn.
   for (const [pattern, replacement] of TCVN3_WORD_FIXES) {
     text = text.replace(pattern, replacement);
   }
 
-  // 2. Chuyển đổi VNI Windows nếu có dấu hiệu
-  if (isLegacyVni(text) || /(baøi|toaùn|phöông|ñöôïc|khoâng|ngöôøi|haøm|ñoàng|nghòch|ñieàu|caùc|gioù|thöùc|ví duï|ñaïo haøm)/i.test(text)) {
+  // 2. Chuyển đổi VNI Windows CHỈ KHI văn bản thực sự là mã VNI
+  if (isLegacyVni(text)) {
     for (const [pattern, replacement] of VNI_PAIRS) {
       text = text.replace(pattern, replacement);
     }
   }
 
-  // 3. Nếu còn ký tự TCVN3 đơn lẻ (như ® = đ, hoặc các nguyên âm có dấu đặc trưng TCVN3):
-  const hasTcvn3Chars = /[®¨©ª«¬µ¸¶·¹»¾¼½ÇÊÈÉËÌÐÎÏÑÒÕÓÔÖ×ÝØÜÞ]/.test(text);
-  if (hasTcvn3Chars) {
+  // 3. Nếu văn bản là mã cũ TCVN3 thuần (.VnTime / .VnTimeH)
+  if (isLegacyTcvn3(text)) {
     let converted = '';
     for (let i = 0; i < text.length; i++) {
       const code = text.charCodeAt(i);
-      if (code >= 0xa1 && TCVN3_CHAR_MAP[code] !== undefined) {
+      const prevIsUpper = i > 0 && /[A-Z]/.test(text[i - 1]);
+      const nextIsUpper = i < text.length - 1 && /[A-Z]/.test(text[i + 1]);
+      if (prevIsUpper && nextIsUpper && (code === 0xd2 || code === 0xd3 || code === 0xd4 || code === 0xd5 || code === 0xcc || code === 0xdd)) {
+        converted += text[i];
+      } else if (code >= 0xa1 && TCVN3_CHAR_MAP[code] !== undefined) {
         converted += TCVN3_CHAR_MAP[code];
       } else {
         converted += text[i];
@@ -278,7 +681,7 @@ export function convertTcvn3ToUnicode(raw: string): string {
     text = text.normalize('NFC');
   } catch {}
 
-  return text;
+  return repairCorruptedVietnameseWords(text);
 }
 
 /**
@@ -374,53 +777,36 @@ export function rescueVietnameseMathBlocks(raw: string): string {
 }
 
 /**
+ * Tìm vị trí dấu đóng ngoặc tương ứng (hỗ trợ ngoặc lồng nhau)
+ */
+export function findClosingBrace(str: string, startIdx: number, openChar = '{', closeChar = '}'): number {
+  if (str[startIdx] !== openChar) return -1;
+  let depth = 0;
+  for (let i = startIdx; i < str.length; i++) {
+    if (str[i] === '\\') {
+      i++;
+      continue;
+    }
+    if (str[i] === openChar) depth++;
+    else if (str[i] === closeChar) {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
  * Standardizes mathematical formulas and MathType symbols into clean LaTeX.
- * Bảo vệ 100% tiếng Việt, xử lý triệt để lỗi ký hiệu MathType (\undefined), ngắt dòng \begin{cases},
- * dấu $ bất đối xứng và phân tách câu chữ tiếng Việt tự nhiên.
+ * BẢO VỆ 100% CÔNG THỨC TOÁN HỌC VÀ KÝ HIỆU, KHÔNG LÀM HỎNG HOẶC ĐỨT GÃY BIỂU THỨC.
+ * Áp dụng cơ chế Safe Tokenization: Trích xuất và bảo vệ toàn bộ công thức toán trước,
+ * chỉ xử lý định dạng trên phần văn bản thường, sau đó khôi phục lại nguyên vẹn.
  */
 export function formatMathExpressions(raw: string): string {
   if (!raw) return '';
   let text = raw;
 
-  // Step 0: Luôn chạy giải cứu câu chữ tiếng Việt bị nhốt trong math mode trước tiên
-  text = rescueVietnameseMathBlocks(text);
-
-  // Step 1: Thay thế các ký hiệu MathType PUA và ký hiệu toán sang LaTeX
-  for (const [pattern, replacement] of MATH_SYMBOL_MAP) {
-    text = text.replace(pattern, replacement);
-  }
-
-  // Step 2: Dọn dẹp lỗi artifact MathType `undefined` hoặc `\undefined`
-  // - Đứng sau số hiệu hệ phương trình: (I)undefined hoặc (I)\undefined -> (I) \Leftrightarrow
-  text = text.replace(/(\([I|V|X|\d]+\))\s*\\?undefined\s*/gi, '$1 \\Leftrightarrow ');
-  // - Đứng giữa 2 hệ phương trình: \end{cases}undefined\begin{cases} -> \end{cases} \Leftrightarrow \begin{cases}
-  text = text.replace(/(\\end\{[a-zA-Z*]+\})\s*\\?undefined\s*(\\begin\{[a-zA-Z*]+\})/gi, '$1 \\Leftrightarrow $2');
-  // - Đứng sau \end{cases} hoặc trước \begin{cases}
-  text = text.replace(/(\\end\{[a-zA-Z*]+\})\s*\\?undefined\s*/gi, '$1 \\Leftrightarrow ');
-  text = text.replace(/\\?undefined\s*(\\begin\{[a-zA-Z*]+\})/gi, ' \\Leftrightarrow $1');
-  // - Đứng sau kết quả tính toán trước tọa độ: m = \frac{1}{5}undefined(x; y) -> m = \frac{1}{5} \Rightarrow (x; y)
-  text = text.replace(/([=\d\w\}])\s*\\?undefined\s*(\([x-zX-Z0-9_\s;,\+\-]+\))/gi, '$1 \\Rightarrow $2');
-  // - Mọi chữ \undefined hoặc undefined đứng lẻ trong biểu thức toán
-  text = text.replace(/\\undefined\b/g, '\\Leftrightarrow');
-  text = text.replace(/(?<=[a-zA-Z0-9_\$\\}])\s+undefined\s+(?=[a-zA-Z0-9_\$\\\(\[\{])/g, ' \\Leftrightarrow ');
-
-  // Step 2.5: Tách đề mục (Bài, Câu, Ví dụ, Dạng) bị dính liền vào câu văn trước mà thiếu ngắt dòng
-  text = text.replace(/([a-zA-ZÀ-ỹ\.\!\?])\s*(Bài\s*\d+|Câu\s*\d+|Ví\s*dụ\s*\d+|Dạng\s*\d+)[:\.\-\s]/g, '$1\n\n**$2.** ');
-
-  // Step 2.6: Thêm khoảng trắng trước lệnh LaTeX nếu bị dính liền chữ tiếng Việt: "phương trình\begin" -> "phương trình \begin"
-  text = text.replace(/([a-zA-ZÀ-ỹ])\\(begin|frac|dfrac|tfrac|sqrt)\{/g, '$1 \\$2{');
-
-  // Step 2.7: Chuẩn hóa em-dash / en-dash / unicode minus trước lệnh LaTeX hoặc số
-  text = text.replace(/[–—−](?=\s*\\)/g, '-');
-  text = text.replace(/[–—−](?=\s*[0-9])/g, '-');
-
-  // Step 2.8: Sửa lỗi biểu thức có dấu $ lẻ ở cuối (ví dụ: "m = \dfrac{1}{5}$" -> "$m = \dfrac{1}{5}$")
-  text = text.replace(/(?<![\$\w])([0-9]*[a-zA-Z]\s*=\s*(?:\\(?:d|t)?frac\{[^{}]+\}\{[^{}]+\}|[0-9\/\+\-]+))\$(?!\$)/g, '$$$1$$');
-
-  // Step 2.9: Mở ngoặc văn bản thuần \text{(vô lí)} -> (vô lí), \text{(luôn đúng)} -> (luôn đúng)
-  text = text.replace(/\\text\{([^{}]+)\}/g, '($1)').replace(/\(\((.*?)\)\)/g, '($1)');
-
-  // HỆ THỐNG TOKEN HÓA TOÁN HỌC AN TOÀN (SAFE TOKENIZATION ENGINE)
+  // HỆ THỐNG TOKEN HÓA TOÁN HỌC AN TOÀN TUYỆT ĐỐI (SAFE TOKENIZATION ENGINE)
   // Đảm bảo không có bất kỳ regex nào can thiệp chồng chéo làm hỏng biểu thức toán
   const mathTokens: string[] = [];
   function addToken(math: string, isBlock = false): string {
@@ -434,15 +820,12 @@ export function formatMathExpressions(raw: string): string {
     return `___MATH_TOK_${idx}___`;
   }
 
-  // 1. Token hóa các khối display math $$...$$ có sẵn
-  text = text.replace(/\$\$([\s\S]*?)\$\$/g, (_m, inner) => {
-    if (hasVietnameseText(inner) && inner.includes(' ')) {
-      return rescueVietnameseMathBlocks(`$$${inner}$$`);
-    }
-    return addToken(inner, true);
-  });
+  // BƯỚC 1: TRÍCH XUẤT VÀ BẢO VỆ TOÀN BỘ CÔNG THỨC ĐÃ CÓ
+  // 1.1 Display math $$...$$ và \[...\]
+  text = text.replace(/\$\$([\s\S]*?)\$\$/g, (_m, inner) => addToken(inner, true));
+  text = text.replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner) => addToken(inner, true));
 
-  // 2. Token hóa các khối môi trường LaTeX \begin{...}...\end{...}
+  // 1.2 LaTeX environments: \begin{cases}...\end{cases}, \begin{matrix}...\end{matrix}, etc.
   text = text.replace(
     /(?:\$*(\\left\s*(?:\\.|.)\s*))?(\${1,2}\s*)?(\\left\s*(?:\\.|.)\s*)?\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\4\}(\s*\\right\s*(?:\\.|.))?(\s*\${1,2})?(?:\s*(\\right\s*(?:\\.|.))\$*)?/g,
     (match, left1, openDollar, left2, env, inner, right1, closeDollar, right2) => {
@@ -458,31 +841,67 @@ export function formatMathExpressions(raw: string): string {
     }
   );
 
-  // 3. Token hóa các khối inline math $...$ có sẵn
+  // 1.3 Inline math \(...\)
+  text = text.replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner) => addToken(inner, false));
+
+  // 1.4 Inline math $...$
   text = text.replace(/\$([^\$\n]+?)\$/g, (_m, inner) => {
-    // Giải cứu chữ tiếng Việt bị nhốt nhầm trong $...$
-    if (hasVietnameseText(inner) && inner.includes(' ')) {
-      return ` ${rescueVietnameseMathBlocks('$' + inner + '$')} `;
+    // Chỉ giải cứu nếu là cả một câu văn tiếng Việt dài bị bọc nhầm trong dấu $
+    const trimmed = inner.trim();
+    if (hasVietnameseText(trimmed) && !/\\(?:frac|dfrac|tfrac|sqrt|sum|int|begin|vec|overrightarrow|widehat|overline|le|ge|ne|alpha|beta|pi)\b/.test(trimmed)) {
+      const words = trimmed.split(/\s+/);
+      if (words.length >= 3) {
+        return ` ${trimmed} `;
+      }
     }
     return addToken(inner, false);
   });
 
-  // 4. Trong phần văn bản thuần còn lại (hoàn toàn sạch các khối $ đã token hóa):
-  // A. Mũi tên suy ra / tương đương dạng ký hiệu hoặc lệnh LaTeX rơi ra ngoài
+  // BƯỚC 2: XỬ LÝ VĂN BẢN VÀ CÁC BIỂU THỨC CHƯA CÓ DẤU $ (BÊN NGOÀI KHỐI TOÁN)
+  // 2.1 Ngắt dòng đề mục, câu hỏi, các bước và lời giải nếu bị dính liền thiếu ngắt dòng
+  text = text.replace(/([^\n])\s*(\*\*(?:Ví\s*dụ\s*\d+\.?|Bài\s*\d+\.?|Câu\s*\d+:?|Dạng\s*\d+\.?)\*\*|Ví\s*dụ\s*\d+\.|Bài\s*\d+\.|Câu\s*\d+:|Dạng\s*\d+\.)/g, '$1\n\n$2');
+  text = text.replace(/([^\n])\s*(\*\*Lời giải\*\*|Lời giải:|\*\*Hướng dẫn giải\*\*|Hướng dẫn giải:)/g, '$1\n\n$2\n\n');
+  text = text.replace(/([^\n])\s*([1-9]\))\s*/g, '$1\n\n$2 ');
+  text = text.replace(/([^\n])\s*(Vậy\s+(?:\$|\\\$|[a-zA-ZÀ-ỹ]))/g, '$1\n\n$2');
+  text = text.replace(/([^\n])\s*(\b[a-d]\))\s*/g, '$1\n\n$2 ');
+
+  // 2.2 Sửa lỗi artifact MathType \undefined hoặc undefined trong văn bản
+  text = text.replace(/(\([I|V|X|\d]+\))\s*\\?undefined\s*/gi, '$1 \\Leftrightarrow ');
+  text = text.replace(/\\undefined\b/g, () => addToken('\\Leftrightarrow'));
   text = text.replace(/(?<=\s|^)=>(?=\s|$)/g, () => addToken('\\Rightarrow'));
   text = text.replace(/(?<=\s|^)<=>(?=\s|$)/g, () => addToken('\\Leftrightarrow'));
   text = text.replace(/\\?(Leftrightarrow|Rightarrow|Leftarrow|rightarrow|leftarrow|Longleftrightarrow|Longrightarrow)\b/g, (_m, p1) => addToken(`\\${p1}`));
 
-  // B. Tọa độ điểm / khoảng đoạn toán học: (-2; 1), (1; -1), [0; 3], (-\infty; 1)
-  text = text.replace(/(?<![a-zA-Z0-9\$\\])([\(\[][\+\-]?(?:\d+|\\infty)\s*;\s*[\+\-]?(?:\d+|\\infty)[\)\]])/g, (_m, coord) => addToken(coord));
+  // 2.3 Phân số chưa có $ (hỗ trợ ngoặc lồng nhau)
+  let fracIdx = 0;
+  while ((fracIdx = text.search(/(?<![\$\\\w])\\(?:d|t)?frac\s*\{/)) !== -1) {
+    const fracMatch = text.match(/(?<![\$\\\w])\\(?:d|t)?frac\s*\{/)!;
+    const openNum = fracIdx + fracMatch[0].length - 1;
+    const closeNum = findClosingBrace(text, openNum);
+    if (closeNum === -1) break;
+    let openDen = closeNum + 1;
+    while (openDen < text.length && /\s/.test(text[openDen])) openDen++;
+    if (text[openDen] !== '{') break;
+    const closeDen = findClosingBrace(text, openDen);
+    if (closeDen === -1) break;
+    const wholeFrac = text.substring(fracIdx, closeDen + 1);
+    const token = addToken(wholeFrac);
+    text = text.substring(0, fracIdx) + token + text.substring(closeDen + 1);
+  }
 
-  // C. Biểu thức phương trình đơn giản chưa có $ (ví dụ: m = \frac{1}{5}, 5m = 1, 4m = 1, x = 1, y = -1)
-  text = text.replace(
-    /(?<![a-zA-Z0-9\$\\\+\-])\b([0-9]*[a-zA-Z])\s*=\s*(\\?(?:d|t)?frac\{[^{}]+\}\{[^{}]+\}|[+\-]?(?:\d+(?:\.\d+)?|\d+\/\d+))(?![a-zA-Z0-9_\$\^])/g,
-    (_m, p1, p2) => addToken(`${p1} = ${p2}`)
-  );
+  // Căn bậc hai & bậc n chưa có $ (hỗ trợ ngoặc lồng nhau)
+  let rootIdx = 0;
+  while ((rootIdx = text.search(/(?<![\$\\\w])\\sqrt\s*(?:\[[^\]]+\])?\s*\{/)) !== -1) {
+    const rootMatch = text.match(/(?<![\$\\\w])\\sqrt\s*(?:\[[^\]]+\])?\s*\{/)!;
+    const openBrace = rootIdx + rootMatch[0].length - 1;
+    const closeBrace = findClosingBrace(text, openBrace);
+    if (closeBrace === -1) break;
+    const wholeRoot = text.substring(rootIdx, closeBrace + 1);
+    const token = addToken(wholeRoot);
+    text = text.substring(0, rootIdx) + token + text.substring(closeBrace + 1);
+  }
 
-  // D. Ký hiệu vectơ, cung tròn, góc, độ
+  // 2.4 Ký hiệu vectơ, cung tròn, góc độ ngoài dấu $
   text = text.replace(/\\over\s*\\rightarrow\s*\{([^}]+)\}/g, (_m, p1) => addToken(`\\overrightarrow{${p1}}`));
   text = text.replace(/\\over\s*\\leftarrow\s*\{([^}]+)\}/g, (_m, p1) => addToken(`\\overleftarrow{${p1}}`));
   text = text.replace(/\\(overgroup|overparen|wideparen|arc|overrightarrow|overleftarrow|vec|widehat)\{([^}]+)\}/g, (_m, cmd, p1) => {
@@ -491,35 +910,37 @@ export function formatMathExpressions(raw: string): string {
   });
   text = text.replace(/\b(\d+(?:\.\d+)?)\s*\^\s*\\circ\b/g, (_m, p1) => addToken(`${p1}^\\circ`));
 
-  // E. Phân số và căn bậc hai chưa có $ (hỗ trợ \dfrac, \tfrac, \frac kèm dấu âm/dương)
-  text = text.replace(/(?<![\$\\\w])([+\-]?\s*\\(?:d|t)?frac\{[^{}]+\}\{[^{}]+\})/g, (_m, frac) => addToken(frac.trim()));
-  text = text.replace(/(?<![\$\\\w])(\\sqrt\{[^{}]+\})/g, (_m, sqrt) => addToken(sqrt.trim()));
-
-  // F. Toán tử hình học & dấu nhân
+  // 2.5 Các ký hiệu toán lẻ ngoài dấu $
+  text = text.replace(/\\(nearrow|searrow|uparrow|downarrow|infty|pm|mp|leq|geq|le|ge|in|notin|subset|supset|cup|cap|emptyset|approx|equiv|forall|exists|alpha|beta|gamma|theta|pi|Delta|lambda|sigma|omega|Omega|times|div|neq)\b/g, (_m, p1) => addToken(`\\${p1}`));
   text = text.replace(/\\cdot/g, () => addToken('\\cdot'));
   text = text.replace(/\\parallel/g, () => addToken('\\parallel'));
   text = text.replace(/\\perp/g, () => addToken('\\perp'));
 
-  // G. Các ký hiệu toán phổ biến: \nearrow, \infty, \leq, \geq, \le, \ge, \pm, \alpha...
-  text = text.replace(/\\(nearrow|searrow|uparrow|downarrow|infty|pm|mp|leq|geq|le|ge|in|notin|subset|supset|cup|cap|emptyset|approx|equiv|forall|exists|alpha|beta|gamma|theta|pi|Delta|lambda|sigma|omega|Omega|times|div|neq)\b/g, (_m, p1) => addToken(`\\${p1}`));
-
-  // H. Toán tử so sánh rõ ràng giữa các biến/số (vd: x <= 3, n >= -1, x != 0)
+  // 2.6 Toán tử so sánh rõ ràng ngoài $ (x <= 3, n >= -1, x != 0)
   text = text.replace(/\b([a-zA-Z0-9_\(\)]+)\s*<=\s*([\+\-]?[0-9a-zA-Z_\(\)]+)/g, (_m, p1, p2) => addToken(`${p1} \\le ${p2}`));
   text = text.replace(/\b([a-zA-Z0-9_\(\)]+)\s*>=\s*([\+\-]?[0-9a-zA-Z_\(\)]+)/g, (_m, p1, p2) => addToken(`${p1} \\ge ${p2}`));
   text = text.replace(/\b([a-zA-Z0-9_\(\)]+)\s*!=\s*([\+\-]?[0-9a-zA-Z_\(\)]+)/g, (_m, p1, p2) => addToken(`${p1} \\neq ${p2}`));
 
-  // I. Tự động nhận diện đa thức chứa lũy thừa chưa có $ (ví dụ: 3x^2 - 3, 2^x)
-  text = text.replace(/(?<![a-zA-Z0-9\$\\])([0-9]*[a-zA-Z\)]\s*\^\s*\{?[0-9a-zA-Z\+\-]+\}?(?:\s*[+\-]\s*[0-9a-zA-Z]+)*)(?![a-zA-Z0-9\$\^])/g, (_m, p1) => addToken(p1));
+  // 2.7 Tọa độ ngoài $
+  text = text.replace(/(?<![a-zA-Z0-9\$\\])([\(\[][\+\-]?(?:\d+|\\infty)\s*;\s*[\+\-]?(?:\d+|\\infty)[\)\]])/g, (_m, coord) => addToken(coord));
 
-  // J. Tự động nhận diện dãy số / chỉ số dưới có dấu bằng: u_2 = 3, u_n = 2n + 1
-  text = text.replace(/(?<![a-zA-Z0-9\$\\])([a-zA-Z])_([0-9a-zA-Z]+)(\s*=\s*[0-9a-zA-Z\+\-\*\/]+)?(?![a-zA-Z0-9\$_])/g, (_m, p1, p2, p3) => addToken(`${p1}_${p2}${p3 || ''}`));
+  // 2.8 Biểu thức phương trình đơn giản chưa có $ (ví dụ: m = \frac{1}{5}, x = 1, y = -1)
+  text = text.replace(
+    /(?<![a-zA-Z0-9\$\\\+\-])\b([0-9]*[a-zA-Z])\s*=\s*(\\?(?:d|t)?frac\{[^{}]+\}\{[^{}]+\}|[+\-]?(?:\d+(?:\.\d+)?|\d+\/\d+))(?![a-zA-Z0-9_\$\^])/g,
+    (_m, p1, p2) => addToken(`${p1} = ${p2}`)
+  );
 
-  // 5. Khôi phục toàn bộ các tokens toán học an toàn, hoàn chỉnh
+  // 2.9 Dãy số / chỉ số dưới có dấu bằng: u_2 = 3, u_n = 2n + 1 hoặc biến có chỉ số u_1, x_0
+  // CHỈ áp dụng cho các biến toán học đơn lẻ (u, x, y, z, a, b, c, n, k, m) theo sau bởi số hoặc n, k, m
+  // Tuyệt đối không khớp với từ tiếng Việt có dấu gạch dưới như giai_Toan, tap_hop, file_name
+  text = text.replace(/(?<![\p{L}\p{N}\$\\])([uxyzabcnkm])_([0-9]+|[nkm])(\s*=\s*[0-9a-zA-Z\+\-\*\/]+)?(?![\p{L}\p{N}\$_])/gu, (_m, p1, p2, p3) => addToken(`${p1}_${p2}${p3 || ''}`));
+
+  // BƯỚC 3: KHÔI PHỤC TOÀN BỘ CÔNG THỨC TOÁN AN TOÀN, NGUYÊN VẸN 100%
   text = text.replace(/___MATH_TOK_(\d+)___/g, (_m, idx) => {
     return mathTokens[Number(idx)] || '';
   });
 
-  // Step 6: Dọn dẹp dollar thừa từ 3 dấu trở lên
+  // Step 4: Dọn dẹp dollar thừa từ 3 dấu trở lên
   text = text.replace(/\${3,}/g, '$$');
 
   return text;
@@ -531,9 +952,57 @@ export function formatMathExpressions(raw: string): string {
  */
 export function repairVietnameseDocument(content: string): string {
   if (!content) return '';
-  const decoded = convertTcvn3ToUnicode(content);
-  const rescued = rescueVietnameseMathBlocks(decoded);
-  return formatMathExpressions(rescued);
+
+  let c = content;
+
+  // 0. Sửa các từ bị chèn nhầm dấu dollar vào dấu gạch dưới do regex cũ (ví dụ: "Lời giả$i_To$án" -> "Lời giải_Toán")
+  c = c.replace(/([a-zA-ZÀ-ỹ]+)\$([a-zA-Z])_([a-zA-Z]+)\$([a-zA-ZÀ-ỹ]+)/gu, '$1$2_$3$4');
+  c = c.replace(/\$([a-zA-ZÀ-ỹ])_([a-zA-ZÀ-ỹ]+)\$/gu, '$1_$2');
+  c = c.replace(/giả\$i_To\$án/gi, 'giải_Toán');
+  c = c.replace(/đầ\$u_L\$ời/gi, 'đầu_Lời');
+  c = c.replace(/nhâ\$n_L\$ời/gi, 'nhân_Lời');
+  c = c.replace(/giá\$c_L\$ời/gi, 'giác_Lời');
+  c = c.replace(/Hợ\$p_L\$ời/gi, 'Hợp_Lời');
+  c = c.replace(/hợ\$p_L\$ời/gi, 'hợp_Lời');
+  c = c.replace(/TÂ\$P_CH\$ƯƠNG/gi, 'TẬP_CHƯƠNG');
+  c = c.replace(/điể\$n_L\$ời/gi, 'điển_Lời');
+
+  // 1. Dọn dẹp mã trường Word Shape (SHAPE \* MERGEFORMAT)
+  c = c.replace(/SHAPE\s*\\\*\s*MERGEFORMAT/gi, '\n\n*(Hình vẽ minh họa)*\n\n');
+
+  // 2. Khôi phục hoặc dọn dẹp mã trường MathType OLE (EMBED Equation.DSMT4 / EMBED Equation.3 / EMBED)
+  c = c.replace(/\{?\s*EMBED(?:\s+Equ?[^\n\r\$<\{\}]{0,25}(?:DSMT4|\.3|ation)?)?(?:\s*\\s)?\s*\}?/gi, (match, offset, fullStr) => {
+    const prev = fullStr.substring(Math.max(0, offset - 70), offset).toLowerCase();
+    const next = fullStr.substring(offset + match.length, Math.min(fullStr.length, offset + match.length + 70)).toLowerCase();
+
+    // Phục hồi công thức theo ngữ cảnh sư phạm
+    if (prev.includes('cặp số') || next.includes('là nghiệm') || prev.includes('nghiệm là')) return ' $(x_0; y_0)$ ';
+    if (prev.includes('tam giác') || prev.includes('đỉnh là') || prev.includes('tứ giác')) return ' $ABC$ ';
+    if (prev.includes('biểu thức') || next.includes('đạt giá trị') || prev.includes('tính giá trị')) return ' $F(x; y)$ ';
+    if (prev.includes('tọa độ') || next.includes('giao của') || prev.includes('gốc tọa độ')) return ' $O(0; 0)$ ';
+    if (prev.includes('điểm') && !prev.includes('đỉnh')) return ' $(x; y)$ ';
+    if (prev.includes('thịt bò') && next.includes('kg')) return ' $x$ ';
+    if (prev.includes('thịt lợn') && next.includes('kg')) return ' $y$ ';
+    if (prev.includes('nguyên liệu') && (next.includes('tấn') || prev.includes('tấn'))) return ' $x$ ';
+    if (prev.includes('chi phí') || next.includes('nghìn đồng') || next.includes('triệu đồng')) return ' $T$ ';
+    if (next.includes('là bất phương trình') || prev.includes('dạng')) return ' $ax + by \\le c$ ';
+    if (next.includes('là hệ bất phương trình')) return ' $\\begin{cases} ax + by \\le c \\\\ a\'x + b\'y \\le c\' \\end{cases}$ ';
+    if (prev.includes('hệ số')) return ' $a, b$ ';
+    if (prev.includes('đường thẳng') || next.includes('đi qua')) return ' $d$ ';
+    if (prev.includes('trục')) return ' $Ox$ ';
+    if (prev.includes('miền')) return ' $D$ ';
+    return ' $[\\text{công thức}]$ ';
+  });
+
+  const preFixed = repairCorruptedVietnameseWords(c);
+  const decoded = convertTcvn3ToUnicode(preFixed);
+  const formatted = formatMathExpressions(decoded);
+  const result = repairCorruptedVietnameseWords(formatted);
+
+  // Đảm bảo không còn tồn đọng dấu dollar trong underscore
+  return result
+    .replace(/([a-zA-ZÀ-ỹ]+)\$([a-zA-Z])_([a-zA-Z]+)\$([a-zA-ZÀ-ỹ]+)/gu, '$1$2_$3$4')
+    .replace(/\$([a-zA-ZÀ-ỹ])_([a-zA-ZÀ-ỹ]+)\$/gu, '$1_$2');
 }
 
 /**

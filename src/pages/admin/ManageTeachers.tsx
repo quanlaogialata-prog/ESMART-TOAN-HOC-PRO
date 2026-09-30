@@ -3,18 +3,28 @@ import { collection, getDocs, updateDoc, doc, setDoc, addDoc, deleteDoc, query, 
 import { initializeApp, deleteApp, getApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword, updatePassword, deleteUser } from 'firebase/auth';
 import { db, firebaseConfig } from '../../lib/firebase';
-import { Users, UserPlus, BookOpen, Database, Key, Trash2, FileSpreadsheet, Download, Pencil, ArrowRightLeft, X } from 'lucide-react';
+import { Users, UserPlus, BookOpen, Database, Key, Trash2, FileSpreadsheet, Download, Pencil, ArrowRightLeft, X, Calendar, Search } from 'lucide-react';
 import ExportStudentAccountsModal from '../../components/ExportStudentAccountsModal';
+import { 
+  getCurrentSchoolYear, 
+  formatSchoolYear, 
+  getStandardSchoolYears, 
+  matchesSchoolYear, 
+  compareSchoolYears 
+} from '../../utils/schoolYear';
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
+  // School Year Filter State (Mặc định hiển thị là năm học hiện tại)
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>(getCurrentSchoolYear());
 
   // User Management State
   const [activeTab, setActiveTab] = useState<'teacher' | 'student' | 'classes'>('teacher');
   const [schoolClasses, setSchoolClasses] = useState<any[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [teacherSearch, setTeacherSearch] = useState('');
 
   // Student Export Modal State
   const [showExportModal, setShowExportModal] = useState(false);
@@ -25,6 +35,7 @@ export default function AdminDashboard() {
   const [importText, setImportText] = useState('');
   const [importGrade, setImportGrade] = useState('9');
   const [importClassName, setImportClassName] = useState('');
+  const [importSchoolYear, setImportSchoolYear] = useState<string>(getCurrentSchoolYear());
 
   const handleImportStudents = async () => {
     if (!importText.trim() || !importClassName) {
@@ -82,6 +93,7 @@ export default function AdminDashboard() {
           rawPassword: password,
           grade: importGrade,
           className: importClassName,
+          schoolYear: importSchoolYear || getCurrentSchoolYear(),
           permissions: { lessons: true, tests: true },
           createdAt: new Date().toISOString()
         };
@@ -116,6 +128,7 @@ export default function AdminDashboard() {
   const [newGrade, setNewGrade] = useState('9');
   const [newClassName, setNewClassName] = useState('');
   const [newParentPhone, setNewParentPhone] = useState('');
+  const [newSchoolYear, setNewSchoolYear] = useState<string>(getCurrentSchoolYear());
   const [showClassModal, setShowClassModal] = useState(false);
   const [sysMsg, setSysMsg] = useState('');
   const [syncingPasswords, setSyncingPasswords] = useState(false);
@@ -126,6 +139,7 @@ export default function AdminDashboard() {
   const [assignedClasses, setAssignedClasses] = useState<string[]>([]);
   const [classFormGrade, setClassFormGrade] = useState('9');
   const [classFormName, setClassFormName] = useState('');
+  const [classFormSchoolYear, setClassFormSchoolYear] = useState<string>(getCurrentSchoolYear());
   const [newPerms, setNewPerms] = useState({ lessons: true, tests: true });
   const [creatingUser, setCreatingUser] = useState(false);
 
@@ -133,6 +147,7 @@ export default function AdminDashboard() {
   const [editingClass, setEditingClass] = useState<any | null>(null);
   const [editClassName, setEditClassName] = useState('');
   const [editClassGrade, setEditClassGrade] = useState('9');
+  const [editClassSchoolYear, setEditClassSchoolYear] = useState<string>(getCurrentSchoolYear());
   const [isSavingClassEdit, setIsSavingClassEdit] = useState(false);
 
   // Student Class Transfer State
@@ -149,19 +164,32 @@ export default function AdminDashboard() {
 
   const loadData = async () => {
     try {
-      const snap = await getDocs(collection(db, 'users'));
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const fetchPromise = Promise.all([
+        getDocs(collection(db, 'users')),
+        getDocs(collection(db, 'classes'))
+      ]);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Thời gian tải dữ liệu quá lâu')), 8000)
+      );
+      const [snap, clsSnap] = await Promise.race([fetchPromise, timeoutPromise]) as any;
+      const data = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
       setUsers(data);
-      const clsSnap = await getDocs(collection(db, 'classes'));
-      const fetchedClasses = clsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      const fetchedClasses = clsSnap.docs.map((d: any) => ({ id: d.id, ...d.data() } as any));
       fetchedClasses.sort((a: any, b: any) => {
+        const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
+        if (yearDiff !== 0) return yearDiff;
         const gradeDiff = Number(a.grade || 0) - Number(b.grade || 0);
         if (gradeDiff !== 0) return gradeDiff;
         return (a.name || '').localeCompare(b.name || '');
       });
       setSchoolClasses(fetchedClasses);
-    } catch(e) {
+    } catch(e: any) {
       console.error(e);
+      if (e?.code === 'resource-exhausted') {
+        setSysError('Hạn ngạch Firestore tạm thời bị giới hạn (Quota Exceeded). Dữ liệu có thể chưa hiển thị đầy đủ.');
+      } else {
+        setSysError('Không thể tải dữ liệu: ' + (e?.message || 'Lỗi mạng hoặc kết nối máy chủ'));
+      }
     } finally {
       setLoading(false);
     }
@@ -201,12 +229,6 @@ export default function AdminDashboard() {
 
   const [userToDelete, setUserToDelete] = useState<string | null>(null);
   const handleDeleteUser = async (u: any) => {
-    if (!u.rawPassword) {
-      setSysError('Không thể xóa tài khoản vì thiếu mật khẩu gốc (cần để xác thực lại).');
-      setTimeout(() => setSysError(''), 4000);
-      return;
-    }
-    
     if (userToDelete !== u.id) {
       setUserToDelete(u.id);
       setTimeout(() => setUserToDelete(null), 3000);
@@ -218,10 +240,19 @@ export default function AdminDashboard() {
     setSysError('');
     let secondApp: any = null;
     try {
-      secondApp = initializeApp(firebaseConfig, 'SecondaryAppDel' + Date.now());
-      const secondAuth = getAuth(secondApp);
-      const cred = await signInWithEmailAndPassword(secondAuth, u.email, u.rawPassword);
-      await deleteUser(cred.user);
+      // Nếu có mật khẩu gốc, thử xóa trên Firebase Auth
+      if (u.rawPassword && u.email) {
+        try {
+          secondApp = initializeApp(firebaseConfig, 'SecondaryAppDel' + Date.now());
+          const secondAuth = getAuth(secondApp);
+          const cred = await signInWithEmailAndPassword(secondAuth, u.email, u.rawPassword);
+          await deleteUser(cred.user);
+        } catch (authDelErr) {
+          console.warn("Không thể xóa trực tiếp trên Firebase Auth (có thể mật khẩu đã đổi):", authDelErr);
+        }
+      }
+
+      // Luôn xóa document trên Firestore để vô hiệu hóa tài khoản và xóa khỏi danh sách
       await deleteDoc(doc(db, 'users', u.id));
 
       if (u.role === 'student') {
@@ -235,13 +266,15 @@ export default function AdminDashboard() {
       }
 
       await loadData();
-      setSysMsg('Đã xóa tài khoản thành công.');
-      setTimeout(() => setSysMsg(''), 3000);
+      setSysMsg(`Đã xóa hoàn toàn tài khoản ${u.fullName || u.displayName} khỏi hệ thống.`);
+      setTimeout(() => setSysMsg(''), 4000);
     } catch (e: any) {
       console.error(e);
       setSysError('Lỗi xóa tài khoản: ' + e.message);
     } finally {
-      if (secondApp) deleteApp(secondApp);
+      if (secondApp) {
+        try { deleteApp(secondApp); } catch(e) {}
+      }
     }
   };
 
@@ -370,10 +403,11 @@ export default function AdminDashboard() {
 
     const duplicate = schoolClasses.some(
       c => String(c.grade) === String(classFormGrade) && 
-           c.name.trim().toLowerCase() === trimmedName.toLowerCase()
+           c.name.trim().toLowerCase() === trimmedName.toLowerCase() &&
+           matchesSchoolYear(c.schoolYear, classFormSchoolYear)
     );
     if (duplicate) {
-      setSysError(`Đã tồn tại lớp "${trimmedName}" trong Khối ${classFormGrade}. Vui lòng nhập tên khác.`);
+      setSysError(`Đã tồn tại lớp "${trimmedName}" trong Khối ${classFormGrade} (Năm học ${formatSchoolYear(classFormSchoolYear)}). Vui lòng nhập tên khác.`);
       setTimeout(() => setSysError(''), 4000);
       return;
     }
@@ -381,11 +415,12 @@ export default function AdminDashboard() {
     try {
       await addDoc(collection(db, 'classes'), {
         grade: classFormGrade,
-        name: trimmedName
+        name: trimmedName,
+        schoolYear: classFormSchoolYear || getCurrentSchoolYear()
       });
       setClassFormName('');
       setShowClassModal(false);
-      setSysMsg(`Đã thêm lớp "${trimmedName}" (Khối ${classFormGrade}) thành công!`);
+      setSysMsg(`Đã thêm lớp "${trimmedName}" (Khối ${classFormGrade} - Năm học ${formatSchoolYear(classFormSchoolYear)}) thành công!`);
       setTimeout(() => setSysMsg(''), 3000);
       loadData();
     } catch (err: any) {
@@ -407,10 +442,11 @@ export default function AdminDashboard() {
     const duplicate = schoolClasses.some(
       c => c.id !== editingClass.id && 
            String(c.grade) === String(editClassGrade) && 
-           c.name.trim().toLowerCase() === trimmedName.toLowerCase()
+           c.name.trim().toLowerCase() === trimmedName.toLowerCase() &&
+           matchesSchoolYear(c.schoolYear, editClassSchoolYear)
     );
     if (duplicate) {
-      setSysError(`Đã tồn tại lớp "${trimmedName}" trong Khối ${editClassGrade}. Vui lòng chọn tên khác.`);
+      setSysError(`Đã tồn tại lớp "${trimmedName}" trong Khối ${editClassGrade} (Năm học ${formatSchoolYear(editClassSchoolYear)}). Vui lòng chọn tên khác.`);
       setTimeout(() => setSysError(''), 4000);
       return;
     }
@@ -423,11 +459,13 @@ export default function AdminDashboard() {
       const oldName = editingClass.name;
       const oldGrade = String(editingClass.grade || '9');
       const newGrade = String(editClassGrade);
+      const newSY = editClassSchoolYear || editingClass.schoolYear || getCurrentSchoolYear();
 
       // 1. Cập nhật document lớp trong collection 'classes'
       await updateDoc(doc(db, 'classes', editingClass.id), {
         name: trimmedName,
-        grade: newGrade
+        grade: newGrade,
+        schoolYear: newSY
       });
 
       let updatedStudentsCount = 0;
@@ -685,6 +723,7 @@ export default function AdminDashboard() {
         email: email,
         displayName: newFullName,
         rawPassword: generatedPassword,
+        schoolYear: newSchoolYear || getCurrentSchoolYear(),
         createdAt: new Date().toISOString()
       };
 
@@ -692,6 +731,7 @@ export default function AdminDashboard() {
         userData.grade = newGrade;
         userData.className = newClassName || 'Chưa phân lớp';
         userData.permissions = newPerms;
+        userData.schoolYear = newSchoolYear || getCurrentSchoolYear();
       }
 
       await setDoc(doc(db, 'users', cred.user.uid), userData);
@@ -738,12 +778,23 @@ export default function AdminDashboard() {
 
   const filteredUsers = users.filter(u => {
     if (u.role !== activeTab) return false;
-    if (activeTab === 'student' && filterClass !== 'all') {
-      if (u.className !== filterClass) return false;
+    if (activeTab === 'student') {
+      if (!matchesSchoolYear(u.schoolYear, selectedSchoolYear)) return false;
+      if (filterClass !== 'all' && u.className !== filterClass) return false;
+    }
+    // Giáo viên giảng dạy xuyên suốt các năm học, không lọc ẩn theo năm học
+    if (activeTab === 'teacher' && teacherSearch.trim()) {
+      const q = teacherSearch.toLowerCase();
+      const matchName = (u.fullName || u.displayName || '').toLowerCase().includes(q);
+      const matchEmail = (u.email || '').toLowerCase().includes(q);
+      const matchUser = (u.email || '').replace('@toanhoc.pro', '').toLowerCase().includes(q);
+      if (!matchName && !matchEmail && !matchUser) return false;
     }
     return true;
   }).sort((a: any, b: any) => {
     if (activeTab === 'student') {
+      const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
+      if (yearDiff !== 0) return yearDiff;
       const gradeDiff = Number(a.grade || 0) - Number(b.grade || 0);
       if (gradeDiff !== 0) return gradeDiff;
       const classDiff = (a.className || '').localeCompare(b.className || '');
@@ -754,12 +805,40 @@ export default function AdminDashboard() {
     return nameA.localeCompare(nameB);
   });
 
+  const filteredClasses = schoolClasses.filter(c => {
+    return matchesSchoolYear(c.schoolYear, selectedSchoolYear);
+  });
+
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-10">
-      <div className="flex justify-between items-center bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-6 rounded-xl shadow-sm border border-gray-100 gap-4">
         <div>
           <h2 className="text-xl font-bold text-gray-800">Bảng điều khiển Quản trị</h2>
-          <p className="text-sm text-gray-500 mt-1">Quản lý tài khoản người dùng và hệ thống</p>
+          <p className="text-sm text-gray-500 mt-1">Quản lý tài khoản giáo viên, học sinh và các khối lớp</p>
+        </div>
+
+        {/* Bộ lọc Năm học - Mặc định là năm học hiện tại */}
+        <div className="flex items-center gap-2.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 px-3.5 py-2 rounded-xl shadow-2xs">
+          <Calendar size={18} className="text-blue-600 shrink-0" />
+          <div className="flex flex-col">
+            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider">Năm học hiển thị:</span>
+            <div className="flex items-center gap-2 mt-0.5">
+              <select
+                value={selectedSchoolYear}
+                onChange={(e) => setSelectedSchoolYear(e.target.value)}
+                className="bg-white border border-blue-300 rounded-lg text-xs font-bold px-2.5 py-1 text-blue-900 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer shadow-xs"
+              >
+                <option value={getCurrentSchoolYear()}>⭐ Năm học hiện tại ({formatSchoolYear(getCurrentSchoolYear())})</option>
+                <option value="all">🌐 Tất cả các năm học</option>
+                {getStandardSchoolYears().filter(y => y !== getCurrentSchoolYear()).map(sy => (
+                  <option key={sy} value={sy}>Năm học {formatSchoolYear(sy)}</option>
+                ))}
+              </select>
+              {selectedSchoolYear === getCurrentSchoolYear() && (
+                <span className="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-full font-bold">Mặc định</span>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -798,7 +877,10 @@ export default function AdminDashboard() {
             </div>
             <div>
               <p className={`font-medium ${activeTab === 'teacher' ? 'text-blue-800' : 'text-gray-500 text-sm'}`}>Quản lý Giáo viên</p>
-              <p className="text-2xl font-bold text-gray-800">{users.filter(u => u.role === 'teacher').length}</p>
+              <div className="flex items-baseline gap-2">
+                <p className="text-2xl font-bold text-gray-800">{users.filter(u => u.role === 'teacher').length}</p>
+                <span className="text-xs text-gray-500">(Toàn trường)</span>
+              </div>
             </div>
           </div>
         </div>
@@ -813,7 +895,10 @@ export default function AdminDashboard() {
             </div>
             <div>
               <p className={`font-medium ${activeTab === 'student' ? 'text-orange-800' : 'text-gray-500 text-sm'}`}>Quản lý Học sinh</p>
-              <p className="text-2xl font-bold text-gray-800">{users.filter(u => u.role === 'student').length}</p>
+              <div className="flex items-baseline gap-2">
+                <p className="text-2xl font-bold text-gray-800">{users.filter(u => u.role === 'student' && matchesSchoolYear(u.schoolYear, selectedSchoolYear)).length}</p>
+                <span className="text-xs text-gray-500">({formatSchoolYear(selectedSchoolYear)})</span>
+              </div>
             </div>
           </div>
         </div>
@@ -827,7 +912,10 @@ export default function AdminDashboard() {
             </div>
             <div>
               <p className={`font-medium ${activeTab === 'classes' ? 'text-green-800' : 'text-gray-500 text-sm'}`}>Quản lý Khối Lớp</p>
-              <p className="text-2xl font-bold text-gray-800">{schoolClasses.length}</p>
+              <div className="flex items-baseline gap-2">
+                <p className="text-2xl font-bold text-gray-800">{filteredClasses.length}</p>
+                <span className="text-xs text-gray-500">({formatSchoolYear(selectedSchoolYear)})</span>
+              </div>
             </div>
           </div>
         </div>
@@ -839,6 +927,32 @@ export default function AdminDashboard() {
             <h2 className="text-lg font-bold text-gray-800">
               Danh sách {activeTab === 'teacher' ? 'Giáo viên' : activeTab === 'student' ? 'Học sinh' : 'Khối Lớp'}
             </h2>
+            {activeTab === 'teacher' ? (
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-green-50 text-green-700 border border-green-200">
+                Tổng số: {users.filter(u => u.role === 'teacher').length} giáo viên
+              </span>
+            ) : (
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                Năm học: {formatSchoolYear(selectedSchoolYear)}
+              </span>
+            )}
+            {activeTab === 'teacher' && (
+              <div className="flex items-center gap-1.5 bg-gray-100 px-3 py-1 rounded-lg border border-gray-200">
+                <Search size={14} className="text-gray-400" />
+                <input 
+                  type="text"
+                  placeholder="Tìm theo tên hoặc tên đăng nhập..."
+                  value={teacherSearch}
+                  onChange={(e) => setTeacherSearch(e.target.value)}
+                  className="bg-transparent text-xs text-gray-800 outline-none w-52 font-medium"
+                />
+                {teacherSearch && (
+                  <button onClick={() => setTeacherSearch('')} className="text-gray-400 hover:text-gray-600 cursor-pointer">
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            )}
             {activeTab === 'student' && (
               <div className="flex items-center gap-1.5 bg-gray-100 px-2.5 py-1 rounded-lg">
                 <span className="text-xs font-semibold text-gray-600">Lọc theo lớp:</span>
@@ -847,10 +961,10 @@ export default function AdminDashboard() {
                   onChange={(e) => setFilterClass(e.target.value)}
                   className="bg-white border border-gray-300 rounded text-xs font-medium px-2 py-0.5 text-gray-800 outline-none focus:ring-1 focus:ring-blue-500"
                 >
-                  <option value="all">Tất cả các lớp ({users.filter(u => u.role === 'student').length})</option>
-                  {schoolClasses.map(cls => (
+                  <option value="all">Tất cả các lớp ({users.filter(u => u.role === 'student' && matchesSchoolYear(u.schoolYear, selectedSchoolYear)).length})</option>
+                  {filteredClasses.map(cls => (
                     <option key={cls.id} value={cls.name}>
-                      Lớp {cls.name} (Khối {cls.grade}) - {users.filter(u => u.role === 'student' && u.className === cls.name).length} HS
+                      Lớp {cls.name} (Khối {cls.grade}) - {users.filter(u => u.role === 'student' && matchesSchoolYear(u.schoolYear, selectedSchoolYear) && u.className === cls.name).length} HS
                     </option>
                   ))}
                 </select>
@@ -952,6 +1066,7 @@ export default function AdminDashboard() {
                   {activeTab === 'student' ? 'Tên đăng nhập' : 'Tên hiển thị'}
                 </th>
                 {activeTab === 'student' && <th className="px-4 py-4 font-medium">Mật khẩu</th>}
+                <th className="px-4 py-4 font-medium">Năm học</th>
                 {activeTab === 'student' && <th className="px-4 py-4 font-medium">Khối</th>}
                 {activeTab === 'student' && <th className="px-4 py-4 font-medium">Lớp</th>}
                 {activeTab === 'student' && <th className="px-4 py-4 font-medium">SĐT Phụ huynh</th>}
@@ -961,7 +1076,11 @@ export default function AdminDashboard() {
             <tbody className="divide-y divide-gray-100">
               {filteredUsers.length === 0 && (
                 <tr>
-                  <td colSpan={activeTab === 'student' ? 8 : 4} className="px-6 py-8 text-center text-gray-500">Chưa có dữ liệu</td>
+                  <td colSpan={activeTab === 'student' ? 9 : 4} className="px-6 py-8 text-center text-gray-500">
+                    {activeTab === 'teacher' 
+                      ? (teacherSearch.trim() ? 'Không tìm thấy giáo viên phù hợp với từ khóa tìm kiếm.' : 'Chưa có tài khoản giáo viên nào trong hệ thống.') 
+                      : 'Chưa có dữ liệu học sinh trong năm học này'}
+                  </td>
                 </tr>
               )}
               {filteredUsers.map(u => (
@@ -997,6 +1116,11 @@ export default function AdminDashboard() {
                       )}
                     </td>
                   )}
+                  <td className="px-4 py-4 text-xs font-semibold">
+                    <span className={`px-2 py-0.5 rounded border ${activeTab === 'student' ? 'bg-orange-50 text-orange-700 border-orange-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
+                      {formatSchoolYear(u.schoolYear || getCurrentSchoolYear())}
+                    </span>
+                  </td>
                   {activeTab === 'student' && (
                     <td className="px-4 py-4 text-gray-600">Khối {u.grade || '9'}</td>
                   )}
@@ -1095,6 +1219,7 @@ export default function AdminDashboard() {
             <table className="w-full text-left text-sm">
               <thead className="bg-gray-50 text-gray-600 border-b">
                 <tr>
+                  <th className="px-6 py-4 font-medium">Năm học</th>
                   <th className="px-6 py-4 font-medium">Khối</th>
                   <th className="px-6 py-4 font-medium">Tên Lớp</th>
                   <th className="px-6 py-4 font-medium">Sĩ số</th>
@@ -1102,17 +1227,22 @@ export default function AdminDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {schoolClasses.length === 0 && (
+                {filteredClasses.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="px-6 py-8 text-center text-gray-500">Chưa có dữ liệu</td>
+                    <td colSpan={5} className="px-6 py-8 text-center text-gray-500">Chưa có dữ liệu khối lớp trong năm học này</td>
                   </tr>
                 )}
-                {schoolClasses.map(cls => (
+                {filteredClasses.map(cls => (
                   <tr key={cls.id} className="hover:bg-gray-50/50">
+                    <td className="px-6 py-4 font-medium">
+                      <span className="px-2.5 py-1 text-xs rounded-md bg-emerald-50 text-emerald-700 font-bold border border-emerald-200">
+                        {formatSchoolYear(cls.schoolYear || getCurrentSchoolYear())}
+                      </span>
+                    </td>
                     <td className="px-6 py-4 font-medium text-gray-800">Khối {cls.grade}</td>
-                    <td className="px-6 py-4 text-gray-600">{cls.name}</td>
+                    <td className="px-6 py-4 text-gray-600 font-bold">{cls.name}</td>
                     <td className="px-6 py-4 text-gray-600 font-medium text-blue-600">
-                      {users.filter(u => u.role === 'student' && String(u.grade) === String(cls.grade) && u.className === cls.name).length} học sinh
+                      {users.filter(u => u.role === 'student' && String(u.grade) === String(cls.grade) && u.className === cls.name && matchesSchoolYear(u.schoolYear, cls.schoolYear || selectedSchoolYear)).length} học sinh
                     </td>
                     <td className="px-6 py-4 text-gray-600">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -1122,6 +1252,7 @@ export default function AdminDashboard() {
                             setEditingClass(cls);
                             setEditClassName(cls.name);
                             setEditClassGrade(String(cls.grade || '9'));
+                            setEditClassSchoolYear(cls.schoolYear || getCurrentSchoolYear());
                           }}
                           className="text-xs px-2.5 py-1 rounded-md border bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100 flex items-center gap-1 font-semibold transition-colors cursor-pointer"
                           title={`Sửa tên và khối của lớp ${cls.name}`}
@@ -1216,6 +1347,18 @@ export default function AdminDashboard() {
               <h2 className="text-lg font-bold text-gray-800">Thêm Lớp Mới</h2>
             </div>
             <form onSubmit={handleCreateClass} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Năm học</label>
+                <select 
+                  value={classFormSchoolYear}
+                  onChange={e => setClassFormSchoolYear(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                >
+                  {getStandardSchoolYears().map(sy => (
+                    <option key={sy} value={sy}>Năm học {formatSchoolYear(sy)} {sy === getCurrentSchoolYear() ? '(Hiện tại)' : ''}</option>
+                  ))}
+                </select>
+              </div>
               <div className="flex gap-4">
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Khối</label>
@@ -1273,24 +1416,36 @@ export default function AdminDashboard() {
           <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Nhập học sinh theo danh sách</h2>
             <div className="space-y-4">
-              <div className="flex gap-4">
-                <div className="w-1/2">
+              <div className="flex gap-4 flex-wrap sm:flex-nowrap">
+                <div className="w-full sm:w-1/3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Năm học</label>
+                  <select 
+                    value={importSchoolYear} 
+                    onChange={e => setImportSchoolYear(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-xs font-semibold"
+                  >
+                    {getStandardSchoolYears().map(sy => (
+                      <option key={sy} value={sy}>Năm học {formatSchoolYear(sy)} {sy === getCurrentSchoolYear() ? '(Hiện tại)' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="w-full sm:w-1/3">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Khối Lớp</label>
                   <select 
                     value={importGrade} onChange={e => { setImportGrade(e.target.value); setImportClassName(""); }}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-xs font-semibold"
                   >
                     {[6, 7, 8, 9, 10, 11, 12].map(g => <option key={g} value={g}>Khối {g}</option>)}
                   </select>
                 </div>
-                <div className="w-1/2">
+                <div className="w-full sm:w-1/3">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Tên Lớp</label>
                   <select 
                     value={importClassName} onChange={e => setImportClassName(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-xs font-semibold"
                   >
                     <option value="">-- Chọn lớp --</option>
-                    {schoolClasses.filter(c => String(c.grade) === String(importGrade)).map(c => (
+                    {schoolClasses.filter(c => String(c.grade) === String(importGrade) && matchesSchoolYear(c.schoolYear, importSchoolYear)).map(c => (
                       <option key={c.id} value={c.name}>{c.name}</option>
                     ))}
                   </select>
@@ -1311,6 +1466,7 @@ export default function AdminDashboard() {
                 <ul className="list-disc ml-5 space-y-1">
                   <li>Email sẽ được tự động tạo theo dạng: <b>hoten@toanhoc.pro</b></li>
                   <li>Mật khẩu mặc định là: <b>tên123456</b> (VD: Nguyễn Văn Tuấn {'->'} tuan123456)</li>
+                  <li>Năm học đăng ký: <b>{formatSchoolYear(importSchoolYear)}</b></li>
                 </ul>
               </div>
               <div className="pt-4 flex gap-3 justify-end">
@@ -1339,6 +1495,18 @@ export default function AdminDashboard() {
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
             <h2 className="text-xl font-bold mb-4">Thêm {newRole === 'teacher' ? 'Giáo viên' : 'Học sinh'} Mới</h2>
             <form onSubmit={handleCreateUser} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Năm học</label>
+                <select 
+                  value={newSchoolYear}
+                  onChange={e => setNewSchoolYear(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-semibold text-xs"
+                >
+                  {getStandardSchoolYears().map(sy => (
+                    <option key={sy} value={sy}>Năm học {formatSchoolYear(sy)} {sy === getCurrentSchoolYear() ? '(Hiện tại)' : ''}</option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Họ và tên</label>
                 <input 
@@ -1377,7 +1545,7 @@ export default function AdminDashboard() {
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                       >
                         <option value="">-- Chọn lớp --</option>
-                        {schoolClasses.filter(c => String(c.grade) === String(newGrade)).map(c => (
+                        {schoolClasses.filter(c => String(c.grade) === String(newGrade) && matchesSchoolYear(c.schoolYear, newSchoolYear)).map(c => (
                           <option key={c.id} value={c.name}>{c.name}</option>
                         ))}
                       </select>
@@ -1435,8 +1603,8 @@ export default function AdminDashboard() {
       <ExportStudentAccountsModal
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
-        students={users.filter(u => u.role === 'student')}
-        classes={schoolClasses}
+        students={users.filter(u => u.role === 'student' && matchesSchoolYear(u.schoolYear, selectedSchoolYear))}
+        classes={filteredClasses}
         initialSelectedClass={exportInitialClass}
       />
 
@@ -1457,6 +1625,18 @@ export default function AdminDashboard() {
               </button>
             </div>
             <form onSubmit={handleSaveEditClass} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Năm học</label>
+                <select 
+                  value={editClassSchoolYear}
+                  onChange={e => setEditClassSchoolYear(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none font-medium"
+                >
+                  {getStandardSchoolYears().map(sy => (
+                    <option key={sy} value={sy}>Năm học {formatSchoolYear(sy)} {sy === getCurrentSchoolYear() ? '(Hiện tại)' : ''}</option>
+                  ))}
+                </select>
+              </div>
               <div className="flex gap-4">
                 <div className="w-1/3">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Khối</label>

@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, doc, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, getDocsFromCache, doc, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   Clock, CheckCircle2, AlertTriangle, BookOpen, Award, 
-  TrendingUp, RefreshCw, User, Sparkles
+  TrendingUp, RefreshCw, User
 } from 'lucide-react';
 import CurrentAssignmentsList from '../../components/student/CurrentAssignmentsList';
 import OverdueAssignmentsList from '../../components/student/OverdueAssignmentsList';
@@ -53,9 +53,14 @@ export default function StudentDashboard() {
       }
       setStudentInfo({ grade, className, fullName, email: user?.email });
 
-      // 2. Get all submissions by this student
+      // 2. Get all submissions by this student with cache fallback
       const subQ = query(collection(db, 'submissions'), where('studentEmail', '==', user?.email));
-      const subSnap = await getDocs(subQ);
+      let subSnap;
+      try {
+        subSnap = await getDocs(subQ);
+      } catch {
+        subSnap = await getDocsFromCache(subQ);
+      }
       const submittedAssignMap = new Map();
       subSnap.docs.forEach(d => {
         const sData = d.data();
@@ -64,18 +69,33 @@ export default function StudentDashboard() {
 
       // Also check studentId matching if email didn't catch any
       if (user?.uid) {
-        const subIdQ = query(collection(db, 'submissions'), where('studentId', '==', user.uid));
-        const subIdSnap = await getDocs(subIdQ);
-        subIdSnap.docs.forEach(d => {
-          const sData = d.data();
-          if (!submittedAssignMap.has(sData.assignmentId)) {
-            submittedAssignMap.set(sData.assignmentId, { id: d.id, ...sData });
+        try {
+          const subIdQ = query(collection(db, 'submissions'), where('studentId', '==', user.uid));
+          let subIdSnap;
+          try {
+            subIdSnap = await getDocs(subIdQ);
+          } catch {
+            subIdSnap = await getDocsFromCache(subIdQ);
           }
-        });
+          subIdSnap.docs.forEach(d => {
+            const sData = d.data();
+            if (!submittedAssignMap.has(sData.assignmentId)) {
+              submittedAssignMap.set(sData.assignmentId, { id: d.id, ...sData });
+            }
+          });
+        } catch (e) {
+          console.warn('Error reading subIdSnap:', e);
+        }
       }
 
-      // 3. Get assignments assigned to this class and grade
-      const snap = await getDocs(collection(db, 'assignments'));
+      // 3. Get assignments assigned to this class and grade with cache fallback
+      let snap;
+      try {
+        snap = await getDocs(collection(db, 'assignments'));
+      } catch {
+        snap = await getDocsFromCache(collection(db, 'assignments'));
+      }
+
       const activeList: any[] = [];
       const overdueList: any[] = [];
       const doneList: any[] = [];
@@ -89,29 +109,19 @@ export default function StudentDashboard() {
         if (Number(assignData.grade) !== Number(grade)) continue;
         if (assignData.className !== className) continue;
 
-        // Verify that the underlying test document exists
-        const testSnap = await getDoc(doc(db, 'tests', assignData.testId));
-        if (!testSnap.exists()) {
-          // Clean up orphaned assignment safely
-          try {
-            await deleteDoc(doc(db, 'assignments', d.id));
-          } catch (e) {
-            console.error("Cleanup error", e);
-          }
-          continue;
-        }
-
-        const subData = submittedAssignMap.get(d.id);
-        const isSubmitted = !!subData;
+        // Bỏ qua bài học nếu có dữ liệu cũ
+        if (assignData.type === 'lesson') continue;
 
         // Calculate due date taking student-specific extension into account
         const dueDateToUse = (assignData.extensions && user?.uid && assignData.extensions[user.uid])
           ? assignData.extensions[user.uid]
           : assignData.dueDate;
-        
+
+        const subData = submittedAssignMap.get(d.id);
+        const isSubmitted = !!subData;
         const isOverdue = !isSubmitted && dueDateToUse && (now > new Date(dueDateToUse));
 
-        const item = {
+        const item: any = {
           id: d.id,
           ...assignData,
           effectiveDueDate: dueDateToUse,
@@ -133,13 +143,9 @@ export default function StudentDashboard() {
         }
       }
 
-      // Sort current assignments by due date (nearest first)
+      // Sắp xếp danh sách
       activeList.sort((a, b) => new Date(a.effectiveDueDate).getTime() - new Date(b.effectiveDueDate).getTime());
-
-      // Sort overdue assignments by due date (most recent overdue first)
       overdueList.sort((a, b) => new Date(b.effectiveDueDate).getTime() - new Date(a.effectiveDueDate).getTime());
-
-      // Sort completed assignments by submission date (latest submitted first)
       doneList.sort((a, b) => {
         const timeA = new Date(a.submittedAt || a.createdAt).getTime();
         const timeB = new Date(b.submittedAt || b.createdAt).getTime();
@@ -232,7 +238,6 @@ export default function StudentDashboard() {
 
       {/* Main Tab Navigation */}
       <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 pb-3">
-        
         {/* Tab 1: Bài kiểm tra hiện tại */}
         <button
           onClick={() => setActiveTab('current')}
@@ -352,4 +357,3 @@ export default function StudentDashboard() {
     </div>
   );
 }
-

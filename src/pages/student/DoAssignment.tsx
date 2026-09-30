@@ -7,6 +7,7 @@ import { Clock, CheckCircle, AlertCircle, FileText, Upload, ArrowLeft, PenTool, 
 import DrawingPad from '../../components/DrawingPad';
 import MathText from '../../components/MathText';
 import QuestionVisualRenderer from '../../components/common/QuestionVisualRenderer';
+import MathRadicalInput from '../../components/common/MathRadicalInput';
 import { gradeQuestion, resolveMcqLetter, parseTfSubAnswers, cleanOptionText, stripOptionPrefix, autoReconcileQuestion } from '../../utils/gradeEngine';
 
 export default function DoAssignment() {
@@ -731,17 +732,12 @@ export default function DoAssignment() {
               {/* Trả lời ngắn */}
               {q.type === 'short' && (
                 <div className="mt-4">
-                  <input 
-                    type="text" 
+                  <MathRadicalInput 
                     value={answers[q.id] || ''}
-                    onChange={(e) => handleAnswerChange(q.id, e.target.value)}
-                    placeholder="Nhập kết quả hoặc đáp số (ví dụ: 3.5, 3,5 hoặc -1/2)..."
-                    className="w-full p-3.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-gray-800 font-medium text-sm"
+                    onChange={(val) => handleAnswerChange(q.id, val)}
+                    placeholder="Nhập kết quả hoặc đáp số (ví dụ: √2, 2√3, √3/2, 3.5, -1/2)..."
                     disabled={submitted}
                   />
-                  <p className="text-xs text-gray-500 mt-1.5">
-                    * Định dạng số thập phân có thể dùng dấu phẩy (,) hoặc chấm (.), phân số dạng a/b.
-                  </p>
                 </div>
               )}
 

@@ -21,10 +21,12 @@ import {
 } from 'lucide-react';
 import MathText from '../MathText';
 import QuestionVisualRenderer from '../common/QuestionVisualRenderer';
+import MathRadicalInput from '../common/MathRadicalInput';
 import { QuestionItem, QuestionType, QuestionReference } from '../../types/test';
 import { MATH_FIGURE_TEMPLATES, MathFigureTemplate } from '../../utils/mathFigureTemplates';
 import { stripOptionPrefix } from '../../utils/gradeEngine';
 import DocumentReferenceSelectorModal from './DocumentReferenceSelectorModal';
+import { repairVietnameseDocument } from '../../lib/vietnameseFont';
 
 interface EditQuestionsModalProps {
   testTitle: string;
@@ -43,9 +45,17 @@ export default function EditQuestionsModal({
   onSave,
   isSaving = false,
 }: EditQuestionsModalProps) {
+  const sanitizeQ = (q: QuestionItem): QuestionItem => ({
+    ...q,
+    question: repairVietnameseDocument(q.question || ''),
+    options: Array.isArray(q.options) ? q.options.map(o => repairVietnameseDocument(o || '')) : [],
+    explanation: repairVietnameseDocument(q.explanation || ''),
+    correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+  });
+
   const [questions, setQuestions] = useState<QuestionItem[]>(() => {
     return initialQuestions && initialQuestions.length > 0 
-      ? JSON.parse(JSON.stringify(initialQuestions))
+      ? initialQuestions.map(sanitizeQ)
       : [];
   });
   const [activeIndex, setActiveIndex] = useState<number>(0);
@@ -194,7 +204,7 @@ export default function EditQuestionsModal({
           <div className="flex items-center gap-2.5">
             <button
               type="button"
-              onClick={() => onSave(questions)}
+              onClick={() => onSave(questions.map(sanitizeQ))}
               disabled={isSaving}
               className="px-5 py-2 rounded-xl font-bold text-sm text-white bg-blue-600 hover:bg-blue-700 active:scale-95 transition-all shadow-md shadow-blue-200 flex items-center gap-2 cursor-pointer disabled:opacity-50"
             >
@@ -590,13 +600,21 @@ export default function EditQuestionsModal({
                         <label className="text-xs font-bold uppercase tracking-wider text-slate-600 block">
                           {currentQ.type === 'short' ? 'Đáp số / Giá trị số trả lời ngắn:' : 'Tóm tắt kết quả chính:'}
                         </label>
-                        <input
-                          type="text"
-                          value={currentQ.correctAnswer || ''}
-                          onChange={(e) => updateCurrentQuestion({ correctAnswer: e.target.value })}
-                          placeholder={currentQ.type === 'short' ? 'Ví dụ: 15 hoặc -3/4 hoặc 2.5' : 'Đáp số tóm tắt...'}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm font-semibold text-slate-800 bg-slate-50/50 focus:outline-blue-500"
-                        />
+                        {currentQ.type === 'short' ? (
+                          <MathRadicalInput
+                            value={currentQ.correctAnswer || ''}
+                            onChange={(val) => updateCurrentQuestion({ correctAnswer: val })}
+                            placeholder="Ví dụ: √2, 2√3, √3/2, 15 hoặc -3/4..."
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            value={currentQ.correctAnswer || ''}
+                            onChange={(e) => updateCurrentQuestion({ correctAnswer: e.target.value })}
+                            placeholder="Đáp số tóm tắt..."
+                            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm font-semibold text-slate-800 bg-slate-50/50 focus:outline-blue-500"
+                          />
+                        )}
                       </div>
                     )}
 

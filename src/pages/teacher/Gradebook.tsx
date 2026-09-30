@@ -10,9 +10,17 @@ import {
   exportPeriodSummaryPdf, 
   exportPeriodSummaryExcel 
 } from '../../utils/gradebookExport';
+import { 
+  getCurrentSchoolYear, 
+  formatSchoolYear, 
+  getStandardSchoolYears, 
+  matchesSchoolYear, 
+  compareSchoolYears 
+} from '../../utils/schoolYear';
 
 export default function Gradebook() {
   const { user, role } = useAuth();
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>(getCurrentSchoolYear());
   const [classes, setClasses] = useState<any[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<string>('');
   
@@ -62,9 +70,18 @@ export default function Gradebook() {
       if (role === 'teacher') {
         clsData = clsData.filter(c => assignedClassIds.includes(c.id));
       }
+      clsData.sort((a, b) => {
+        const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
+        if (yearDiff !== 0) return yearDiff;
+        if (Number(a.grade) !== Number(b.grade)) return Number(a.grade) - Number(b.grade);
+        return (a.name || '').localeCompare(b.name || '');
+      });
       setClasses(clsData);
       
-      if (clsData.length > 0) {
+      const currentYearClasses = clsData.filter(c => matchesSchoolYear(c.schoolYear, selectedSchoolYear));
+      if (currentYearClasses.length > 0) {
+        setSelectedClassId(currentYearClasses[0].id);
+      } else if (clsData.length > 0) {
         setSelectedClassId(clsData[0].id);
       }
       setLoading(false);
@@ -86,7 +103,14 @@ export default function Gradebook() {
       if (!selectedCls) return;
 
       const stuSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'student'), where('className', '==', selectedCls.name)));
-      const stuData = stuSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      const stuData = stuSnap.docs
+        .map(d => ({ id: d.id, ...d.data() } as any))
+        .filter(s => matchesSchoolYear(s.schoolYear, selectedCls.schoolYear || selectedSchoolYear))
+        .sort((a, b) => {
+          const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
+          if (yearDiff !== 0) return yearDiff;
+          return (a.displayName || a.fullName || '').localeCompare(b.displayName || b.fullName || '', 'vi');
+        });
       setStudents(stuData);
 
       const asmSnap = await getDocs(query(collection(db, 'assignments'), where('classId', '==', classId)));
@@ -298,27 +322,64 @@ export default function Gradebook() {
     );
   }
 
+  const filteredClasses = classes.filter(c => matchesSchoolYear(c.schoolYear, selectedSchoolYear));
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-xl shadow-sm border border-gray-200">
         <div>
           <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
             <FileText className="text-blue-600" />
             Sổ Theo Dõi Học Tập
           </h1>
-          <p className="text-sm text-gray-500 mt-1">Quản lý và thống kê điểm học sinh</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Quản lý và thống kê điểm học sinh • Năm học: <span className="font-bold text-blue-600">{selectedSchoolYear === 'ALL' ? 'Tất cả năm học' : formatSchoolYear(selectedSchoolYear)}</span>
+          </p>
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 bg-blue-50/80 border border-blue-200 px-3 py-1.5 rounded-lg">
+            <Calendar size={15} className="text-blue-600 shrink-0" />
+            <label className="text-xs font-bold text-blue-900">Năm học:</label>
+            <select
+              value={selectedSchoolYear}
+              onChange={e => {
+                const sy = e.target.value;
+                setSelectedSchoolYear(sy);
+                const matching = classes.filter(c => matchesSchoolYear(c.schoolYear, sy));
+                if (matching.length > 0) {
+                  setSelectedClassId(matching[0].id);
+                } else {
+                  setSelectedClassId('');
+                  setStudents([]);
+                  setAssignments([]);
+                  setSubmissions([]);
+                }
+              }}
+              className="px-2 py-1 bg-white border border-blue-200 text-blue-900 text-xs font-bold rounded focus:ring-2 focus:ring-blue-500 outline-none"
+            >
+              <option value={getCurrentSchoolYear()}>{formatSchoolYear(getCurrentSchoolYear())} (Hiện tại)</option>
+              <option value="ALL">Tất cả năm học</option>
+              {getStandardSchoolYears()
+                .filter(sy => sy !== getCurrentSchoolYear())
+                .map(sy => (
+                  <option key={sy} value={sy}>{formatSchoolYear(sy)}</option>
+                ))}
+            </select>
+          </div>
           <div className="flex items-center gap-2">
             <label className="text-sm font-medium text-gray-700">Lớp:</label>
             <select 
               value={selectedClassId}
               onChange={e => setSelectedClassId(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium"
             >
-              {classes.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
+              {filteredClasses.length === 0 ? (
+                <option value="">-- Không có lớp --</option>
+              ) : (
+                filteredClasses.map(c => (
+                  <option key={c.id} value={c.id}>Khối {c.grade} - Lớp {c.name} ({formatSchoolYear(c.schoolYear)})</option>
+                ))
+              )}
             </select>
           </div>
           <div className="flex items-center gap-2">

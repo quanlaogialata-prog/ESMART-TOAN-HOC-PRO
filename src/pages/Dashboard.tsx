@@ -18,6 +18,12 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<Tab>(role === 'admin' ? 'admin' : (role === 'teacher' ? 'curriculum' : 'student'));
 
   useEffect(() => {
+    if (role === 'admin') setActiveTab('admin');
+    else if (role === 'teacher') setActiveTab('curriculum');
+    else if (role === 'student') setActiveTab('student');
+  }, [role]);
+
+  useEffect(() => {
     const handleSwitch = (e: any) => {
       if (e.detail?.tab) {
         setActiveTab(e.detail.tab);
@@ -27,14 +33,21 @@ export default function Dashboard() {
     return () => window.removeEventListener('switch-dashboard-tab', handleSwitch);
   }, []);
 
-  if (loading) return <div className="flex h-screen items-center justify-center">Đang tải...</div>;
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50 flex-col gap-3">
+        <div className="w-9 h-9 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+        <div className="text-gray-600 font-medium text-sm">Đang tải hệ thống ESMART...</div>
+      </div>
+    );
+  }
   if (!user) return <Navigate to="/login" />;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <header className="bg-white border-b px-6 py-4 flex flex-col lg:flex-row justify-between items-center gap-4 shrink-0 w-full">
         <div className="w-full lg:w-auto flex justify-center lg:justify-start">
-          <h1 className="text-xl font-bold text-blue-600 tracking-tight">TRUNG TÂM ESMART KB <span className="text-sm font-medium text-gray-500 ml-2">| {role?.toUpperCase()}</span></h1>
+          <h1 className="text-xl font-bold text-blue-600 tracking-tight">TRUNG TÂM ESMART <span className="text-sm font-medium text-gray-500 ml-2">| {role?.toUpperCase()}</span></h1>
         </div>
         
         {(role === 'teacher' || role === 'admin') && (
@@ -50,7 +63,7 @@ export default function Dashboard() {
             <button 
               onClick={() => setActiveTab('curriculum')}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'curriculum' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
-              title="Thư viện tài liệu tham chiếu theo từng chuyên đề và bài học của các khối lớp"
+              title="Thư viện tài liệu tham chiếu theo từng chuyên đề của các khối lớp"
             >
               📚 Thư viện tài liệu
             </button>

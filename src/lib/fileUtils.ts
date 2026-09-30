@@ -43,25 +43,29 @@ export async function ensureAttachmentDataUrl(attachment?: {
   }
 
   // Try server data endpoint
-  if (attachment.fileId) {
-    try {
-      const res = await fetch(`/api/document-file-data/${attachment.fileId}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.dataUrl) {
+  const fileNameQuery = attachment.name ? `?fileName=${encodeURIComponent(attachment.name)}` : '';
+  const targetId = attachment.fileId || 'by-name';
+
+  try {
+    const res = await fetch(`/api/document-file-data/${targetId}${fileNameQuery}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.dataUrl) {
+        if (attachment.fileId) {
           await saveFileToIDB(attachment.fileId, data.dataUrl).catch(() => {});
-          return data.dataUrl;
         }
+        return data.dataUrl;
       }
-    } catch (e) {
-      console.warn('Could not fetch document file data:', e);
     }
+  } catch (e) {
+    console.warn('Could not fetch document file data:', e);
   }
 
   // Try direct fileUrl
   if (attachment.fileUrl) {
     try {
-      const res = await fetch(attachment.fileUrl);
+      const fetchUrl = attachment.fileUrl.includes('?') ? attachment.fileUrl : `${attachment.fileUrl}${fileNameQuery}`;
+      const res = await fetch(fetchUrl);
       if (res.ok) {
         const blob = await res.blob();
         return new Promise((resolve) => {

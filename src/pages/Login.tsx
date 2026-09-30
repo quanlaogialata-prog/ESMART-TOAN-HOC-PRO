@@ -10,7 +10,14 @@ export default function Login() {
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  if (loading) return <div className="flex h-screen items-center justify-center">Đang tải...</div>;
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50 flex-col gap-3">
+        <div className="w-9 h-9 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+        <div className="text-gray-600 font-medium text-sm">Đang tải hệ thống ESMART...</div>
+      </div>
+    );
+  }
   if (user) return <Navigate to="/" />;
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -29,9 +36,39 @@ export default function Login() {
       await loginWithEmailPassword(email, password);
     } catch (err: any) {
       console.error(err);
-      setError('Tên truy cập hoặc mật khẩu không đúng!');
+      if (err.message && (
+        err.message.includes('không tồn tại') || 
+        err.message.includes('bị xóa') || 
+        err.message.includes('bị khóa') || 
+        err.message.includes('chưa được cấp quyền')
+      )) {
+        setError(err.message);
+      } else if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found') {
+        setError('Tên truy cập hoặc mật khẩu không đúng!');
+      } else {
+        setError(err.message || 'Tên truy cập hoặc mật khẩu không đúng!');
+      }
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setError('');
+    try {
+      await loginWithGoogle();
+    } catch (err: any) {
+      console.error(err);
+      if (err.message && (
+        err.message.includes('chưa được cấp quyền') || 
+        err.message.includes('không tồn tại') || 
+        err.message.includes('bị xóa') || 
+        err.message.includes('bị khóa')
+      )) {
+        setError(err.message);
+      } else if (err.code !== 'auth/popup-closed-by-user') {
+        setError('Đăng nhập Google thất bại: ' + (err.message || 'Lỗi xác thực'));
+      }
     }
   };
 
@@ -39,7 +76,7 @@ export default function Login() {
     <div className="flex h-screen items-center justify-center bg-gray-50">
       <div className="max-w-md w-full bg-white p-8 rounded-xl shadow-lg text-center">
         
-        <h1 className="text-3xl font-bold text-blue-600 mb-2">TRUNG TÂM ESMART KB</h1>
+        <h1 className="text-3xl font-bold text-blue-600 mb-2">TRUNG TÂM ESMART</h1>
         <p className="text-gray-600 mb-8">Hệ thống ôn tập và kiểm tra môn Toán</p>
         
         {error && (
@@ -86,7 +123,7 @@ export default function Login() {
         </div>
 
         <button
-          onClick={loginWithGoogle}
+          onClick={handleGoogleLogin}
           type="button"
           className="w-full bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
         >

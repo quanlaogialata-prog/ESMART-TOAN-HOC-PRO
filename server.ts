@@ -518,16 +518,19 @@ async function startServer() {
         httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
       });
       
-      const prompt = `You are an expert tutor. The attached document contains BOTH a test (questions) AND its answers/explanations.
-I need you to perfectly separate them into two distinct HTML documents.
-CRITICAL REQUIREMENT: Do NOT output JSON. Output your response using EXACTLY the following structure with these custom tags:
+      const prompt = `Bạn là một chuyên gia số hóa đề thi môn Toán tại Việt Nam.
+Tài liệu đính kèm chứa ĐỀ THI và BẢNG ĐÁP ÁN/LỜI GIẢI CHI TIẾT.
+Nhiệm vụ: Tách rời thành 2 văn bản HTML riêng biệt sạch sẽ, chuẩn mực:
+1. Đảm bảo toàn bộ câu chữ tiếng Việt sử dụng bảng mã Unicode chuẩn (NFC), tuyệt đối KHÔNG bị lỗi phông chữ (TCVN3, .VnTime).
+2. Công thức toán học giữ nguyên cú pháp LaTeX trong cặp dấu $...$ và $$...$$.
+YÊU CẦU ĐỊNH DẠNG ĐẦU RA: KHÔNG xuất JSON. Chỉ xuất đúng cấu trúc với 2 thẻ tùy chỉnh sau:
 
 [CLEAN_TEST]
-(Put beautifully formatted HTML here containing ONLY the questions. Remove all traces of correct answers, rubrics, or explanations. Preserve math using $...$ and $$...$$)
+(HTML trình bày đẹp mắt CHỈ chứa câu hỏi đề thi. Loại bỏ toàn bộ đáp án đúng, biểu điểm hay lời giải. Công thức toán bọc $...$ hoặc $$...$$)
 [/CLEAN_TEST]
 
 [ANSWERS]
-(Put beautifully formatted HTML here containing ONLY the answers, rubrics, and explanations.)
+(HTML trình bày đẹp mắt CHỈ chứa bảng đáp án, thang điểm và lời giải chi tiết từng câu.)
 [/ANSWERS]`;
 
       const response = await generateContentWithRetry(ai, {
@@ -550,7 +553,10 @@ CRITICAL REQUIREMENT: Do NOT output JSON. Output your response using EXACTLY the
           cleanTestHtml = responseText;
       }
 
-      res.json({ cleanTestHtml, answersHtml });
+      const repairedTestHtml = repairVietnameseDocument(convertTcvn3ToUnicode(cleanTestHtml));
+      const repairedAnswersHtml = repairVietnameseDocument(convertTcvn3ToUnicode(answersHtml));
+
+      res.json({ cleanTestHtml: repairedTestHtml, answersHtml: repairedAnswersHtml });
     } catch (error: any) {
       console.error("Error splitting document:", error);
       res.status(500).json({ error: "Failed to split document", details: formatError(error) });
@@ -1004,7 +1010,17 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
       let parsed = safeParseJsonArray(responseText);
       let sanitized = sanitizeQuestionFigures(parsed);
       let reconciled = reconcileAnswersWithExplanations(sanitized);
-      res.json(reconciled);
+
+      const cleaned = (reconciled || []).map((q: any) => ({
+        ...q,
+        question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+        options: Array.isArray(q.options)
+          ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || '')))
+          : [],
+        explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+        correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+      }));
+      res.json(cleaned);
     } catch (error: any) {
       res.status(500).json({ error: "Failed to generate test", details: formatError(error) });
     }
@@ -1023,15 +1039,77 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
   // In-memory cache for fast file retrieval
   const fileCache = new Map<string, { buffer: Buffer; mimeType: string; fileName: string; dataUrl?: string }>();
 
+  // Helper to match uploaded file across disk cache using multiple fuzzy/diacritic-insensitive strategies
+  const findMatchingUploadFile = (fileId?: string, queryFileName?: string): string | null => {
+    if (!fs.existsSync(UPLOADS_DIR)) return null;
+    const files = fs.readdirSync(UPLOADS_DIR);
+    if (!files || files.length === 0) return null;
+
+    // 1. Direct fileId prefix match
+    if (fileId && fileId !== 'by-name') {
+      const match = files.find(f => f.startsWith(`${fileId}_`) || f.includes(fileId));
+      if (match) return match;
+    }
+
+    if (!queryFileName) return null;
+
+    const raw = String(queryFileName).trim().toLowerCase();
+    const safe = raw.replace(/[^a-zA-Z0-9._-]/g, '_');
+
+    // 2. Direct safeName match
+    let match = files.find(f => {
+      const lower = f.toLowerCase();
+      return lower.endsWith(`_${safe}`) || lower.includes(safe);
+    });
+    if (match) return match;
+
+    // 3. Normalized alphanumeric match (stripping Vietnamese accents and special symbols)
+    const normalize = (str: string) => str
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[đĐ]/g, 'd')
+      .replace(/[^a-z0-9]/gi, '')
+      .toLowerCase();
+
+    const queryNorm = normalize(raw);
+    if (queryNorm.length >= 3) {
+      match = files.find(f => {
+        const fNorm = normalize(f);
+        return fNorm.includes(queryNorm) || queryNorm.includes(fNorm);
+      });
+      if (match) return match;
+    }
+
+    // 4. Token keyword match (e.g. "he", "phuong", "trinh")
+    const tokens = raw
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[đĐ]/g, 'd')
+      .replace(/[^a-z0-9]/gi, ' ')
+      .split(/\s+/)
+      .filter(t => t.length > 2);
+
+    if (tokens.length > 0) {
+      match = files.find(f => {
+        const fLower = normalize(f);
+        const hits = tokens.filter(t => fLower.includes(t));
+        return hits.length >= Math.min(2, tokens.length);
+      });
+      if (match) return match;
+    }
+
+    return null;
+  };
+
   // Document File Upload endpoint (stores files so Firestore document never exceeds 1MB)
   app.post("/api/upload-document-file", express.json({ limit: '50mb' }), async (req, res) => {
     try {
-      const { fileDataUrl, fileName, mimeType } = req.body;
+      const { fileDataUrl, fileName, mimeType, fileId: clientFileId } = req.body;
       if (!fileDataUrl) {
         return res.status(400).json({ error: "No file data provided." });
       }
 
-      const fileId = `doc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const fileId = clientFileId || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       const safeName = (fileName || 'document.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
       const cleanMimeType = mimeType || 'application/octet-stream';
 
@@ -1074,23 +1152,24 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
   app.get("/api/document-file/:fileId", (req, res) => {
     try {
       const { fileId } = req.params;
+      const rawQueryFileName = req.query.fileName ? String(req.query.fileName) : '';
       
       // Check cache first
-      if (fileCache.has(fileId)) {
+      if (fileId && fileId !== 'by-name' && fileCache.has(fileId)) {
         const item = fileCache.get(fileId)!;
         res.setHeader("Content-Type", item.mimeType);
-        res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(item.fileName)}"`);
+        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(item.fileName)}"`);
         return res.send(item.buffer);
       }
 
-      // Check disk
-      const files = fs.readdirSync(UPLOADS_DIR);
-      const match = files.find(f => f.startsWith(`${fileId}_`));
+      // Check disk with robust matching
+      const match = findMatchingUploadFile(fileId, rawQueryFileName);
+
       if (match) {
         const filePath = path.join(UPLOADS_DIR, match);
         const buffer = fs.readFileSync(filePath);
-        const fileName = match.replace(`${fileId}_`, '');
-        const ext = path.extname(fileName).toLowerCase();
+        const fileName = match.replace(/^[a-zA-Z0-9]+_\d+_[a-zA-Z0-9]+_/, '') || match;
+        const ext = path.extname(match).toLowerCase();
         let mime = 'application/octet-stream';
         if (ext === '.pdf') mime = 'application/pdf';
         else if (ext === '.docx') mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -1100,7 +1179,7 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
         else if (ext === '.txt') mime = 'text/plain';
 
         res.setHeader("Content-Type", mime);
-        res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(fileName)}"`);
+        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(fileName)}"`);
         return res.send(buffer);
       }
 
@@ -1115,7 +1194,9 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
   app.get("/api/document-file-data/:fileId", (req, res) => {
     try {
       const { fileId } = req.params;
-      if (fileCache.has(fileId)) {
+      const rawQueryFileName = req.query.fileName ? String(req.query.fileName) : '';
+
+      if (fileId && fileId !== 'by-name' && fileCache.has(fileId)) {
         const item = fileCache.get(fileId)!;
         if (item.dataUrl) {
           return res.json({ dataUrl: item.dataUrl });
@@ -1124,13 +1205,13 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
         return res.json({ dataUrl });
       }
 
-      const files = fs.readdirSync(UPLOADS_DIR);
-      const match = files.find(f => f.startsWith(`${fileId}_`));
+      const match = findMatchingUploadFile(fileId, rawQueryFileName);
+
       if (match) {
         const filePath = path.join(UPLOADS_DIR, match);
         const buffer = fs.readFileSync(filePath);
-        const fileName = match.replace(`${fileId}_`, '');
-        const ext = path.extname(fileName).toLowerCase();
+        const fileName = match.replace(/^[a-zA-Z0-9]+_\d+_[a-zA-Z0-9]+_/, '') || match;
+        const ext = path.extname(match).toLowerCase();
         let mime = 'application/octet-stream';
         if (ext === '.pdf') mime = 'application/pdf';
         else if (ext === '.docx') mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -1292,16 +1373,38 @@ TRẢ VỀ DUY NHẤT MỘT JSON:
 
   app.post("/api/extract-questions", async (req, res) => {
     try {
-      const { fileDataUrl, fileName, mimeType } = req.body;
+      const { fileDataUrl, fileName, mimeType, extractedText } = req.body;
       const apiKeyHeader = req.headers['x-gemini-api-key'];
       const apiKey = (Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader) || process.env.GEMINI_API_KEY_CUSTOM || process.env.GEMINI_API_KEY;
 
-      if (!fileDataUrl) return res.status(400).json({ error: "No file data provided." });
+      if (!fileDataUrl && !extractedText) return res.status(400).json({ error: "No file data or extracted text provided." });
+
+      let textToExtract = "";
+      let canSendInlineToGemini = false;
+      let base64Data = "";
+      let resolvedMime = mimeType || "application/pdf";
+
+      if (extractedText && typeof extractedText === 'string' && extractedText.trim().length > 15) {
+        textToExtract = repairVietnameseDocument(convertTcvn3ToUnicode(extractedText));
+      } else if (fileDataUrl) {
+        const extractedDoc = await extractTextFromAttachment(fileDataUrl, fileName, mimeType);
+        if (extractedDoc.text && extractedDoc.text.trim().length > 15) {
+          textToExtract = repairVietnameseDocument(convertTcvn3ToUnicode(extractedDoc.text));
+        }
+
+        base64Data = fileDataUrl.includes(',') ? fileDataUrl.split(',')[1] : fileDataUrl;
+        if (extractedDoc.isPdf) {
+          canSendInlineToGemini = true;
+          resolvedMime = "application/pdf";
+        } else if (extractedDoc.isImage) {
+          canSendInlineToGemini = true;
+          resolvedMime = mimeType || "image/jpeg";
+        }
+      }
 
       // Try AI extraction if key is available
       if (apiKey) {
         try {
-          const base64Data = fileDataUrl.split(',')[1];
           const ai = new GoogleGenAI({ 
             apiKey: apiKey,
             httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
@@ -1336,17 +1439,36 @@ For each question, output an object in a JSON array with the following fields:
 
 Output valid JSON array only, without markdown fences. Escaping backslashes for LaTeX (\\\\frac, \\\\sqrt, \\\\vec).`;
 
-          const response = await generateContentWithRetry(ai, {
-            model: "gemini-3.8-flash",
-            contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "application/pdf", data: base64Data } }, { text: prompt }] }]
-          });
+          let userContents: any[] = [];
+          if (textToExtract && textToExtract.length > 25) {
+            // Text extraction preserves 100% formatting, KaTeX, and fixes legacy fonts
+            userContents = [{ role: "user", parts: [{ text: `NỘI DUNG TÀI LIỆU ĐỀ THI:\n"""\n${textToExtract.slice(0, 120000)}\n"""\n\n${prompt}` }] }];
+          } else if (canSendInlineToGemini && base64Data) {
+            userContents = [{ role: "user", parts: [{ inlineData: { mimeType: resolvedMime, data: base64Data } }, { text: prompt }] }];
+          }
 
-          let responseText = response.text || "[]";
-          let parsed = safeParseJsonArray(responseText);
-          let sanitized = sanitizeQuestionFigures(parsed);
-          let reconciled = reconcileAnswersWithExplanations(sanitized);
-          if (Array.isArray(reconciled) && reconciled.length > 0) {
-            return res.json(reconciled);
+          if (userContents.length > 0) {
+            const response = await generateContentWithRetry(ai, {
+              model: "gemini-3.8-flash",
+              contents: userContents
+            });
+
+            let responseText = response.text || "[]";
+            let parsed = safeParseJsonArray(responseText);
+            let sanitized = sanitizeQuestionFigures(parsed);
+            let reconciled = reconcileAnswersWithExplanations(sanitized);
+            if (Array.isArray(reconciled) && reconciled.length > 0) {
+              const cleaned = reconciled.map((q: any) => ({
+                ...q,
+                question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+                options: Array.isArray(q.options) 
+                  ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+                  : [],
+                explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+                correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+              }));
+              return res.json(cleaned);
+            }
           }
         } catch (aiError) {
           console.warn("AI question extract warning, falling back to document parser:", aiError);
@@ -1354,9 +1476,17 @@ Output valid JSON array only, without markdown fences. Escaping backslashes for 
       }
 
       // Robust fallback: extract raw text and parse structure
-      const extractedDoc = await extractTextFromAttachment(fileDataUrl, fileName, mimeType);
-      const fallbackQuestions = parseQuestionsFromDocumentText(extractedDoc.text);
-      return res.json(fallbackQuestions);
+      const fallbackQuestions = parseQuestionsFromDocumentText(textToExtract);
+      const cleanedFallback = fallbackQuestions.map((q: any) => ({
+        ...q,
+        question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+        options: Array.isArray(q.options) 
+          ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+          : [],
+        explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+        correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+      }));
+      return res.json(cleanedFallback);
     } catch (error: any) {
       console.error("Extract API Error:", error);
       res.status(500).json({ error: "Failed to extract questions", details: formatError(error) });
@@ -1366,7 +1496,8 @@ Output valid JSON array only, without markdown fences. Escaping backslashes for 
   // Helper: Parse questions from raw document text when AI is unavailable or fails
   function parseQuestionsFromDocumentText(rawText: string): any[] {
     if (!rawText || rawText.trim().length === 0) return [];
-    const lines = rawText.split('\n');
+    const repairedText = repairVietnameseDocument(convertTcvn3ToUnicode(rawText));
+    const lines = repairedText.split('\n');
     const questions: any[] = [];
     let currentQ: any = null;
 
@@ -1379,7 +1510,12 @@ Output valid JSON array only, without markdown fences. Escaping backslashes for 
           currentQ.type = 'mcq';
           currentQ.points = 0.25;
         }
-        questions.push(currentQ);
+        questions.push({
+          ...currentQ,
+          question: repairVietnameseDocument(convertTcvn3ToUnicode(currentQ.question)),
+          options: Array.isArray(currentQ.options) ? currentQ.options.map((o: string) => repairVietnameseDocument(convertTcvn3ToUnicode(o))) : [],
+          explanation: repairVietnameseDocument(convertTcvn3ToUnicode(currentQ.explanation || ''))
+        });
       }
     };
 
@@ -1414,8 +1550,8 @@ Output valid JSON array only, without markdown fences. Escaping backslashes for 
     pushCurrent();
 
     // If still no questions found, create sample blocks from paragraphs
-    if (questions.length === 0 && rawText.length > 20) {
-      const paragraphs = rawText.split(/\n\s*\n/).filter(p => p.trim().length > 10);
+    if (questions.length === 0 && repairedText.length > 20) {
+      const paragraphs = repairedText.split(/\n\s*\n/).filter(p => p.trim().length > 10);
       paragraphs.slice(0, 10).forEach((p, idx) => {
         questions.push({
           id: `q_${idx + 1}`,
@@ -1441,9 +1577,19 @@ Output valid JSON array only, without markdown fences. Escaping backslashes for 
     
     const buffer = Buffer.from(base64Data, 'base64');
     const detectedMime = (mimeType || fileDataUrl.match(/data:([^;]+);/)?.[1] || '').toLowerCase();
-    const isDocx = Boolean((fileName && fileName.toLowerCase().endsWith('.docx')) || detectedMime.includes('wordprocessingml') || detectedMime.includes('docx'));
-    const isDoc = Boolean((fileName && fileName.toLowerCase().endsWith('.doc')) || detectedMime.includes('msword'));
-    const isPdf = Boolean((fileName && fileName.toLowerCase().endsWith('.pdf')) || detectedMime.includes('pdf'));
+    
+    // Magic byte checks for reliability
+    const isZipOrDocx = (buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4B && buffer[2] === 0x03 && buffer[3] === 0x04);
+    const isDocx = Boolean(
+      (fileName && fileName.toLowerCase().endsWith('.docx')) || 
+      detectedMime.includes('wordprocessingml') || 
+      detectedMime.includes('docx') ||
+      (isZipOrDocx && (!fileName || !fileName.toLowerCase().endsWith('.zip')))
+    );
+    const isDocBinary = (buffer.length >= 8 && buffer[0] === 0xD0 && buffer[1] === 0xCF && buffer[2] === 0x11 && buffer[3] === 0xE0);
+    const isDoc = Boolean((fileName && fileName.toLowerCase().endsWith('.doc')) || detectedMime.includes('msword') || isDocBinary);
+    const isPdfMagic = (buffer.length >= 4 && buffer.slice(0, 4).toString('ascii') === '%PDF');
+    const isPdf = Boolean((fileName && fileName.toLowerCase().endsWith('.pdf')) || detectedMime.includes('pdf') || isPdfMagic);
     const isTxt = Boolean((fileName && fileName.toLowerCase().endsWith('.txt')) || detectedMime.startsWith('text/'));
     const isImage = Boolean(detectedMime.startsWith('image/'));
 
@@ -2087,10 +2233,10 @@ TUYỆT ĐỐI KHÔNG thêm bất kỳ văn bản giải thích hay markdown cod
           originalId: origQ.id || `q_${idx + 1}`,
           type: q.type || origQ.type || 'mcq',
           points: q.points || origQ.points || 1,
-          question: q.question || origQ.question,
-          options: options,
-          correctAnswer: correctAnswer || origQ.correctAnswer,
-          explanation: q.explanation || ''
+          question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || origQ.question || '')),
+          options: options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))),
+          correctAnswer: typeof correctAnswer === 'string' ? repairVietnameseDocument(correctAnswer) : (correctAnswer || origQ.correctAnswer),
+          explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || ''))
         };
       });
 
@@ -2949,11 +3095,11 @@ TRẢ VỀ DUY NHẤT MỘT MẢNG JSON:
           ...q,
           id: q.id || `sep_${testIdx + 1}_q${qIdx + 1}`,
           type: q.type || (q.options?.length === 4 && (q.correctAnswer === 'A' || q.correctAnswer === 'B' || q.correctAnswer === 'C' || q.correctAnswer === 'D') ? 'mcq' : 'short'),
-          question: q.question || q.stem || q.noiDung || `Câu ${qIdx + 1}`,
-          options: Array.isArray(q.options) ? q.options : [],
-          correctAnswer: q.correctAnswer || '',
+          question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || q.stem || q.noiDung || `Câu ${qIdx + 1}`)),
+          options: Array.isArray(q.options) ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) : [],
+          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : (q.correctAnswer || ''),
           points: Number(q.points) || (q.type === 'tf' ? 1.0 : (q.type === 'short' ? 0.5 : 0.25)),
-          explanation: q.explanation || ''
+          explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || ''))
         }));
 
         const mcqCount = questions.filter((q: any) => q.type === 'mcq').length;
@@ -2974,6 +3120,7 @@ TRẢ VỀ DUY NHẤT MỘT MẢNG JSON:
         if (!title || title.length < 5) {
           title = autoDetectTestTitleFromContent(docText, testIdx, topicName, fileName);
         }
+        title = repairVietnameseDocument(convertTcvn3ToUnicode(title));
 
         const duration = Number(testItem.durationMinutes) || (title.toLowerCase().includes('15') ? 15 : 45);
 
@@ -3027,7 +3174,7 @@ TRẢ VỀ DUY NHẤT MỘT MẢNG JSON:
             });
             const fallbackQuestions = safeParseJsonArray(fallbackRes.text || "[]");
             if (Array.isArray(fallbackQuestions) && fallbackQuestions.length > 0) {
-              const fallbackTitle = autoDetectTestTitleFromContent(docText, 0, topicName, fileName) || `${topicName || 'Bài kiểm tra'} - Đề 1`;
+              const fallbackTitle = repairVietnameseDocument(convertTcvn3ToUnicode(autoDetectTestTitleFromContent(docText, 0, topicName, fileName) || `${topicName || 'Bài kiểm tra'} - Đề 1`));
               sanitizedTests.push({
                 id: `separated_test_${Date.now()}_1`,
                 title: fallbackTitle,
@@ -3037,11 +3184,11 @@ TRẢ VỀ DUY NHẤT MỘT MẢNG JSON:
                 questions: fallbackQuestions.map((q: any, i: number) => ({
                   ...q,
                   id: q.id || `fb_q${i + 1}`,
-                  question: q.question || `Câu ${i + 1}`,
-                  options: Array.isArray(q.options) ? q.options : [],
-                  correctAnswer: q.correctAnswer || '',
+                  question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || `Câu ${i + 1}`)),
+                  options: Array.isArray(q.options) ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) : [],
+                  correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : (q.correctAnswer || ''),
                   points: 0.25,
-                  explanation: q.explanation || ''
+                  explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || ''))
                 })),
                 mcqCount: fallbackQuestions.length,
                 tfCount: 0,

@@ -76,8 +76,8 @@ export default defineConfig(() => {
         includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icon.svg'],
         manifest: {
           id: '/',
-          name: 'esmart kb',
-          short_name: 'esmart kb',
+          name: 'Trung tâm ESMART',
+          short_name: 'ESMART',
           description: 'Hệ thống ôn tập và kiểm tra môn Toán',
           theme_color: '#ffffff',
           background_color: '#ffffff',

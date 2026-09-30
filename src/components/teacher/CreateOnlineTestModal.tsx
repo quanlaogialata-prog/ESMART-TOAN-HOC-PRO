@@ -35,13 +35,19 @@ import {
   FileCode,
   CheckCircle,
   RefreshCw,
-  Copy
+  Copy,
+  Pencil
 } from 'lucide-react';
+import { updateDoc, doc } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
 import MathText from '../MathText';
+import MathRadicalInput from '../common/MathRadicalInput';
+import { repairVietnameseDocument, convertTcvn3ToUnicode } from '../../lib/vietnameseFont';
 import EditQuestionsModal from './EditQuestionsModal';
 import { QuestionItem, QuestionType } from '../../types/test';
 import DocumentReferenceSelectorModal, { SelectedDocumentReference } from './DocumentReferenceSelectorModal';
 import { dataUrlToFile } from '../../lib/fileUtils';
+import { getCurrentSchoolYear, formatSchoolYear, getStandardSchoolYears, matchesSchoolYear } from '../../utils/schoolYear';
 
 interface CreateOnlineTestModalProps {
   show: boolean;
@@ -87,7 +93,9 @@ interface CreateOnlineTestModalProps {
   setNewGrade: (g: string) => void;
   newTopicId: string;
   setNewTopicId: (id: string) => void;
-  topics: Array<{ id: string; name: string; grade: number }>;
+  newSchoolYear?: string;
+  setNewSchoolYear?: (sy: string) => void;
+  topics: Array<{ id: string; name: string; grade: number; schoolYear?: string }>;
   part1Count: string;
   setPart1Count: (c: string) => void;
   part2Count: string;
@@ -169,6 +177,8 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
   setNewGrade,
   newTopicId,
   setNewTopicId,
+  newSchoolYear = getCurrentSchoolYear(),
+  setNewSchoolYear = () => {},
   topics,
   part1Count,
   setPart1Count,
@@ -287,7 +297,9 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
         },
         body: JSON.stringify({
           fileDataUrl,
-          mimeType: targetFile.type
+          fileName: targetFile.name,
+          mimeType: targetFile.type,
+          extractedText: activeRef?.knowledge ? repairVietnameseDocument(convertTcvn3ToUnicode(activeRef.knowledge)) : undefined
         })
       });
 
@@ -296,11 +308,20 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
         throw new Error(errJson.details || errJson.error || `Lỗi trích xuất câu hỏi (${res.status})`);
       }
 
-      const extracted = await res.json();
-      if (Array.isArray(extracted) && extracted.length > 0) {
+      const rawExtracted = await res.json();
+      if (Array.isArray(rawExtracted) && rawExtracted.length > 0) {
+        const extracted = rawExtracted.map((q: any) => ({
+          ...q,
+          question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+          options: Array.isArray(q.options) 
+            ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+            : [],
+          explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+        }));
         setSingleUploadedQuestions(extracted);
         if (!newTitle.trim()) {
-          const cleanName = targetFile.name.replace(/\.[^/.]+$/, "");
+          const cleanName = repairVietnameseDocument(convertTcvn3ToUnicode(targetFile.name.replace(/\.[^/.]+$/, "")));
           setNewTitle(cleanName);
         }
       } else {
@@ -613,6 +634,16 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
 
       const initializedTests = data.tests.map((t: any) => ({
         ...t,
+        title: repairVietnameseDocument(convertTcvn3ToUnicode(t.title || '')),
+        questions: Array.isArray(t.questions) ? t.questions.map((q: any) => ({
+          ...q,
+          question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+          options: Array.isArray(q.options) 
+            ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+            : [],
+          explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+        })) : [],
         selected: true
       }));
 
@@ -644,7 +675,20 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
     if (onSaveBatchTests) {
       setIsSavingBatchLocal(true);
       try {
-        await onSaveBatchTests(selected, gradeNum, targetTopicId);
+        const cleanSelected = selected.map(t => ({
+          ...t,
+          title: repairVietnameseDocument(convertTcvn3ToUnicode(t.title || '')),
+          questions: Array.isArray(t.questions) ? t.questions.map((q: any) => ({
+            ...q,
+            question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+            options: Array.isArray(q.options) 
+              ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+              : [],
+            explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+            correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+          })) : []
+        }));
+        await onSaveBatchTests(cleanSelected, gradeNum, targetTopicId);
       } finally {
         setIsSavingBatchLocal(false);
       }
@@ -899,32 +943,35 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Nút nạp tệp tài liệu này làm đề thi để trích xuất */}
-                  {activeRef.attachment?.dataUrl && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        try {
-                          const file = dataUrlToFile(
-                            activeRef.attachment!.dataUrl!, 
-                            activeRef.attachment!.name, 
-                            activeRef.attachment!.type
-                          );
-                          setNewFile(file);
-                          setOnlineCreationMode('upload');
-                          handleExtractSingleFileQuestions(file);
-                        } catch (err) {
-                          console.error("Error loading file from reference:", err);
-                        }
-                      }}
-                      className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
-                      title="Nạp tệp này làm đề thi và trích xuất câu hỏi ngay lập tức"
-                    >
-                      <Sparkles size={13} />
-                      <span>Nạp tệp làm đề & Trích xuất câu hỏi</span>
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Nút nạp tệp tài liệu này làm đề thi để trích xuất */}
+                    {activeRef.attachment?.dataUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          try {
+                            const file = dataUrlToFile(
+                              activeRef.attachment!.dataUrl!, 
+                              activeRef.attachment!.name, 
+                              activeRef.attachment!.type
+                            );
+                            setNewFile(file);
+                            setOnlineCreationMode('upload');
+                            handleExtractSingleFileQuestions(file);
+                          } catch (err) {
+                            console.error("Error loading file from reference:", err);
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                        title="Nạp tệp này làm đề thi và trích xuất câu hỏi ngay lập tức"
+                      >
+                        <Sparkles size={13} />
+                        <span>Nạp tệp làm đề & Trích xuất câu hỏi</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
+
               </div>
             )}
           </div>
@@ -2558,13 +2605,21 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
                               {(q.type === 'short' || q.type === 'essay') && (
                                 <div className="pt-1">
                                   <label className="text-[10px] font-bold text-gray-500 mb-0.5 block">Đáp số / Kết quả chính xác:</label>
-                                  <input
-                                    type="text"
-                                    value={q.correctAnswer || ''}
-                                    onChange={(e) => handleUpdateSingleQuestion(qIdx, { correctAnswer: e.target.value })}
-                                    placeholder={q.type === 'short' ? 'Ví dụ: 12 hoặc -3/4' : 'Tóm tắt kết quả chính...'}
-                                    className="w-full px-2.5 py-1 text-xs border border-gray-200 rounded-lg outline-none focus:border-indigo-400 font-bold text-indigo-900 bg-white"
-                                  />
+                                  {q.type === 'short' ? (
+                                    <MathRadicalInput
+                                      value={q.correctAnswer || ''}
+                                      onChange={(val) => handleUpdateSingleQuestion(qIdx, { correctAnswer: val })}
+                                      placeholder="Ví dụ: √2, 2√3, √3/2, 12 hoặc -3/4..."
+                                    />
+                                  ) : (
+                                    <input
+                                      type="text"
+                                      value={q.correctAnswer || ''}
+                                      onChange={(e) => handleUpdateSingleQuestion(qIdx, { correctAnswer: e.target.value })}
+                                      placeholder="Tóm tắt kết quả chính..."
+                                      className="w-full px-2.5 py-1 text-xs border border-gray-200 rounded-lg outline-none focus:border-indigo-400 font-bold text-indigo-900 bg-white"
+                                    />
+                                  )}
                                 </div>
                               )}
 
@@ -2879,7 +2934,21 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
               </div>
             )}
             
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Năm học *</label>
+                <select
+                  value={newSchoolYear}
+                  onChange={(e) => setNewSchoolYear(e.target.value)}
+                  className="w-full px-3.5 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-blue-900 bg-blue-50/40"
+                >
+                  {getStandardSchoolYears().map(sy => (
+                    <option key={sy} value={sy}>
+                      {formatSchoolYear(sy)} {sy === getCurrentSchoolYear() ? '(Hiện tại)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1">
                   {isTopicCombinedFile ? "Thời gian mặc định (phút)" : "Thời gian (phút) *"}
@@ -2920,7 +2989,7 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
                   className="w-full px-3.5 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium bg-white"
                 >
                   <option value="">-- Chọn chủ đề thuộc khối {newGrade} --</option>
-                  {topics.filter(t => t.grade === parseInt(newGrade, 10)).map(t => (
+                  {topics.filter(t => t.grade === parseInt(newGrade, 10) && matchesSchoolYear(t.schoolYear, newSchoolYear)).map(t => (
                     <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
                 </select>
@@ -3150,10 +3219,10 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
             if (ref.grade) setNewGrade(ref.grade.toString());
             if (ref.topicId) setNewTopicId(ref.topicId);
             if (!newTitle.trim()) {
-              setNewTitle(ref.lessonTitle || ref.attachment?.name || '');
+              setNewTitle(repairVietnameseDocument(convertTcvn3ToUnicode(ref.lessonTitle || ref.attachment?.name || '')));
             }
             if (ref.knowledge && setReferenceNotes) {
-              setReferenceNotes(ref.knowledge);
+              setReferenceNotes(repairVietnameseDocument(convertTcvn3ToUnicode(ref.knowledge)));
             }
           }}
         />
