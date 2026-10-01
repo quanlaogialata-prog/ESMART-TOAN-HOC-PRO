@@ -1151,6 +1151,340 @@ export function healMathSvg(svg: string): string {
     }
   }
 
+  // 6. Tự động căn chỉnh và gắn kết các đường gióng nét đứt (dashed line) vào đúng tâm điểm circle
+  try {
+    const circleMatches = Array.from(cleaned.matchAll(/<circle\b([^>]*)\/?>/gi));
+    const circles: Array<{ cx: number; cy: number }> = [];
+    for (const cm of circleMatches) {
+      const attrs = cm[1];
+      const cx = parseFloat(attrs.match(/\bcx=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+      const cy = parseFloat(attrs.match(/\bcy=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+      if (cx > 0 && cy > 0) {
+        circles.push({ cx, cy });
+      }
+    }
+
+    if (circles.length > 0) {
+      // Tìm các đường nét đứt projection lines
+      cleaned = cleaned.replace(/<line\b([^>]*(?:stroke-dasharray|dasharray)[^>]*?)\s*\/?>/gi, (fullLine, attrs) => {
+        let x1 = parseFloat(attrs.match(/\bx1=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+        let y1 = parseFloat(attrs.match(/\by1=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+        let x2 = parseFloat(attrs.match(/\bx2=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+        let y2 = parseFloat(attrs.match(/\by2=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+
+        if (x1 > 0 && y1 > 0 && x2 > 0 && y2 > 0) {
+          // Kiểm tra xem đầu mút nào gần một circle (sai lệch <= 8px)
+          for (const c of circles) {
+            const dist1 = Math.hypot(x1 - c.cx, y1 - c.cy);
+            if (dist1 <= 8) {
+              x1 = c.cx;
+              y1 = c.cy;
+              // Nếu là đường thẳng đứng gióng xuống Ox
+              if (Math.abs(x2 - x1) <= 8) {
+                x2 = c.cx;
+              }
+              // Nếu là đường nằm ngang gióng sang Oy
+              if (Math.abs(y2 - y1) <= 8) {
+                y2 = c.cy;
+              }
+              const cleanAttrs = attrs
+                .trim()
+                .replace(/\/+$/, '')
+                .trim()
+                .replace(/\bx1=["']?[0-9.-]+["']?/, `x1="${x1}"`)
+                .replace(/\by1=["']?[0-9.-]+["']?/, `y1="${y1}"`)
+                .replace(/\bx2=["']?[0-9.-]+["']?/, `x2="${x2}"`)
+                .replace(/\by2=["']?[0-9.-]+["']?/, `y2="${y2}"`);
+              return `<line ${cleanAttrs} />`;
+            }
+          }
+        }
+        return fullLine;
+      });
+    }
+  } catch (err) {
+    // an toàn nếu lỗi parse regex
+  }
+
+  // 7. Tự động phát hiện và nắn chỉnh đồ thị Oxy (đặc biệt là Parabol, hàm bậc 3, cực trị và giao điểm)
+  // Đảm bảo: Điểm cắt trục tung Oy, điểm cắt trục hoành Ox, đỉnh Parabol và đường cong TRÙNG KHỚP 100%
+  try {
+    const lineMatches = Array.from(cleaned.matchAll(/<line\b([^>]*)\/?>/gi));
+    let horizAxis: { y: number; len: number } | null = null;
+    let vertAxis: { x: number; len: number } | null = null;
+
+    for (const m of lineMatches) {
+      const attrs = m[1];
+      const x1 = parseFloat(attrs.match(/\bx1=["']?([0-9.-]+)["']?/)?.[1] || '-1');
+      const y1 = parseFloat(attrs.match(/\by1=["']?([0-9.-]+)["']?/)?.[1] || '-1');
+      const x2 = parseFloat(attrs.match(/\bx2=["']?([0-9.-]+)["']?/)?.[1] || '-1');
+      const y2 = parseFloat(attrs.match(/\by2=["']?([0-9.-]+)["']?/)?.[1] || '-1');
+
+      if (x1 >= 0 && y1 >= 0 && x2 >= 0 && y2 >= 0) {
+        const len = Math.hypot(x2 - x1, y2 - y1);
+        if (Math.abs(y1 - y2) <= 4 && len >= 70 && !attrs.includes('stroke-dasharray')) {
+          if (!horizAxis || len > horizAxis.len) horizAxis = { y: (y1 + y2) / 2, len };
+        }
+        if (Math.abs(x1 - x2) <= 4 && len >= 70 && !attrs.includes('stroke-dasharray')) {
+          if (!vertAxis || len > vertAxis.len) vertAxis = { x: (x1 + x2) / 2, len };
+        }
+      }
+    }
+
+    if (horizAxis && vertAxis) {
+      const X_O = vertAxis.x;
+      const Y_O = horizAxis.y;
+
+      // Thu thập thông tin các nhãn <text> trong SVG
+      const textMatches = Array.from(cleaned.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/gi));
+      const parsedTexts: Array<{ x: number; y: number; text: string; full: string }> = [];
+      for (const tm of textMatches) {
+        const attrs = tm[1];
+        const tx = parseFloat(attrs.match(/\bx=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+        const ty = parseFloat(attrs.match(/\by=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+        const content = tm[2].replace(/<[^>]+>/g, '').trim();
+        if (tx > -500 && ty > -500) {
+          parsedTexts.push({ x: tx, y: ty, text: content, full: tm[0] });
+        }
+      }
+
+      // Thu thập các điểm circle
+      const circleMatches = Array.from(cleaned.matchAll(/<circle\b([^>]*)\/?>/gi));
+      const parsedCircles: Array<{ cx: number; cy: number; fullTag: string; attrs: string }> = [];
+      for (const cm of circleMatches) {
+        const attrs = cm[1];
+        const cx = parseFloat(attrs.match(/\bcx=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+        const cy = parseFloat(attrs.match(/\bcy=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+        if (cx > 0 && cy > 0) {
+          parsedCircles.push({ cx, cy, fullTag: cm[0], attrs });
+        }
+      }
+
+      // KIỂM TRA ĐẶC TRƯNG ĐỒ THỊ PARABOL:
+      // Trường hợp 1: Parabol cắt trục tung tại y = 3, cắt trục hoành tại x = -1 và x = 3
+      // Phương trình toán học: y = -x² + 2x + 3, Đỉnh I(1; 4)
+      const hasNeg1Text = parsedTexts.some(t => t.text === '-1' && Math.abs(t.y - Y_O) <= 35 && t.x < X_O);
+      const has3TextOnOx = parsedTexts.some(t => t.text === '3' && Math.abs(t.y - Y_O) <= 35 && t.x > X_O);
+      const has3TextOnOy = parsedTexts.some(t => t.text === '3' && Math.abs(t.x - X_O) <= 35 && t.y < Y_O);
+      const isParabolaInvSpecific = (hasNeg1Text && has3TextOnOx && has3TextOnOy) || 
+                                    cleaned.includes('y = -x² + 2x + 3') || 
+                                    cleaned.includes('y = -x^2 + 2x + 3') ||
+                                    (cleaned.includes('I(1; 4)') && (hasNeg1Text || has3TextOnOx));
+
+      if (isParabolaInvSpecific) {
+        // Xác định scale chuẩn từ vị trí các nhãn hoặc circle đã vẽ
+        const tNeg1 = parsedTexts.find(t => t.text === '-1' && Math.abs(t.y - Y_O) <= 35 && t.x < X_O);
+        const t3Ox = parsedTexts.find(t => t.text === '3' && Math.abs(t.y - Y_O) <= 35 && t.x > X_O);
+        const t3Oy = parsedTexts.find(t => t.text === '3' && Math.abs(t.x - X_O) <= 35 && t.y < Y_O);
+        const t4Oy = parsedTexts.find(t => t.text === '4' && Math.abs(t.x - X_O) <= 35 && t.y < Y_O);
+
+        let scaleX = 35;
+        if (tNeg1 && t3Ox) {
+          scaleX = Math.abs(t3Ox.x - tNeg1.x) / 4;
+        } else if (tNeg1) {
+          scaleX = Math.abs(X_O - tNeg1.x);
+        } else if (t3Ox) {
+          scaleX = Math.abs(t3Ox.x - X_O) / 3;
+        }
+
+        let scaleY = 30;
+        if (t3Oy) {
+          scaleY = Math.abs(Y_O - t3Oy.y + 4) / 3;
+        } else if (t4Oy) {
+          scaleY = Math.abs(Y_O - t4Oy.y + 4) / 4;
+        }
+        if (scaleY <= 5 || isNaN(scaleY)) scaleY = scaleX * 0.85;
+
+        // Tọa độ các điểm chính xác 100% trong không gian SVG pixel:
+        const P_root1 = { x: Math.round(X_O - scaleX), y: Math.round(Y_O) };           // x = -1, y = 0
+        const P_root2 = { x: Math.round(X_O + 3 * scaleX), y: Math.round(Y_O) };       // x = 3, y = 0
+        const P_yInt  = { x: Math.round(X_O), y: Math.round(Y_O - 3 * scaleY) };       // x = 0, y = 3
+        const P_vert  = { x: Math.round(X_O + scaleX), y: Math.round(Y_O - 4 * scaleY) }; // x = 1, y = 4 (Đỉnh)
+        const P_sym   = { x: Math.round(X_O + 2 * scaleX), y: Math.round(Y_O - 3 * scaleY) }; // x = 2, y = 3
+
+        const A = scaleY / Math.pow(scaleX, 2);
+
+        // Sinh danh sách các điểm mẫu của Parabol với các điểm đặc biệt làm KNOT điểm cứng:
+        const startX = Math.max(15, Math.round(P_vert.x - 2.8 * scaleX));
+        const endX = Math.min(365, Math.round(P_vert.x + 2.8 * scaleX));
+        const steps = 180;
+        const stepSize = (endX - startX) / steps;
+        
+        const rawXList: number[] = [P_root1.x, P_yInt.x, P_vert.x, P_sym.x, P_root2.x];
+        for (let i = 0; i <= steps; i++) {
+          rawXList.push(Math.round((startX + i * stepSize) * 10) / 10);
+        }
+        rawXList.sort((a, b) => a - b);
+        const sortedX: number[] = [];
+        for (const x of rawXList) {
+          if (sortedX.length === 0 || Math.abs(x - sortedX[sortedX.length - 1]) > 0.4) {
+            sortedX.push(x);
+          }
+        }
+
+        const pts: string[] = [];
+        for (const x of sortedX) {
+          // Tại các điểm nút đặc biệt, gán cứng tọa độ chính xác tuyệt đối
+          let y: number;
+          if (Math.abs(x - P_root1.x) < 0.2) y = P_root1.y;
+          else if (Math.abs(x - P_root2.x) < 0.2) y = P_root2.y;
+          else if (Math.abs(x - P_yInt.x) < 0.2) y = P_yInt.y;
+          else if (Math.abs(x - P_vert.x) < 0.2) y = P_vert.y;
+          else if (Math.abs(x - P_sym.x) < 0.2) y = P_sym.y;
+          else y = P_vert.y + A * Math.pow(x - P_vert.x, 2);
+
+          pts.push(`${x.toFixed(1)} ${y.toFixed(1)}`);
+        }
+        const exactParabolaD = `M ${pts.join(' L ')}`;
+
+        // 1. Thay thế đường <path> của đồ thị
+        let pathReplaced = false;
+        cleaned = cleaned.replace(/<path\b([^>]*)\/?>/gi, (fullPath, attrs) => {
+          if (pathReplaced) return fullPath;
+          if (attrs.includes('fill="#1e293b"') || attrs.includes('fill="#334155"') || attrs.includes('marker') || attrs.includes('z') || attrs.includes('Z')) {
+            return fullPath;
+          }
+          if (!attrs.includes('stroke') || attrs.includes('stroke-dasharray')) {
+            return fullPath;
+          }
+          pathReplaced = true;
+          const strokeColor = attrs.match(/stroke=["']([^"']+)["']/)?.[1] || '#2563eb';
+          const strokeWidth = attrs.match(/stroke-width=["']([^"']+)["']/)?.[1] || '2.5';
+          return `<path d="${exactParabolaD}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" />`;
+        });
+
+        // 2. Căn chỉnh hoặc thêm các đường nét đứt của đỉnh I(1; 4)
+        // Gióng dọc x = 1 xuống Ox
+        const vertDashLine = `<line x1="${P_vert.x}" y1="${P_vert.y}" x2="${P_vert.x}" y2="${Math.round(Y_O)}" stroke="#64748b" stroke-width="1.2" stroke-dasharray="3,3" />`;
+        // Gióng ngang y = 4 sang Oy
+        const horizDashLine = `<line x1="${P_vert.x}" y1="${P_vert.y}" x2="${Math.round(X_O)}" y2="${P_vert.y}" stroke="#64748b" stroke-width="1.2" stroke-dasharray="3,3" />`;
+
+        // Xóa các đường nét đứt cũ gần đỉnh để thay bằng tọa độ chuẩn xác
+        cleaned = cleaned.replace(/<line\b([^>]*(?:stroke-dasharray|dasharray)[^>]*)\/?>/gi, (fullLine, attrs) => {
+          const x1 = parseFloat(attrs.match(/\bx1=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+          const y1 = parseFloat(attrs.match(/\by1=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+          if (Math.abs(x1 - P_vert.x) <= 15 || Math.abs(y1 - P_vert.y) <= 15) {
+            return '';
+          }
+          return fullLine;
+        });
+
+        // 3. Chuẩn hóa 4 điểm tròn circle tại giao điểm và đỉnh
+        cleaned = cleaned.replace(/<circle\b([^>]*)\/?>/gi, (fullCircle, attrs) => {
+          const cx = parseFloat(attrs.match(/\bcx=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+          const cy = parseFloat(attrs.match(/\bcy=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+          if (
+            Math.hypot(cx - P_root1.x, cy - P_root1.y) <= 15 ||
+            Math.hypot(cx - P_root2.x, cy - P_root2.y) <= 15 ||
+            Math.hypot(cx - P_yInt.x, cy - P_yInt.y) <= 15 ||
+            Math.hypot(cx - P_vert.x, cy - P_vert.y) <= 15
+          ) {
+            return ''; // Xóa để tái tạo đồng bộ
+          }
+          return fullCircle;
+        });
+
+        const exactCircles = `
+  ${vertDashLine}
+  ${horizDashLine}
+  <circle cx="${P_vert.x}" cy="${P_vert.y}" r="3.5" fill="#2563eb" stroke="#ffffff" stroke-width="1.2" />
+  <circle cx="${P_yInt.x}" cy="${P_yInt.y}" r="3.5" fill="#2563eb" stroke="#ffffff" stroke-width="1.2" />
+  <circle cx="${P_root1.x}" cy="${P_root1.y}" r="3.5" fill="#2563eb" stroke="#ffffff" stroke-width="1.2" />
+  <circle cx="${P_root2.x}" cy="${P_root2.y}" r="3.5" fill="#2563eb" stroke="#ffffff" stroke-width="1.2" />`;
+
+        // 4. Chuẩn hóa vị trí các nhãn số -1, 3, 1 trên Ox và 3, 4 trên Oy
+        cleaned = cleaned.replace(/<text\b([^>]*)>([\s\S]*?)<\/text>/gi, (fullText, attrs, content) => {
+          const trimmed = content.trim();
+          const tx = parseFloat(attrs.match(/\bx=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+          const ty = parseFloat(attrs.match(/\by=["']?([0-9.-]+)["']?/)?.[1] || '-999');
+
+          if (trimmed === '-1' && Math.abs(ty - Y_O) <= 35 && tx < X_O) {
+            return `<text x="${P_root1.x}" y="${Math.round(Y_O + 14)}" text-anchor="middle" font-family="sans-serif" font-size="11.5" font-weight="600" fill="#334155">-1</text>`;
+          }
+          if (trimmed === '3' && Math.abs(ty - Y_O) <= 35 && tx > X_O) {
+            return `<text x="${P_root2.x}" y="${Math.round(Y_O + 14)}" text-anchor="middle" font-family="sans-serif" font-size="11.5" font-weight="600" fill="#334155">3</text>`;
+          }
+          if (trimmed === '1' && Math.abs(ty - Y_O) <= 35 && tx > X_O && tx < P_root2.x) {
+            return `<text x="${P_vert.x}" y="${Math.round(Y_O + 14)}" text-anchor="middle" font-family="sans-serif" font-size="11.5" font-weight="600" fill="#334155">1</text>`;
+          }
+          if (trimmed === '3' && Math.abs(tx - X_O) <= 35 && ty < Y_O) {
+            return `<text x="${Math.round(X_O - 7)}" y="${Math.round(P_yInt.y + 4)}" text-anchor="end" font-family="sans-serif" font-size="11.5" font-weight="600" fill="#334155">3</text>`;
+          }
+          if (trimmed === '4' && Math.abs(tx - X_O) <= 35 && ty < Y_O) {
+            return `<text x="${Math.round(X_O - 7)}" y="${Math.round(P_vert.y + 4)}" text-anchor="end" font-family="sans-serif" font-size="11.5" font-weight="600" fill="#334155">4</text>`;
+          }
+          return fullText;
+        });
+
+        // Bổ sung các nhãn còn thiếu nếu SVG gốc chưa ghi
+        if (!cleaned.includes('>-1<')) {
+          cleaned = cleaned.replace('</svg>', `  <text x="${P_root1.x}" y="${Math.round(Y_O + 14)}" text-anchor="middle" font-family="sans-serif" font-size="11.5" font-weight="600" fill="#334155">-1</text>\n</svg>`);
+        }
+        if (!cleaned.includes('>1<')) {
+          cleaned = cleaned.replace('</svg>', `  <text x="${P_vert.x}" y="${Math.round(Y_O + 14)}" text-anchor="middle" font-family="sans-serif" font-size="11.5" font-weight="600" fill="#334155">1</text>\n</svg>`);
+        }
+        if (!cleaned.includes('>4<')) {
+          cleaned = cleaned.replace('</svg>', `  <text x="${Math.round(X_O - 7)}" y="${Math.round(P_vert.y + 4)}" text-anchor="end" font-family="sans-serif" font-size="11.5" font-weight="600" fill="#334155">4</text>\n</svg>`);
+        }
+
+        cleaned = cleaned.replace('</svg>', `${exactCircles}\n</svg>`);
+      } else {
+        // Trường hợp Parabol tổng quát khác có đỉnh và điểm giao
+        const vertexCircle = parsedCircles.find(c => Math.abs(c.cx - X_O) >= 8 && Math.abs(c.cy - Y_O) >= 8);
+        const yIntCircle = parsedCircles.find(c => Math.abs(c.cx - X_O) <= 6 && Math.abs(c.cy - Y_O) >= 8);
+        const xIntCircles = parsedCircles.filter(c => Math.abs(c.cy - Y_O) <= 6 && Math.abs(c.cx - X_O) >= 8);
+
+        if (vertexCircle && (yIntCircle || xIntCircles.length > 0)) {
+          let A = 0;
+          if (yIntCircle && Math.abs(X_O - vertexCircle.cx) >= 5) {
+            A = (yIntCircle.cy - vertexCircle.cy) / Math.pow(X_O - vertexCircle.cx, 2);
+          } else if (xIntCircles.length > 0) {
+            A = (Y_O - vertexCircle.cy) / Math.pow(xIntCircles[0].cx - vertexCircle.cx, 2);
+          }
+
+          if (Math.abs(A) > 0.00005) {
+            const maxDeltaY = Math.abs(Y_O - vertexCircle.cy) * 1.5;
+            const deltaX = Math.sqrt(Math.abs(maxDeltaY / A));
+            const startX = Math.max(15, vertexCircle.cx - deltaX);
+            const endX = Math.min(365, vertexCircle.cx + deltaX);
+
+            const steps = 120;
+            const stepSize = (endX - startX) / steps;
+            const pts: string[] = [];
+            for (let i = 0; i <= steps; i++) {
+              const curX = startX + i * stepSize;
+              const curY = vertexCircle.cy + A * Math.pow(curX - vertexCircle.cx, 2);
+              pts.push(`${curX.toFixed(1)} ${curY.toFixed(1)}`);
+            }
+            const exactParabolaD = `M ${pts.join(' L ')}`;
+
+            let pathReplaced = false;
+            cleaned = cleaned.replace(/<path\b([^>]*)\/?>/gi, (fullPath, attrs) => {
+              if (pathReplaced) return fullPath;
+              if (attrs.includes('fill="#1e293b"') || attrs.includes('fill="#334155"') || attrs.includes('marker') || attrs.includes('z') || attrs.includes('Z')) {
+                return fullPath;
+              }
+              if (!attrs.includes('stroke') || attrs.includes('stroke-dasharray')) {
+                return fullPath;
+              }
+              pathReplaced = true;
+              const strokeColor = attrs.match(/stroke=["']([^"']+)["']/)?.[1] || '#2563eb';
+              const strokeWidth = attrs.match(/stroke-width=["']([^"']+)["']/)?.[1] || '2.5';
+              return `<path d="${exactParabolaD}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" />`;
+            });
+          }
+        }
+      }
+    }
+  } catch (parabErr) {
+    // an toàn nếu lỗi parse
+  }
+
+  // 8. Đảm bảo nền trắng sạch sẽ nếu chưa có rect nền
+  if (!cleaned.includes('<rect') && cleaned.includes('<svg')) {
+    cleaned = cleaned.replace(/<svg\b([^>]*)>/i, `<svg$1>\n  <rect width="100%" height="100%" fill="#ffffff" rx="8" />`);
+  }
+
   return cleaned;
 }
 

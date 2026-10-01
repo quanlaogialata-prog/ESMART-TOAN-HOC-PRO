@@ -933,7 +933,21 @@ For each question, output an object in a JSON array with the following fields:
 
 Cấu hình trường hình vẽ / bảng:
 - "figureType": "none" (mặc định nếu đề không cho hình/bảng), "svg" (nếu đề bài cho đồ thị hoặc hình vẽ), "table" (nếu đề bài cho bảng biến thiên hoặc bảng số liệu)
-- "figureSvg": (Chỉ khi figureType === "svg") Chuỗi mã SVG vector hoàn chỉnh, hợp lệ, tự chứa, viewBox="0 0 380 250", nét vẽ rõ ràng (#0f172a, stroke-width="2"), nét khuất đứt đoạn (stroke-dasharray="5,4"), nhãn chữ cái (A, B, C, S, O, x, y...) bằng thẻ <text> THUẦN TÚY (TUYỆT ĐỐI KHÔNG DÙNG DẤU $ TRONG THẺ <text> CỦA SVG, TUYỆT ĐỐI KHÔNG BỌC SVG TRONG THẺ HTML NHƯ <div>). Nếu là đồ thị Oxy: trục Ox (nằm ngang) và trục Oy (thẳng đứng) BẮT BUỘC ĐỀU PHẢI CÓ MŨI TÊN VÀ CÓ NHÃN x, y, O ĐẦY ĐỦ.
+- "figureSvg": (Chỉ khi figureType === "svg") Chuỗi mã SVG vector hoàn chỉnh, hợp lệ, tự chứa, viewBox="0 0 380 260", nét vẽ rõ ràng (#0f172a, stroke-width="2"), nét khuất đứt đoạn (stroke-dasharray="5,4"), nhãn chữ cái (A, B, C, S, O, x, y...) bằng thẻ <text> THUẦN TÚY (TUYỆT ĐỐI KHÔNG DÙNG DẤU $ TRONG THẺ <text> CỦA SVG, TUYỆT ĐỐI KHÔNG BỌC SVG TRONG THẺ HTML NHƯ <div>).
+  *** QUY TẮC BẮT BUỘC ĐỂ ĐỒ THỊ OXY CHUẨN XÁC 100% VỀ TỌA ĐỘ VÀ ĐIỂM (KHÔNG ĐƯỢC LỆCH VỊ TRÍ): ***
+  1. ĐỌC KỸ TỌA ĐỘ TỪ HÌNH GỐC / ĐỀ BÀI: Tọa độ điểm cực đại, cực tiểu, đỉnh Parabol, giao điểm Oy (0, y0), giao điểm Ox (x0, 0), tiệm cận đứng, tiệm cận ngang.
+  2. CÔNG THỨC QUY ĐỔI SANG PIXEL SVG (BẮT BUỘC TUÂN THỦ ĐỂ TRỤC Y KHÔNG BỊ NGƯỢC VÀ ĐIỂM KHÔNG BỊ LỆCH):
+     - Gốc tọa độ O:
+       * Nếu đồ thị nằm chủ yếu phía trên trục Ox (ví dụ Parabol đỉnh y = 4, giao điểm Oy tại y = 3, giao điểm Ox tại x = -1 và x = 3): Đặt gốc O tại (X_O = 180, Y_O = 190), scale S = 30px (khi đó y = 3 -> Y = 100, đỉnh (1; 4) -> (210, 70), x = -1 -> (150, 190), x = 3 -> (270, 190) nằm trọn vẹn và đẹp mắt).
+       * Nếu đồ thị cân xứng 2 phía (bậc 3, trùng phương): Đặt gốc O tại (X_O = 190, Y_O = 130), scale S = 30px hoặc 35px.
+     - Tọa độ toán học (x, y) chuyển sang pixel SVG:
+       * X = X_O + (x * S)
+       * Y = Y_O - (y * S)  <-- Chú ý dấu TRỪ: y dương thì Y nhỏ hơn Y_O (ở phía trên trục Ox), y âm thì Y lớn hơn Y_O (ở phía dưới trục Ox).
+  3. ĐỒNG BỘ 100% GIỮA ĐIỂM, ĐƯỜNG GIÓNG VÀ NHÃN TRỤC:
+     - Giao điểm Oy tại y=y0: <circle cx="X_O" cy="Y_O - y0*S" r="3.5" fill="#2563eb" /> và ghi số tại <text x="X_O - 7" y="Y_O - y0*S + 4" text-anchor="end" font-size="12" fill="#334155">\${y0}</text>
+     - Giao điểm Ox tại x=x0: <circle cx="X_O + x0*S" cy="Y_O" r="3.5" fill="#2563eb" /> và ghi số tại <text x="X_O + x0*S" y="Y_O + 14" text-anchor="middle" font-size="12" fill="#334155">\${x0}</text>
+     - Đỉnh/Cực trị (x_v, y_v): <circle cx="X_O + x_v*S" cy="Y_O - y_v*S" r="3.5" fill="#2563eb" />, đường gióng dọc <line x1="X_O + x_v*S" y1="Y_O - y_v*S" x2="X_O + x_v*S" y2="Y_O" stroke="#64748b" stroke-dasharray="3,3" /> và gióng ngang <line x1="X_O + x_v*S" y1="Y_O - y_v*S" x2="X_O" y2="Y_O - y_v*S" stroke="#64748b" stroke-dasharray="3,3" />
+  4. ĐƯỜNG CONG ĐỒ THỊ (<path>): BẮT BUỘC ĐI XUYÊN QUA ĐÚNG TÂM CÁC ĐIỂM CIRCLE (X, Y) NÀY, không được lệch dù chỉ 1 pixel. Tại cực trị, tiếp tuyến phải nằm ngang (tiếp xúc đỉnh).
 - "figureTable": (Chỉ khi figureType === "table") Bảng Markdown thể hiện Bảng biến thiên hàm số hoặc Bảng tần số ghép nhóm.
   * Với BẢNG BIẾN THIÊN:
     - Hàng 1 là $x$, Hàng 2 là $y'$ hoặc $f'(x)$, Hàng 3 là $y$ hoặc $f(x)$.
@@ -1436,6 +1450,18 @@ For each question, output an object in a JSON array with the following fields:
   * For "essay": Key final answer or scoring guide summary
 - "points": Number of points (default: 0.25 for mcq, 1.0 for tf, 0.5 for short, 1.0 to 2.0 for essay)
 - "explanation": Detailed step-by-step solution in Vietnamese with LaTeX math wrapped in $
+- "figureType": "svg" | "table" | "none" (nếu câu hỏi có đồ thị hoặc hình vẽ trong tài liệu gốc -> "svg"; nếu có bảng biến thiên -> "table"; nếu đề thuần chữ -> "none")
+- "figureSvg": (Chỉ khi figureType === "svg") Chuỗi mã SVG vector hoàn chỉnh tự chứa, viewBox="0 0 380 260".
+  *** QUY TẮC BẮT BUỘC ĐỐI VỚI HÌNH VẼ ĐỒ THỊ OXY THEO HÌNH GỐC (CHÍNH XÁC 100%, TUYỆT ĐỐI KHÔNG LỆCH ĐIỂM, LỆCH TỌA ĐỘ): ***
+  1. Đọc chính xác các điểm đặc biệt từ hình gốc: Tọa độ điểm cực đại, cực tiểu, đỉnh Parabol, giao điểm Oy (0, y0), giao điểm Ox (x0, 0), tiệm cận đứng, tiệm cận ngang.
+  2. Quy đổi tọa độ toán học (x, y) sang pixel SVG:
+     - Gốc O: Đặt tại (X_O = 180, Y_O = 190) nếu đồ thị có đỉnh y > 0 (như đỉnh y = 4, giao điểm Oy y = 3, giao Ox tại x = -1 và 3); hoặc đặt tại (190, 130) nếu cân đối.
+     - Scale S = 30px hoặc 35px.
+     - X = X_O + (x * S)
+     - Y = Y_O - (y * S)  (trục Y hướng lên trên, y dương thì Y < Y_O, y âm thì Y > Y_O).
+  3. ĐỒNG BỘ TUYỆT ĐỐI 100%: Điểm <circle cx="X" cy="Y" r="3.5" fill="#2563eb" />, đường gióng nét đứt, nhãn số và đường cong <path> PHẢI TRÙNG NHAU HOÀN TOÀN, không lệch 1 pixel. Đường cong BẮT BUỘC đi xuyên qua đúng tâm các điểm circle tại giao điểm Ox, giao điểm Oy và các cực trị.
+- "figureTable": (Chỉ khi figureType === "table") Bảng Markdown bảng biến thiên hoặc bảng số liệu.
+- "figureDescription": Mô tả ngắn gọn hình vẽ (Ví dụ: "Đồ thị hàm số $y=f(x)$").
 
 Output valid JSON array only, without markdown fences. Escaping backslashes for LaTeX (\\\\frac, \\\\sqrt, \\\\vec).`;
 
@@ -2477,7 +2503,11 @@ TRẢ VỀ DUY NHẤT MỘT ĐỐI TƯỢNG JSON HỢP LỆ THEO CẤU TRÚC SAU
       "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
       "correctAnswer": "A",
       "points": 0.25,
-      "explanation": "Lời giải chi tiết: ..."
+      "explanation": "Lời giải chi tiết: ...",
+      "figureType": "svg | table | none",
+      "figureSvg": "<svg viewBox=\\"0 0 380 260\\">... (nếu câu hỏi có đồ thị Oxy hoặc hình vẽ trong tài liệu: bắt buộc đúng tọa độ (x, y) sang pixel X = 190 + x*35, Y = 130 - y*35, điểm, đường gióng và nhãn số đồng bộ 100% không lệch) ...</svg>",
+      "figureTable": "| x | ... |",
+      "figureDescription": "Mô tả hình..."
     }
   ]
 }`;
@@ -2516,6 +2546,8 @@ TRẢ VỀ DUY NHẤT MỘT ĐỐI TƯỢNG JSON HỢP LỆ THEO CẤU TRÚC SAU
       const resText = res.text || "{}";
       const testObj = extractSingleTestFromAiResponse(resText, tTitle);
       if (testObj && Array.isArray(testObj.questions) && testObj.questions.length > 0) {
+        testObj.questions = sanitizeQuestionFigures(testObj.questions);
+        testObj.questions = reconcileAnswersWithExplanations(testObj.questions);
         return testObj;
       }
     } catch (err: any) {
@@ -2533,6 +2565,8 @@ TRẢ VỀ DUY NHẤT MỘT ĐỐI TƯỢNG JSON HỢP LỆ THEO CẤU TRÚC SAU
           const resText2 = res2.text || "{}";
           const testObj2 = extractSingleTestFromAiResponse(resText2, tTitle);
           if (testObj2 && Array.isArray(testObj2.questions) && testObj2.questions.length > 0) {
+            testObj2.questions = sanitizeQuestionFigures(testObj2.questions);
+            testObj2.questions = reconcileAnswersWithExplanations(testObj2.questions);
             return testObj2;
           }
         } catch (err2) {

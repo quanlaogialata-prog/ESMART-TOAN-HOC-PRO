@@ -42,7 +42,7 @@ import { updateDoc, doc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import MathText from '../MathText';
 import MathRadicalInput from '../common/MathRadicalInput';
-import { repairVietnameseDocument, convertTcvn3ToUnicode } from '../../lib/vietnameseFont';
+import { repairVietnameseDocument, convertTcvn3ToUnicode, healMathSvg } from '../../lib/vietnameseFont';
 import EditQuestionsModal from './EditQuestionsModal';
 import { QuestionItem, QuestionType } from '../../types/test';
 import DocumentReferenceSelectorModal, { SelectedDocumentReference } from './DocumentReferenceSelectorModal';
@@ -317,7 +317,8 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
             ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
             : [],
           explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
-          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer,
+          figureSvg: q.figureSvg ? healMathSvg(q.figureSvg) : q.figureSvg
         }));
         setSingleUploadedQuestions(extracted);
         if (!newTitle.trim()) {
@@ -642,7 +643,8 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
             ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
             : [],
           explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
-          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer,
+          figureSvg: q.figureSvg ? healMathSvg(q.figureSvg) : q.figureSvg
         })) : [],
         selected: true
       }));

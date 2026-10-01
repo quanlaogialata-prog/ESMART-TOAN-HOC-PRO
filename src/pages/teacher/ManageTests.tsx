@@ -15,7 +15,7 @@ import { stripOptionPrefix, checkMcqAnswer, detectAnswerDiscrepancy, autoReconci
 import { exportGradebookPdf, exportGradebookExcel } from '../../utils/gradebookExport';
 import { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
 import { dataUrlToFile } from '../../lib/fileUtils';
-import { repairVietnameseDocument, convertTcvn3ToUnicode } from '../../lib/vietnameseFont';
+import { repairVietnameseDocument, convertTcvn3ToUnicode, healMathSvg } from '../../lib/vietnameseFont';
 import { 
   getCurrentSchoolYear, 
   formatSchoolYear, 
@@ -1547,7 +1547,8 @@ export default function ManageTests() {
                     ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
                     : [],
                   explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
-                  correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+                  correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer,
+                  figureSvg: q.figureSvg ? healMathSvg(q.figureSvg) : q.figureSvg
                 }));
                 if (createMultiVariant) {
                   const codes = customVariantCodes.split(',').map(s => s.trim()).filter(Boolean);

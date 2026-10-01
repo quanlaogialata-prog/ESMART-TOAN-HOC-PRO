@@ -17,7 +17,8 @@ import {
   Upload,
   Layers,
   ChevronRight,
-  Info
+  Info,
+  Activity
 } from 'lucide-react';
 import MathText from '../MathText';
 import QuestionVisualRenderer from '../common/QuestionVisualRenderer';
@@ -26,6 +27,7 @@ import { QuestionItem, QuestionType, QuestionReference } from '../../types/test'
 import { MATH_FIGURE_TEMPLATES, MathFigureTemplate } from '../../utils/mathFigureTemplates';
 import { stripOptionPrefix } from '../../utils/gradeEngine';
 import DocumentReferenceSelectorModal from './DocumentReferenceSelectorModal';
+import MathGraphTunerModal from './MathGraphTunerModal';
 import { repairVietnameseDocument } from '../../lib/vietnameseFont';
 
 interface EditQuestionsModalProps {
@@ -60,6 +62,7 @@ export default function EditQuestionsModal({
   });
   const [activeIndex, setActiveIndex] = useState<number>(0);
   const [showFigureTemplateModal, setShowFigureTemplateModal] = useState<boolean>(false);
+  const [showGraphTunerModal, setShowGraphTunerModal] = useState<boolean>(false);
   const [showRawSvgEditor, setShowRawSvgEditor] = useState<boolean>(false);
   const [showRefSelector, setShowRefSelector] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'content' | 'visual' | 'reference'>('content');
@@ -658,10 +661,19 @@ export default function EditQuestionsModal({
                         <div className="flex flex-wrap items-center gap-2">
                           <button
                             type="button"
+                            onClick={() => setShowGraphTunerModal(true)}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer border border-emerald-300 shadow-2xs"
+                            title="Sửa điểm cực trị, tọa độ, tiệm cận theo đúng hình gốc"
+                          >
+                            <Activity size={14} className="text-emerald-600" /> Sửa tọa độ đồ thị Oxy chuẩn xác
+                          </button>
+
+                          <button
+                            type="button"
                             onClick={() => setShowFigureTemplateModal(true)}
                             className="px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer border border-blue-200"
                           >
-                            <Layers size={14} /> Chèn mẫu hình/bảng toán học
+                            <Layers size={14} /> Chèn mẫu hình/bảng
                           </button>
 
                           <label className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-200">
@@ -766,13 +778,22 @@ export default function EditQuestionsModal({
                           <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">
                             Bạn có thể chọn từ kho hình mẫu toán học (hình chóp, lăng trụ, đồ thị, bảng biến thiên) hoặc tải ảnh lên.
                           </p>
-                          <button
-                            type="button"
-                            onClick={() => setShowFigureTemplateModal(true)}
-                            className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 shadow-sm transition-colors cursor-pointer"
-                          >
-                            + Chọn mẫu hình toán học
-                          </button>
+                          <div className="flex items-center justify-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => setShowGraphTunerModal(true)}
+                              className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
+                            >
+                              <Activity size={14} /> Vẽ đồ thị Oxy chuẩn xác
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShowFigureTemplateModal(true)}
+                              className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 shadow-sm transition-colors cursor-pointer"
+                            >
+                              + Chọn mẫu hình toán học
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1008,6 +1029,21 @@ export default function EditQuestionsModal({
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODAL HIỆU CHỈNH / TẠO ĐỒ THỊ OXY CHUẨN XÁC 100% THEO HÌNH GỐC */}
+      {showGraphTunerModal && (
+        <MathGraphTunerModal
+          show={showGraphTunerModal}
+          onClose={() => setShowGraphTunerModal(false)}
+          onApply={(svg, desc) => {
+            updateCurrentQuestion({
+              figureType: 'svg',
+              figureSvg: svg,
+              figureDescription: desc || currentQ?.figureDescription || 'Đồ thị hàm số'
+            });
+          }}
+        />
       )}
 
       {/* MODAL CHỌN BÀI HỌC THAM CHIẾU TỪ THƯ VIỆN */}

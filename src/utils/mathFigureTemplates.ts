@@ -1,3 +1,10 @@
+import { 
+  createCubicGraphSvg, 
+  createQuarticGraphSvg, 
+  createRationalGraphSvg, 
+  createParabolaGraphSvg 
+} from './mathGraphGenerator';
+
 export interface MathFigureTemplate {
   id: string;
   name: string;
@@ -106,34 +113,60 @@ export const MATH_FIGURE_TEMPLATES: MathFigureTemplate[] = [
 </svg>`
   },
   {
-    id: 'graph_cubic',
-    name: 'Đồ thị hàm số bậc ba y = ax³ + bx² + cx + d',
+    id: 'graph_cubic_std',
+    name: 'Đồ thị bậc ba y = x³ - 3x (CĐ: (-1; 2), CT: (1; -2))',
     category: 'graph',
     figureType: 'svg',
-    figureDescription: 'Đồ thị hàm số bậc ba y = f(x) có 2 điểm cực trị',
-    figureSvg: `<svg viewBox="0 0 360 260" xmlns="http://www.w3.org/2000/svg" class="w-full h-auto max-w-md mx-auto">
-  <rect width="360" height="260" fill="#f8fafc" rx="8"/>
-  <!-- Lưới tọa độ nhạt -->
-  <line x1="40" y1="130" x2="330" y2="130" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="2,2"/>
-  <line x1="180" y1="20" x2="180" y2="240" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="2,2"/>
-  <!-- Trục tọa độ Ox, Oy -->
-  <line x1="30" y1="130" x2="340" y2="130" stroke="#334155" stroke-width="2"/>
-  <polygon points="340,130 330,126 330,134" fill="#334155"/>
-  <line x1="180" y1="250" x2="180" y2="15" stroke="#334155" stroke-width="2"/>
-  <polygon points="180,15 176,25 184,25" fill="#334155"/>
-  <text x="340" y="145" font-family="sans-serif" font-style="italic" font-weight="bold" font-size="14" fill="#1e293b">x</text>
-  <text x="165" y="20" font-family="sans-serif" font-style="italic" font-weight="bold" font-size="14" fill="#1e293b">y</text>
-  <text x="168" y="145" font-family="sans-serif" font-weight="bold" font-size="13" fill="#64748b">O</text>
-  <!-- Đường cong bậc 3 -->
-  <path d="M 60,230 C 110,210 120,60 140,60 C 160,60 190,190 220,190 C 250,190 270,80 310,30" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
-  <!-- Điểm cực trị -->
-  <circle cx="140" cy="60" r="4" fill="#dc2626" />
-  <circle cx="220" cy="190" r="4" fill="#dc2626" />
-  <line x1="140" y1="60" x2="140" y2="130" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3,3" />
-  <line x1="220" y1="190" x2="220" y2="130" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3,3" />
-  <text x="135" y="145" font-family="sans-serif" font-size="12" fill="#475569">-1</text>
-  <text x="218" y="124" font-family="sans-serif" font-size="12" fill="#475569">1</text>
-</svg>`
+    figureDescription: 'Đồ thị hàm số bậc ba y = f(x) có điểm cực đại (-1; 2) và cực tiểu (1; -2)',
+    figureSvg: createCubicGraphSvg({ x1: -1, y1: 2, x2: 1, y2: -2 })
+  },
+  {
+    id: 'graph_cubic_inv',
+    name: 'Đồ thị bậc ba y = -x³ + 3x (CT: (-1; -2), CĐ: (1; 2))',
+    category: 'graph',
+    figureType: 'svg',
+    figureDescription: 'Đồ thị hàm số bậc ba y = f(x) có điểm cực tiểu (-1; -2) và cực đại (1; 2)',
+    figureSvg: createCubicGraphSvg({ x1: -1, y1: -2, x2: 1, y2: 2 })
+  },
+  {
+    id: 'graph_quartic_w',
+    name: 'Đồ thị bậc bốn trùng phương chữ W (y = x⁴ - 2x² - 1)',
+    category: 'graph',
+    figureType: 'svg',
+    figureDescription: 'Đồ thị hàm số bậc bốn trùng phương y = f(x) dạng chữ W',
+    figureSvg: createQuarticGraphSvg({ x0: 1, yExtremum: -2, yIntercept: -1 })
+  },
+  {
+    id: 'graph_quartic_m',
+    name: 'Đồ thị bậc bốn trùng phương chữ M (y = -x⁴ + 2x² + 1)',
+    category: 'graph',
+    figureType: 'svg',
+    figureDescription: 'Đồ thị hàm số bậc bốn trùng phương y = f(x) dạng chữ M',
+    figureSvg: createQuarticGraphSvg({ x0: 1, yExtremum: 2, yIntercept: 1 })
+  },
+  {
+    id: 'graph_rational',
+    name: 'Đồ thị phân thức y = (x+1)/(x-1) (TCĐ: x=1, TCN: y=1)',
+    category: 'graph',
+    figureType: 'svg',
+    figureDescription: 'Đồ thị hàm số phân thức hữu tỉ y = f(x) với tiệm cận đứng x = 1 và tiệm cận ngang y = 1',
+    figureSvg: createRationalGraphSvg({ vertAsymptote: 1, horizAsymptote: 1, yIntercept: -1 })
+  },
+  {
+    id: 'graph_parabola',
+    name: 'Đồ thị Parabol y = x² - 2x - 1 (Đỉnh I(1; -2))',
+    category: 'graph',
+    figureType: 'svg',
+    figureDescription: 'Đồ thị Parabol y = ax² + bx + c có đỉnh I(1; -2)',
+    figureSvg: createParabolaGraphSvg({ vx: 1, vy: -2, yIntercept: -1, openUp: true })
+  },
+  {
+    id: 'graph_parabola_inv',
+    name: 'Đồ thị Parabol y = -x² + 2x + 3 (Đỉnh I(1; 4), cắt Oy tại 3, cắt Ox tại -1 và 3)',
+    category: 'graph',
+    figureType: 'svg',
+    figureDescription: 'Đồ thị hàm số bậc hai y = -x² + 2x + 3 có đỉnh I(1; 4), cắt trục tung tại y = 3 và cắt trục hoành tại x = -1, x = 3',
+    figureSvg: createParabolaGraphSvg({ vx: 1, vy: 4, yIntercept: 3, openUp: false })
   },
   {
     id: 'table_variation_cubic',
@@ -144,7 +177,7 @@ export const MATH_FIGURE_TEMPLATES: MathFigureTemplate[] = [
     figureTable: `| $x$ | $-\\infty$ | | $-1$ | | $1$ | | $+\\infty$ |
 |---|---|---|---|---|---|---|---|
 | $f'(x)$ | | $+$ | $0$ | $-$ | $0$ | $+$ | |
-| $f(x)$ | $-\\infty$ | $\\nearrow$ | $3$ | $\\searrow$ | $-1$ | $\\nearrow$ | $+\\infty$ |`
+| $f(x)$ | $-\\infty$ | $\\nearrow$ | $2$ | $\\searrow$ | $-2$ | $\\nearrow$ | $+\\infty$ |`
   },
   {
     id: 'table_variation_fraction',
@@ -152,7 +185,7 @@ export const MATH_FIGURE_TEMPLATES: MathFigureTemplate[] = [
     category: 'table',
     figureType: 'table',
     figureDescription: 'Bảng biến thiên hàm số nhất biến y = (ax+b)/(cx+d)',
-    figureTable: `| $x$ | $-\\infty$ | | $2$ | | $+\\infty$ |
+    figureTable: `| $x$ | $-\\infty$ | | $1$ | | $+\\infty$ |
 |---|---|---|---|---|---|
 | $y'$ | | $-$ | $\\|$ | $-$ | |
 | $y$ | $1$ | $\\searrow$ | $-\\infty \\quad \\| \\quad +\\infty$ | $\\searrow$ | $1$ |`

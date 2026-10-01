@@ -49,7 +49,7 @@ import { stripOptionPrefix, detectAnswerDiscrepancy, autoReconcileQuestion } fro
 import EditQuestionsModal from '../../components/teacher/EditQuestionsModal';
 import DocumentReferenceSelectorModal, { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
 import { dataUrlToFile } from '../../lib/fileUtils';
-import { repairVietnameseDocument, convertTcvn3ToUnicode } from '../../lib/vietnameseFont';
+import { repairVietnameseDocument, convertTcvn3ToUnicode, healMathSvg } from '../../lib/vietnameseFont';
 import { 
   getCurrentSchoolYear, 
   formatSchoolYear, 
@@ -94,7 +94,7 @@ function ExamPaperContent({ test, variant }: { test: OfflineTest; variant: TestV
         {/* Left Header */}
         <div className="w-[58%] text-center">
           <div className="font-bold uppercase text-[13px] tracking-wide text-gray-900">
-            {test.schoolName ? test.schoolName.replace(/ESMART\s+KB/gi, 'ESMART') : 'TRUNG TÂM LUYỆN THI ESMART'}
+            {test.schoolName ? test.schoolName.replace(/ESMART\s+KB/gi, 'ESMART').replace(/TRUNG TÂM LUYỆN THI ESMART/gi, 'TRUNG TÂM ESMART') : 'TRUNG TÂM ESMART'}
           </div>
           <div className="font-semibold text-xs mt-0.5 text-gray-800">
             TỔ CHUYÊN MÔN: {test.subject?.toUpperCase() || 'TOÁN HỌC'}
@@ -682,7 +682,7 @@ export default function ManageOfflineTests() {
 
   // --- FORM STATE FOR CREATE MODAL ---
   // Common exam header configuration
-  const [schoolName, setSchoolName] = useState('TRUNG TÂM LUYỆN THI ESMART');
+  const [schoolName, setSchoolName] = useState('TRUNG TÂM ESMART');
   const [examHeader, setExamHeader] = useState('ĐỀ KIỂM TRA ĐỊNH KỲ MÔN TOÁN');
   const [examSubject, setExamSubject] = useState('Toán học');
   const [examGrade, setExamGrade] = useState<number>(10);
@@ -1142,7 +1142,7 @@ export default function ManageOfflineTests() {
       // Create new offline test document in Firestore
       const newOfflineTest: Omit<OfflineTest, 'id'> = {
         title: examTitle.trim() || `${selected.title} (Bản in Offline)`,
-        schoolName: schoolName.trim() || 'TRUNG TÂM LUYỆN THI ESMART',
+        schoolName: schoolName.trim() || 'TRUNG TÂM ESMART',
         examHeader: examHeader.trim() || 'ĐỀ KIỂM TRA ĐỊNH KỲ MÔN TOÁN',
         grade: examGrade,
         subject: examSubject,
@@ -1214,7 +1214,8 @@ export default function ManageOfflineTests() {
           question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
           options: Array.isArray(q.options) ? q.options.map((o: string) => repairVietnameseDocument(convertTcvn3ToUnicode(o || ''))) : [],
           explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
-          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer,
+          figureSvg: q.figureSvg ? healMathSvg(q.figureSvg) : q.figureSvg
         }));
         setExtractedQuestions(questions);
 
@@ -1285,7 +1286,8 @@ export default function ManageOfflineTests() {
             question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
             options: Array.isArray(q.options) ? q.options.map((o: string) => repairVietnameseDocument(convertTcvn3ToUnicode(o || ''))) : [],
             explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
-            correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+            correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer,
+            figureSvg: q.figureSvg ? healMathSvg(q.figureSvg) : q.figureSvg
           }));
           setExtractedQuestions(questions);
 
@@ -1406,7 +1408,7 @@ export default function ManageOfflineTests() {
 
       const newOfflineTest: Omit<OfflineTest, 'id'> = {
         title: repairVietnameseDocument(convertTcvn3ToUnicode(examTitle.trim() || 'Đề thi offline')),
-        schoolName: repairVietnameseDocument(convertTcvn3ToUnicode(schoolName.trim() || 'TRUNG TÂM LUYỆN THI ESMART')),
+        schoolName: repairVietnameseDocument(convertTcvn3ToUnicode(schoolName.trim() || 'TRUNG TÂM ESMART')),
         examHeader: repairVietnameseDocument(convertTcvn3ToUnicode(examHeader.trim() || 'ĐỀ KIỂM TRA ĐỊNH KỲ MÔN TOÁN')),
         grade: examGrade,
         subject: examSubject,
