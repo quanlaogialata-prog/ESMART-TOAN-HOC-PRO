@@ -806,12 +806,52 @@ export function formatMathExpressions(raw: string): string {
   if (!raw) return '';
   let text = raw;
 
+  // 0. Sửa lỗi ký tự thoát dòng và phục hồi các lệnh LaTeX bị đứt gãy do \n (như \ne -> \n e, \notin -> \n otin)
+  text = text.replace(/\\r\\n/g, '\n');
+  // 0.0 Phục hồi triệt để các trường hợp \left bị gãy thành \le ft hoặc \neq bị gãy thành \ne q từ dữ liệu cũ
+  text = text.replace(/\\le\s+ft(?=[^a-zA-Z]|$)/g, '\\left');
+  text = text.replace(/\\ne\s+q(?=[^a-zA-Z0-9]|$)/g, '\\neq');
+  text = text.replace(/\\ge\s+q(?=[^a-zA-Z0-9]|$)/g, '\\geq');
+  text = text.replace(/\\n(?=[A-ZÀ-ỹa-z0-9\-\*\s])/g, (_match, offset, full) => {
+    const rest = full.slice(offset);
+    if (/^\\n(e|eq|otin|earrow|abla|u)\b/.test(rest)) {
+      return '\\n'; // giữ nguyên macro latex
+    }
+    return '\n';
+  });
+  text = text.replace(/(?:^|\n)\s*e\s+([a-zA-Z0-9\-\+\\]+)/g, ' \\ne $1');
+  text = text.replace(/([^\n])\s*\n\s*e\s+([a-zA-Z0-9\-\+\\]+)/g, '$1 \\ne $2');
+  text = text.replace(/(?:^|\n)\s*otin\b/g, ' \\notin');
+  text = text.replace(/([^\n])\s*\n\s*otin\b/g, '$1 \\notin');
+  text = text.replace(/(?:^|\n)\s*earrow\b/g, ' \\nearrow');
+  text = text.replace(/([^\n])\s*\n\s*earrow\b/g, '$1 \\nearrow');
+  text = text.replace(/(?:^|\n)\s*eq\b/g, ' \\neq');
+  text = text.replace(/([^\n])\s*\n\s*eq\b/g, '$1 \\neq');
+
   // HỆ THỐNG TOKEN HÓA TOÁN HỌC AN TOÀN TUYỆT ĐỐI (SAFE TOKENIZATION ENGINE)
   // Đảm bảo không có bất kỳ regex nào can thiệp chồng chéo làm hỏng biểu thức toán
   const mathTokens: string[] = [];
   function addToken(math: string, isBlock = false): string {
+    let clean = math.trim();
+    // Khôi phục đệ quy nếu bên trong đã chứa token để tránh nested token
+    while (/___MATH_TOK_(\d+)___/.test(clean)) {
+      clean = clean.replace(/___MATH_TOK_(\d+)___/g, (_m, i) => {
+        const tok = mathTokens[Number(i)] || '';
+        return tok.replace(/^\$+|\$+$/g, '').trim();
+      });
+    }
+    clean = clean.trim();
+    if (clean.startsWith('$$') && clean.endsWith('$$') && clean.length > 4) {
+      clean = clean.slice(2, -2).trim();
+      isBlock = true;
+    } else if (clean.startsWith('$') && clean.endsWith('$') && clean.length > 2) {
+      clean = clean.slice(1, -1).trim();
+    }
+    // Không cho phép ngắt dòng bên trong công thức inline (tránh làm gãy khoảng/đoạn hoặc KaTeX)
+    if (!isBlock && !/\\begin\{(?:aligned|cases|matrix|pmatrix|bmatrix|vmatrix|gathered)\}/.test(clean)) {
+      clean = clean.replace(/\r?\n+/g, ' ');
+    }
     const idx = mathTokens.length;
-    const clean = math.trim();
     if (isBlock) {
       mathTokens.push(`$$${clean}$$`);
     } else {
@@ -846,9 +886,9 @@ export function formatMathExpressions(raw: string): string {
 
   // 1.4 Inline math $...$
   text = text.replace(/\$([^\$\n]+?)\$/g, (_m, inner) => {
-    // Chỉ giải cứu nếu là cả một câu văn tiếng Việt dài bị bọc nhầm trong dấu $
+    // Chỉ giải cứu nếu là cả một câu văn tiếng Việt dài thuần túy bị bọc nhầm trong dấu $
     const trimmed = inner.trim();
-    if (hasVietnameseText(trimmed) && !/\\(?:frac|dfrac|tfrac|sqrt|sum|int|begin|vec|overrightarrow|widehat|overline|le|ge|ne|alpha|beta|pi)\b/.test(trimmed)) {
+    if (hasVietnameseText(trimmed) && !trimmed.includes('\\') && !/\\(?:frac|dfrac|tfrac|sqrt|sum|int|begin|vec|overrightarrow|widehat|overline|le|ge|ne|alpha|beta|pi|text|mathrm|mathbf|mathbb|mathcal)\b/.test(trimmed)) {
       const words = trimmed.split(/\s+/);
       if (words.length >= 3) {
         return ` ${trimmed} `;
@@ -857,13 +897,40 @@ export function formatMathExpressions(raw: string): string {
     return addToken(inner, false);
   });
 
+  // 1.5 Nhận diện biểu thức chứa \left ... \right ở ngoài dấu $
+  // Ví dụ: x \in \left(0; \frac{\pi}{2}\right), t \in \left(0; 1\right), \left(0; \frac{\pi}{2}\right)
+  text = text.replace(
+    /(?<![a-zA-Z0-9\$\\])\b([a-zA-Z])\s*(\\in|\\notin)\s*(\\left\s*(?:[\(\[\{<\.\|\/]|\\\{|\\\|)[^$\n]*?\\right\s*(?:[\)\]\}>\.\|\/]|\\\}|\\\|))/g,
+    (_m, v, op, target) => addToken(`${v} ${op} ${target}`)
+  );
+  text = text.replace(
+    /(?<![a-zA-Z0-9\$\\])(\\left\s*(?:[\(\[\{<\.\|\/]|\\\{|\\\|)[^$\n]*?\\right\s*(?:[\)\]\}>\.\|\/]|\\\}|\\\|))/g,
+    (_m, target) => addToken(target)
+  );
+
+  // 1.6 Nhận diện biểu thức lượng giác và phép gán biến: t = \cos x, y = \sin x, t = \cos(2x)...
+  text = text.replace(
+    /(?<![a-zA-Z0-9\$\\])\b([a-zA-Z])\s*=\s*\\(cos|sin|tan|cot)\s+([a-zA-Z0-9\\]+)/g,
+    (_m, v, fn, arg) => addToken(`${v} = \\${fn} ${arg}`)
+  );
+
   // BƯỚC 2: XỬ LÝ VĂN BẢN VÀ CÁC BIỂU THỨC CHƯA CÓ DẤU $ (BÊN NGOÀI KHỐI TOÁN)
   // 2.1 Ngắt dòng đề mục, câu hỏi, các bước và lời giải nếu bị dính liền thiếu ngắt dòng
-  text = text.replace(/([^\n])\s*(\*\*(?:Ví\s*dụ\s*\d+\.?|Bài\s*\d+\.?|Câu\s*\d+:?|Dạng\s*\d+\.?)\*\*|Ví\s*dụ\s*\d+\.|Bài\s*\d+\.|Câu\s*\d+:|Dạng\s*\d+\.)/g, '$1\n\n$2');
-  text = text.replace(/([^\n])\s*(\*\*Lời giải\*\*|Lời giải:|\*\*Hướng dẫn giải\*\*|Hướng dẫn giải:)/g, '$1\n\n$2\n\n');
-  text = text.replace(/([^\n])\s*([1-9]\))\s*/g, '$1\n\n$2 ');
+  text = text.replace(/([^\n])\s*(\*\*(?:Ví\s*dụ\s*\d+\.?|Bài\s*\d+\.?|Câu\s*\d+:?|Dạng\s*\d+\.?|Bước\s*\d+:?|Trường\s*hợp\s*\d+:?|TH\s*\d+:?)\*\*|Ví\s*dụ\s*\d+\.|Bài\s*\d+\.|Câu\s*\d+:|Dạng\s*\d+\.|Bước\s*\d+:|Trường\s*hợp\s*\d+:|TH\s*\d+:)/g, '$1\n\n$2');
+  text = text.replace(/([^\n])\s*(\*\*Lời giải\*\*|Lời giải:|\*\*Hướng dẫn giải\*\*|Hướng dẫn giải:|\*\*Phương pháp giải\*\*|Phương pháp giải:)/g, '$1\n\n$2\n\n');
+  
+  // Chỉ ngắt dòng cho 1), 2), 3) nếu là đầu dòng hoặc sau dấu chấm câu / kết thúc câu
+  // TUYỆT ĐỐI KHÔNG ngắt dòng nếu đứng sau dấu chấm phẩy (;), dấu phẩy (,), dấu mở ngoặc (, [, {, dấu toán học
+  // để tránh làm vỡ khoảng/đoạn như (-1; 2), (-\infty; 2)
+  text = text.replace(/(?<![;,\(\[\{\$a-zA-Z0-9_\+\-\*\/\\=<>])\s*([1-9]\))\s*(?=[A-ZÀ-ỹa-z\$\\\*])/g, '\n\n$1 ');
   text = text.replace(/([^\n])\s*(Vậy\s+(?:\$|\\\$|[a-zA-ZÀ-ỹ]))/g, '$1\n\n$2');
-  text = text.replace(/([^\n])\s*(\b[a-d]\))\s*/g, '$1\n\n$2 ');
+  text = text.replace(/(?<![ýÝ]\s*)(?<!khẳng\s+định\s*)(?<!mệnh\s+đề\s*)(?<!\bý\s*)(?<![a-zA-ZÀ-ỹ]\s+)(\b[a-d]\))\s*/gi, (match, p1, offset, str) => {
+    const prefix = str.substring(Math.max(0, offset - 25), offset);
+    if (/(?:ý|mệnh\s+đề|khẳng\s+định|vậy|chọn|do\s+đó|nên|xét)\s*$/i.test(prefix)) {
+      return (prefix.endsWith(' ') ? '' : ' ') + p1 + " ";
+    }
+    return "\n\n" + p1 + " ";
+  });
 
   // 2.2 Sửa lỗi artifact MathType \undefined hoặc undefined trong văn bản
   text = text.replace(/(\([I|V|X|\d]+\))\s*\\?undefined\s*/gi, '$1 \\Leftrightarrow ');
@@ -910,37 +977,141 @@ export function formatMathExpressions(raw: string): string {
   });
   text = text.replace(/\b(\d+(?:\.\d+)?)\s*\^\s*\\circ\b/g, (_m, p1) => addToken(`${p1}^\\circ`));
 
-  // 2.5 Các ký hiệu toán lẻ ngoài dấu $
-  text = text.replace(/\\(nearrow|searrow|uparrow|downarrow|infty|pm|mp|leq|geq|le|ge|in|notin|subset|supset|cup|cap|emptyset|approx|equiv|forall|exists|alpha|beta|gamma|theta|pi|Delta|lambda|sigma|omega|Omega|times|div|neq)\b/g, (_m, p1) => addToken(`\\${p1}`));
+  // 2.5 KHOẢNG ĐOẠN, HỢP TẬP HỢP, TẬP SỐ VÀ BẤT ĐẲNG THỨC NGOÀI $
+  // (Ưu tiên xử lý TRƯỚC ký hiệu đơn lẻ để không làm vỡ các biểu thức chứa \infty, \cup, \cap...)
+  
+  // A. Khoảng / đoạn và hợp các khoảng đoạn (ví dụ: (-\infty; -6), (3; 6], [2; +\infty), (-\infty; 1) \cup (2; +\infty), (-1; 2))
+  text = text.replace(
+    /(?<![a-zA-Z0-9\$\\])([\(\[][\+\-]?\s*(?:\d+(?:\.\d+)?|\\infty|[a-zA-Z])\s*;\s*[\+\-]?\s*(?:\d+(?:\.\d+)?|\\infty|[a-zA-Z])[\)\]](?:\s*(?:\\cup|\\cap|\\setminus)\s*[\(\[][\+\-]?\s*(?:\d+(?:\.\d+)?|\\infty|[a-zA-Z])\s*;\s*[\+\-]?\s*(?:\d+(?:\.\d+)?|\\infty|[a-zA-Z])[\)\]])*)/g,
+    (_m, coord) => addToken(coord)
+  );
+
+  // B. Tập xác định D = \mathbb{R} \setminus \{...\}
+  text = text.replace(
+    /(?<![a-zA-Z0-9\$\\])\b([Dxyf])\s*=\s*(\\mathbb\{[a-zA-Z]+\}|\b[RZNQ]\b)\s*\\setminus\s*(___MATH_TOK_\d+___|\\\{[^\\\}]+\\\})/g,
+    (_m, p1, p2, p3) => {
+      let cleanSet = p3;
+      const tokM = p3.match(/^___MATH_TOK_(\d+)___$/);
+      if (tokM) {
+        cleanSet = (mathTokens[Number(tokM[1])] || '').replace(/^\$+|\$+$/g, '');
+      }
+      return addToken(`${p1} = ${p2} \\setminus ${cleanSet}`);
+    }
+  );
+
+  // C. Tập hợp liệt kê phần tử dạng \{...\} (hỗ trợ dấu âm, phân số, \dots, dấu chấm phẩy)
+  text = text.replace(
+    /(?<![a-zA-Z0-9\$\\])(\\\{\s*[+\-]?[0-9a-zA-Z\\_\dots\.,;\s\+\-]+\s*\\\})/g,
+    (_m, setStr) => addToken(setStr)
+  );
+
+  // D. Thuộc / không thuộc khoảng đoạn hoặc tập hợp (m \in (-\infty; 2), m \in [-10; 10], m \in \{-10, ..., 1\})
+  text = text.replace(
+    /(?<![a-zA-Z0-9\$\\])\b([a-zA-Z])\s*(\\in|\\notin)\s*(___MATH_TOK_\d+___|\\\{[^\\\}]+\\\}|[\(\[][\+\-]?\s*(?:\d+(?:\.\d+)?|\\infty|[a-zA-Z])\s*;\s*[\+\-]?\s*(?:\d+(?:\.\d+)?|\\infty|[a-zA-Z])[\)\]]|\\mathbb\{[a-zA-Z]+\}|\b[RZNQ]\b)/g,
+    (_m, v, op, target) => {
+      let cleanTarget = target;
+      const tokMatch = target.match(/^___MATH_TOK_(\d+)___$/);
+      if (tokMatch) {
+        cleanTarget = (mathTokens[Number(tokMatch[1])] || "").replace(/^\$+|\$+$/g, "");
+      }
+      return addToken(`${v} ${op} ${cleanTarget}`);
+    }
+  );
+
+  // E. Bất đẳng thức kép ngoài $ (-1 < m < 2, -10 \le m \le 10, 3 < m \le 6)
+  text = text.replace(
+    /(?<![a-zA-Z0-9\$\\])([+\-]?[0-9a-zA-Z\\]+)\s*(<|<=|>|>=|\\le|\\ge|\\leq|\\geq)\s*([a-zA-Z])\s*(<|<=|>|>=|\\le|\\ge|\\leq|\\geq)\s*([+\-]?[0-9a-zA-Z\\]+)(?![a-zA-Z0-9_\$\^])/g,
+    (_m, p1, op1, varName, op2, p2) => {
+      const cleanOp1 = (op1 === '<=' || op1 === '\\leq') ? '\\le' : (op1 === '>=' || op1 === '\\geq') ? '\\ge' : op1;
+      const cleanOp2 = (op2 === '<=' || op2 === '\\leq') ? '\\le' : (op2 === '>=' || op2 === '\\geq') ? '\\ge' : op2;
+      return addToken(`${p1} ${cleanOp1} ${varName} ${cleanOp2} ${p2}`);
+    }
+  );
+
+  // F. Điều kiện tham số, biểu thức nhị thức bậc nhất, đạo hàm và biệt thức ngoài $
+  // Hỗ trợ: y' > 0, -m + 2 > 0, 2 - m > 0, m < 2, m \ge 2, \Delta \le 0, m - 2 < 0
+  text = text.replace(
+    /(?<![a-zA-Z0-9\$\\])((?:\\Delta|y'|f'\(x\)|[+\-]?(?:[a-zA-Z]|\d+)(?:\s*[+\-]\s*(?:[a-zA-Z]|\d+))?))\s*(<=|>=|!=|<|>|\\le|\\ge|\\leq|\\geq|\\neq|\\ne)\s*([+\-]?(?:[0-9]+(?:\.[0-9]+)?|[a-zA-Z]|\\(?:d|t)?frac\{[^{}]+\}\{[^{}]+\}))(?![a-zA-Z0-9_\$\^])/g,
+    (_m, v, op, right) => {
+      const cleanOp = (op === '<=' || op === '\\leq') ? '\\le' : (op === '>=' || op === '\\geq') ? '\\ge' : (op === '!=' || op === '\\ne') ? '\\neq' : op;
+      return addToken(`${v.trim()} ${cleanOp} ${right.trim()}`);
+    }
+  );
+  text = text.replace(
+    /(?<![a-zA-Z0-9\$\\])(-[a-zA-Z])\s*(<=|>=|!=|<|>|\\le|\\ge|\\leq|\\geq|\\neq|\\ne)\s*([+\-]?[0-9]+(?:\.[0-9]+)?)(?![a-zA-Z0-9_\$\^])/g,
+    (_m, v, op, right) => {
+      const cleanOp = (op === '<=' || op === '\\leq') ? '\\le' : (op === '>=' || op === '\\geq') ? '\\ge' : (op === '!=' || op === '\\ne') ? '\\neq' : op;
+      return addToken(`${v} ${cleanOp} ${right}`);
+    }
+  );
+
+  // G. Phương trình hàm số ngoài $ (y = \frac{x-2}{x-m}, y' = \frac{...}{...} > 0)
+  text = text.replace(
+    /(?<![a-zA-Z0-9\$\\\+\-])\b([yf](?:\([a-zA-Z]\))?(?:')?)\s*=\s*(___MATH_TOK_\d+___|\\?(?:d|t)?frac\{[^{}]+\}\{[^{}]+\}|[+\-]?(?:\d+(?:\.\d+)?|\d+\/\d+))(?:\s*(<=|>=|!=|<|>|\\le|\\ge|\\leq|\\geq|\\neq|\\ne)\s*([+\-]?[0-9]+))?(?![a-zA-Z0-9_\$\^])/g,
+    (_m, p1, p2, relOp, relRight) => {
+      let cleanP2 = p2;
+      const tokM = p2.match(/^___MATH_TOK_(\d+)___$/);
+      if (tokM) {
+        cleanP2 = (mathTokens[Number(tokM[1])] || "").replace(/^\$+|\$+$/g, "");
+      }
+      if (relOp && relRight) {
+        const cleanRel = (relOp === '<=' || relOp === '\\leq') ? '\\le' : (relOp === '>=' || relOp === '\\geq') ? '\\ge' : (relOp === '!=' || relOp === '\\ne') ? '\\neq' : relOp;
+        return addToken(`${p1} = ${cleanP2} ${cleanRel} ${relRight}`);
+      }
+      return addToken(`${p1} = ${cleanP2}`);
+    }
+  );
+
+  // 2.6 Ký hiệu toán đơn lẻ còn lại ngoài $
+  text = text.replace(/\\(nearrow|searrow|uparrow|downarrow|infty|pm|mp|leq|geq|le|ge|in|notin|subset|supset|cup|cap|emptyset|approx|equiv|forall|exists|alpha|beta|gamma|theta|pi|Delta|lambda|sigma|omega|Omega|times|div|neq|setminus)\b/g, (_m, p1) => addToken(`\\${p1}`));
+  text = text.replace(/\\mathbb\{([a-zA-Z]+)\}/g, (_m, p1) => addToken(`\\mathbb{${p1}}`));
   text = text.replace(/\\cdot/g, () => addToken('\\cdot'));
   text = text.replace(/\\parallel/g, () => addToken('\\parallel'));
   text = text.replace(/\\perp/g, () => addToken('\\perp'));
 
-  // 2.6 Toán tử so sánh rõ ràng ngoài $ (x <= 3, n >= -1, x != 0)
-  text = text.replace(/\b([a-zA-Z0-9_\(\)]+)\s*<=\s*([\+\-]?[0-9a-zA-Z_\(\)]+)/g, (_m, p1, p2) => addToken(`${p1} \\le ${p2}`));
-  text = text.replace(/\b([a-zA-Z0-9_\(\)]+)\s*>=\s*([\+\-]?[0-9a-zA-Z_\(\)]+)/g, (_m, p1, p2) => addToken(`${p1} \\ge ${p2}`));
-  text = text.replace(/\b([a-zA-Z0-9_\(\)]+)\s*!=\s*([\+\-]?[0-9a-zA-Z_\(\)]+)/g, (_m, p1, p2) => addToken(`${p1} \\neq ${p2}`));
-
-  // 2.7 Tọa độ ngoài $
-  text = text.replace(/(?<![a-zA-Z0-9\$\\])([\(\[][\+\-]?(?:\d+|\\infty)\s*;\s*[\+\-]?(?:\d+|\\infty)[\)\]])/g, (_m, coord) => addToken(coord));
-
-  // 2.8 Biểu thức phương trình đơn giản chưa có $ (ví dụ: m = \frac{1}{5}, x = 1, y = -1)
-  text = text.replace(
-    /(?<![a-zA-Z0-9\$\\\+\-])\b([0-9]*[a-zA-Z])\s*=\s*(\\?(?:d|t)?frac\{[^{}]+\}\{[^{}]+\}|[+\-]?(?:\d+(?:\.\d+)?|\d+\/\d+))(?![a-zA-Z0-9_\$\^])/g,
-    (_m, p1, p2) => addToken(`${p1} = ${p2}`)
-  );
-
-  // 2.9 Dãy số / chỉ số dưới có dấu bằng: u_2 = 3, u_n = 2n + 1 hoặc biến có chỉ số u_1, x_0
-  // CHỈ áp dụng cho các biến toán học đơn lẻ (u, x, y, z, a, b, c, n, k, m) theo sau bởi số hoặc n, k, m
-  // Tuyệt đối không khớp với từ tiếng Việt có dấu gạch dưới như giai_Toan, tap_hop, file_name
+  // 2.7 Dãy số / chỉ số dưới có dấu bằng: u_2 = 3, u_n = 2n + 1 hoặc biến có chỉ số u_1, x_0
   text = text.replace(/(?<![\p{L}\p{N}\$\\])([uxyzabcnkm])_([0-9]+|[nkm])(\s*=\s*[0-9a-zA-Z\+\-\*\/]+)?(?![\p{L}\p{N}\$_])/gu, (_m, p1, p2, p3) => addToken(`${p1}_${p2}${p3 || ''}`));
 
-  // BƯỚC 3: KHÔI PHỤC TOÀN BỘ CÔNG THỨC TOÁN AN TOÀN, NGUYÊN VẸN 100%
-  text = text.replace(/___MATH_TOK_(\d+)___/g, (_m, idx) => {
-    return mathTokens[Number(idx)] || '';
-  });
+  // 2.8 Phương án trắc nghiệm A. B. C. D. có nội dung toán học thuần túy
+  text = text.replace(
+    /(?:^|(?<=[\n\r]))\s*([A-Da-d][\.\)\:])\s*([^\n\r]+)/g,
+    (match, prefix, rest) => {
+      const trimmedRest = rest.trim();
+      // Nếu đã chứa token hoặc đã có $, không bọc thêm token mới
+      if (trimmedRest.startsWith('___MATH_TOK_') && trimmedRest.endsWith('___')) {
+        return `${prefix} ${trimmedRest}`;
+      }
+      if (!trimmedRest.includes('$') && !trimmedRest.includes('___MATH_TOK_') && /^[+\-]?[0-9a-zA-Z\\_\{\}\(\)\[\];,\s\+\-\*\/\^<>=!]+$/.test(trimmedRest) && /[0-9a-zA-Z\\]/.test(trimmedRest) && !hasVietnameseText(trimmedRest)) {
+        return `${prefix} ${addToken(trimmedRest)}`;
+      }
+      return match;
+    }
+  );
 
-  // Step 4: Dọn dẹp dollar thừa từ 3 dấu trở lên
+  // BƯỚC 3: KHÔI PHỤC TOÀN BỘ CÔNG THỨC TOÁN AN TOÀN, NGUYÊN VẸN 100%
+  // Khôi phục theo vòng lặp cho đến khi hết token, bảo đảm không sót lại bất kỳ ___MATH_TOK_ nào
+  let restoreLoops = 0;
+  while (text.includes('___MATH_TOK_') && restoreLoops < 10) {
+    text = text.replace(/___MATH_TOK_(\d+)___/g, (_m, idx) => {
+      return mathTokens[Number(idx)] || '';
+    });
+    restoreLoops++;
+  }
+
+  // Step 4: Dọn dẹp khoảng cách lệnh LaTeX (đảm bảo macro không bị dính liền ký tự biến số như \Leftrightarrowm hay \inm)
+  text = text.replace(/\\(Longleftrightarrow|Longrightarrow|Leftrightarrow|Rightarrow|Leftarrow|rightarrow|leftarrow|notin|infty|setminus|approx|times|equiv|forall|exists|Delta|cdot|perp|parallel|cup|cap|geq|leq|neq|pm|mp)([a-zA-Z0-9])/g, '\\$1 $2');
+  text = text.replace(/\\(Longleftrightarrow|Longrightarrow|Leftrightarrow|Rightarrow|Leftarrow|rightarrow|leftarrow)([\+\-])/g, '\\$1 $2');
+  text = text.replace(/\\in([0-9]|[a-zA-Z](?![a-zA-Z]))/g, '\\in $1');
+  // CHỈ tách le, ge, ne khi theo sau là CHỮ SỐ (0-9). TUYỆT ĐỐI KHÔNG tách trước chữ cái [a-zA-Z] để không phá vỡ \left, \leq, \leftarrow, \neq, \neg, \nearrow, \geq...
+  text = text.replace(/\\(le|ge|ne)([0-9])/g, '\\$1 $2');
+  text = text.replace(/([0-9a-zA-Z\)])\\(Longleftrightarrow|Longrightarrow|Leftrightarrow|Rightarrow|Leftarrow|rightarrow|leftarrow|notin|infty|setminus|approx|times|equiv|forall|exists|Delta|cdot|perp|parallel|cup|cap|geq|leq|neq|pm|mp|le|ge|ne|in)\b/g, '$1 \\$2');
+
+  // Khắc phục triệt để các trường hợp \left bị gãy thành \le ft hoặc \neq bị gãy thành \ne q
+  text = text.replace(/\\le\s+ft(?=[^a-zA-Z]|$)/g, '\\left');
+  text = text.replace(/\\ne\s+q(?=[^a-zA-Z0-9]|$)/g, '\\neq');
+  text = text.replace(/\\ge\s+q(?=[^a-zA-Z0-9]|$)/g, '\\geq');
+
+  // Step 5: Dọn dẹp dollar thừa từ 3 dấu trở lên
   text = text.replace(/\${3,}/g, '$$');
 
   return text;
@@ -1272,14 +1443,26 @@ export function healMathSvg(svg: string): string {
                                     (cleaned.includes('I(1; 4)') && (hasNeg1Text || has3TextOnOx));
 
       if (isParabolaInvSpecific) {
-        // Xác định scale chuẩn từ vị trí các nhãn hoặc circle đã vẽ
+        // Tìm circle đã có nếu có
+        const cRoot1 = parsedCircles.find(c => c.cx < X_O && Math.abs(c.cy - Y_O) <= 15);
+        const cRoot2 = parsedCircles.find(c => c.cx > X_O && Math.abs(c.cy - Y_O) <= 15);
+        const cYInt = parsedCircles.find(c => Math.abs(c.cx - X_O) <= 10 && c.cy < Y_O);
+        const cVert = parsedCircles.find(c => c.cx > X_O && c.cy < Y_O && Math.abs(c.cx - X_O) >= 15);
+
+        // Xác định scale chuẩn từ vị trí các circle hoặc nhãn
         const tNeg1 = parsedTexts.find(t => t.text === '-1' && Math.abs(t.y - Y_O) <= 35 && t.x < X_O);
         const t3Ox = parsedTexts.find(t => t.text === '3' && Math.abs(t.y - Y_O) <= 35 && t.x > X_O);
         const t3Oy = parsedTexts.find(t => t.text === '3' && Math.abs(t.x - X_O) <= 35 && t.y < Y_O);
         const t4Oy = parsedTexts.find(t => t.text === '4' && Math.abs(t.x - X_O) <= 35 && t.y < Y_O);
 
         let scaleX = 35;
-        if (tNeg1 && t3Ox) {
+        if (cRoot1 && cRoot2) {
+          scaleX = Math.abs(cRoot2.cx - cRoot1.cx) / 4;
+        } else if (cRoot1) {
+          scaleX = Math.abs(X_O - cRoot1.cx);
+        } else if (cRoot2) {
+          scaleX = Math.abs(cRoot2.cx - X_O) / 3;
+        } else if (tNeg1 && t3Ox) {
           scaleX = Math.abs(t3Ox.x - tNeg1.x) / 4;
         } else if (tNeg1) {
           scaleX = Math.abs(X_O - tNeg1.x);
@@ -1288,7 +1471,11 @@ export function healMathSvg(svg: string): string {
         }
 
         let scaleY = 30;
-        if (t3Oy) {
+        if (cYInt) {
+          scaleY = Math.abs(Y_O - cYInt.cy) / 3;
+        } else if (cVert) {
+          scaleY = Math.abs(Y_O - cVert.cy) / 4;
+        } else if (t3Oy) {
           scaleY = Math.abs(Y_O - t3Oy.y + 4) / 3;
         } else if (t4Oy) {
           scaleY = Math.abs(Y_O - t4Oy.y + 4) / 4;
@@ -1304,35 +1491,27 @@ export function healMathSvg(svg: string): string {
 
         const A = scaleY / Math.pow(scaleX, 2);
 
-        // Sinh danh sách các điểm mẫu của Parabol với các điểm đặc biệt làm KNOT điểm cứng:
+        // Sinh danh sách các điểm mẫu của Parabol với các điểm đặc biệt
         const startX = Math.max(15, Math.round(P_vert.x - 2.8 * scaleX));
         const endX = Math.min(365, Math.round(P_vert.x + 2.8 * scaleX));
-        const steps = 180;
+        const steps = 140;
         const stepSize = (endX - startX) / steps;
         
         const rawXList: number[] = [P_root1.x, P_yInt.x, P_vert.x, P_sym.x, P_root2.x];
         for (let i = 0; i <= steps; i++) {
-          rawXList.push(Math.round((startX + i * stepSize) * 10) / 10);
+          rawXList.push(startX + i * stepSize);
         }
         rawXList.sort((a, b) => a - b);
         const sortedX: number[] = [];
         for (const x of rawXList) {
-          if (sortedX.length === 0 || Math.abs(x - sortedX[sortedX.length - 1]) > 0.4) {
+          if (sortedX.length === 0 || Math.abs(x - sortedX[sortedX.length - 1]) > 0.05) {
             sortedX.push(x);
           }
         }
 
         const pts: string[] = [];
         for (const x of sortedX) {
-          // Tại các điểm nút đặc biệt, gán cứng tọa độ chính xác tuyệt đối
-          let y: number;
-          if (Math.abs(x - P_root1.x) < 0.2) y = P_root1.y;
-          else if (Math.abs(x - P_root2.x) < 0.2) y = P_root2.y;
-          else if (Math.abs(x - P_yInt.x) < 0.2) y = P_yInt.y;
-          else if (Math.abs(x - P_vert.x) < 0.2) y = P_vert.y;
-          else if (Math.abs(x - P_sym.x) < 0.2) y = P_sym.y;
-          else y = P_vert.y + A * Math.pow(x - P_vert.x, 2);
-
+          const y = P_vert.y + A * Math.pow(x - P_vert.x, 2);
           pts.push(`${x.toFixed(1)} ${y.toFixed(1)}`);
         }
         const exactParabolaD = `M ${pts.join(' L ')}`;
@@ -1352,6 +1531,9 @@ export function healMathSvg(svg: string): string {
           const strokeWidth = attrs.match(/stroke-width=["']([^"']+)["']/)?.[1] || '2.5';
           return `<path d="${exactParabolaD}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" />`;
         });
+        if (!pathReplaced) {
+          cleaned = cleaned.replace('</svg>', `  <path d="${exactParabolaD}" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />\n</svg>`);
+        }
 
         // 2. Căn chỉnh hoặc thêm các đường nét đứt của đỉnh I(1; 4)
         // Gióng dọc x = 1 xuống Ox
@@ -1363,21 +1545,21 @@ export function healMathSvg(svg: string): string {
         cleaned = cleaned.replace(/<line\b([^>]*(?:stroke-dasharray|dasharray)[^>]*)\/?>/gi, (fullLine, attrs) => {
           const x1 = parseFloat(attrs.match(/\bx1=["']?([0-9.-]+)["']?/)?.[1] || '-999');
           const y1 = parseFloat(attrs.match(/\by1=["']?([0-9.-]+)["']?/)?.[1] || '-999');
-          if (Math.abs(x1 - P_vert.x) <= 15 || Math.abs(y1 - P_vert.y) <= 15) {
+          if (Math.abs(x1 - P_vert.x) <= 25 || Math.abs(y1 - P_vert.y) <= 25) {
             return '';
           }
           return fullLine;
         });
 
-        // 3. Chuẩn hóa 4 điểm tròn circle tại giao điểm và đỉnh
+        // 3. Chuẩn hóa 4 điểm tròn circle tại giao điểm và đỉnh (xóa sạch circle cũ trong phạm vi 35px để tránh trùng lặp hoặc lệch)
         cleaned = cleaned.replace(/<circle\b([^>]*)\/?>/gi, (fullCircle, attrs) => {
           const cx = parseFloat(attrs.match(/\bcx=["']?([0-9.-]+)["']?/)?.[1] || '-999');
           const cy = parseFloat(attrs.match(/\bcy=["']?([0-9.-]+)["']?/)?.[1] || '-999');
           if (
-            Math.hypot(cx - P_root1.x, cy - P_root1.y) <= 15 ||
-            Math.hypot(cx - P_root2.x, cy - P_root2.y) <= 15 ||
-            Math.hypot(cx - P_yInt.x, cy - P_yInt.y) <= 15 ||
-            Math.hypot(cx - P_vert.x, cy - P_vert.y) <= 15
+            Math.hypot(cx - P_root1.x, cy - P_root1.y) <= 35 ||
+            Math.hypot(cx - P_root2.x, cy - P_root2.y) <= 35 ||
+            Math.hypot(cx - P_yInt.x, cy - P_yInt.y) <= 35 ||
+            Math.hypot(cx - P_vert.x, cy - P_vert.y) <= 35
           ) {
             return ''; // Xóa để tái tạo đồng bộ
           }
@@ -1505,6 +1687,34 @@ export function cleanHtmlAndSvgContainers(text: string): string {
 
   // 3. Loại bỏ các thẻ </div> đứng cô lập ngay trước/sau <svg> hoặc trên dòng riêng
   res = res.replace(/(?:^|\n)\s*<\/div>\s*(?:\n|$)/gi, '\n');
+
+  // 4. Giải mã các thực thể HTML phổ biến thường thấy trong tài liệu Word/HTML
+  res = res.replace(/&nbsp;/gi, ' ');
+  res = res.replace(/&le;/gi, ' \\le ');
+  res = res.replace(/&ge;/gi, ' \\ge ');
+  res = res.replace(/&ne;/gi, ' \\neq ');
+  res = res.replace(/&plusmn;/gi, ' \\pm ');
+  res = res.replace(/&times;/gi, ' \\times ');
+  res = res.replace(/&divide;/gi, ' \\div ');
+  res = res.replace(/&lt;/gi, '<');
+  res = res.replace(/&gt;/gi, '>');
+  res = res.replace(/&amp;/gi, '&');
+
+  // 5. Chuyển đổi các thẻ HTML thông thường hay xuất hiện trong lời giải chi tiết (br, b, strong, i, em, p, span...)
+  res = res.replace(/<br\s*\/?>/gi, '\n\n');
+  res = res.replace(/<\/?(?:b|strong)>/gi, '**');
+  res = res.replace(/<\/?(?:i|em)>/gi, '*');
+  res = res.replace(/<\/?(?:p|div)\b[^>]*>/gi, '\n\n');
+  res = res.replace(/<\/?(?:span|font)\b[^>]*>/gi, '');
+  res = res.replace(/<sub>(.*?)<\/sub>/gi, '_{$1}');
+  res = res.replace(/<sup>(.*?)<\/sup>/gi, '^{$1}');
+  res = res.replace(/<[a-zA-Z\/][^>]*>/g, (tag) => {
+    // Bảo toàn thẻ svg và các thẻ con của svg
+    if (/^<\/?(?:svg|path|line|circle|rect|text|g|defs|marker|polygon|polyline)\b/i.test(tag)) {
+      return tag;
+    }
+    return '';
+  });
 
   return res.trim();
 }

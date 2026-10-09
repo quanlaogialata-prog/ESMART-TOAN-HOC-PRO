@@ -729,179 +729,181 @@ export function detectAnswerDiscrepancy(q: any): AnswerDiscrepancyResult {
   const currentAns = (q.correctAnswer || '').toString().trim();
   const qText = (q.question || '').toString();
 
-  // Trường hợp đặc biệt 1: Bài toán tìm m để hàm số đồng biến y=(x-2)/(x-m) trên [-10; 10]
-  // y' = (2-m)/(x-m)^2 > 0 <=> m < 2. m nguyên thuộc [-10; 10] => có đúng 12 giá trị (-10 đến 1).
-  if (
-    (qText.includes('x-2') || qText.includes('x - 2')) && 
-    (qText.includes('x-m') || qText.includes('x - m')) && 
-    qText.includes('[-10; 10]')
-  ) {
-    if (currentAns !== '12') {
-      return {
-        hasDiscrepancy: true,
-        suggestedAnswer: '12',
-        reason: 'Hàm số đồng biến khi m < 2. Với m ∈ ℤ và m ∈ [-10; 10], m ∈ {-10, -9, ..., 0, 1} có 1 - (-10) + 1 = 12 giá trị nguyên. Đáp án "8" hiện tại không khớp với lời giải chi tiết.'
-      };
-    }
-  }
-
-  // Trường hợp đặc biệt 2: Phương trình lượng giác (2cos^2 x - 1) - 3cos x + 2 = 0 hoặc tương đương trên [0; 2pi]
-  // Nghiệm: x = 0, pi/3, 5pi/3, 2pi => Đúng 4 nghiệm.
-  if (
-    (qText.includes('cos') || exp.includes('cos')) &&
-    (qText.includes('[0; 2') || exp.includes('[0; 2') || exp.includes('[0, 2')) &&
-    (exp.includes('4 nghiệm') || exp.includes('bốn nghiệm') || exp.includes('có đúng 4'))
-  ) {
-    if (currentAns !== '4') {
-      return {
-        hasDiscrepancy: true,
-        suggestedAnswer: '4',
-        reason: 'Phương trình trên đoạn [0; 2π] có 4 nghiệm (x = 0, π/3, 5π/3, 2π). Lời giải chi tiết kết luận có đúng 4 nghiệm nhưng đáp án lưu là "' + currentAns + '".'
-      };
-    }
-  }
-
   if (!exp) return { hasDiscrepancy: false };
 
-  // 1. Nhận diện số lượng NGHIỆM của phương trình / hệ phương trình:
-  // "Như vậy có đúng 4 nghiệm", "Có tất cả 4 nghiệm", "Vậy phương trình có 4 nghiệm", "Số nghiệm là 4"
-  const rootRegexes = [
-    /(?:như\s+vậy\s+có\s+đúng|khoan[^\.\n]*?như\s+vậy\s+có\s+đúng)\s*(\d+)\s*nghiệm/i,
-    /(?:có\s+tất\s+cả|tổng\s+cộng\s+có)\s*(\d+)\s*nghiệm/i,
-    /(?:kết\s*luận[^\.\n]*?|do\s+đó[^\.\n]*?|như\s+vậy[^\.\n]*?)có\s*(\d+)\s*nghiệm/i,
-    /số\s+nghiệm\s+(?:của\s+phương\s+trình\s+)?(?:đã\s+cho\s+)?(?:trên[^\.\n]*?)?là[^\.\n]*?(\d+)(?:\s|$|\.)/i,
-    /vậy\s+(?:phương\s+trình\s+)?(?:đã\s+cho\s+)?có\s*(\d+)\s*nghiệm/i,
-    /(?:phương\s+trình\s+)?có\s*(\d+)\s*nghiệm\s*(?:thỏa\s+mãn|phân\s+biệt)?(?:\s|$|\.)/i
-  ];
-  for (const regex of rootRegexes) {
-    const match = exp.match(regex);
-    if (match && match[1]) {
-      const val = match[1].trim();
-      if (currentAns && currentAns !== val) {
-        return {
-          hasDiscrepancy: true,
-          suggestedAnswer: val,
-          reason: `Lời giải chi tiết kết luận phương trình có ${val} nghiệm, nhưng đáp án chấm hiện tại là "${currentAns}".`
-        };
-      }
-    }
+  const isMcq = q.type === 'mcq' || (!q.type && Array.isArray(q.options) && q.options.length >= 2);
+  const isTf = q.type === 'tf';
+  const isEssay = q.type === 'essay';
+  const isShort = q.type === 'short' || (!isMcq && !isTf && !isEssay);
+
+  // 1. VỚI CÂU HỎI TRẮC NGHIỆM ĐÚNG/SAI (TF) HOẶC TỰ LUẬN (ESSAY)
+  // Không đối soát số nghiệm / cực trị đơn lẻ vào đáp án tổng hợp (tránh cảnh báo sai)
+  if (isTf || isEssay) {
+    return { hasDiscrepancy: false };
   }
 
-  // Quét câu kết luận cuối cùng (200 ký tự cuối) để tìm kết luận số nghiệm
-  const tail = exp.slice(-250);
-  const tailRootMatch = tail.match(/(?:có|được|gồm)\s*(?:đúng\s*)?(\d+)\s*nghiệm/i);
-  if (tailRootMatch && tailRootMatch[1]) {
-    const val = tailRootMatch[1].trim();
-    if (currentAns && currentAns !== val && /^\d+$/.test(currentAns)) {
-      return {
-        hasDiscrepancy: true,
-        suggestedAnswer: val,
-        reason: `Lời giải chi tiết kết luận có ${val} nghiệm, nhưng đáp án chấm hiện tại là "${currentAns}".`
-      };
-    }
-  }
+  // 2. VỚI CÂU HỎI TRẮC NGHIỆM NHIỀU LỰA CHỌN (MCQ: A, B, C, D)
+  if (isMcq) {
+    const resolved = resolveMcqLetter(currentAns, q.options);
+    const effectiveLetter = resolved.letter ? resolved.letter.toUpperCase() : null;
 
-  // 2. Nhận diện số lượng CỰC TRỊ:
-  const extremaRegexes = [
-    /(?:như\s+vậy\s+có\s+đúng|có\s+tất\s+cả|tổng\s+cộng\s+có|vậy\s+có|hàm\s+số\s+có)\s*(\d+)\s*(?:điểm\s+cực\s+trị|cực\s+trị)/i,
-    /số\s+điểm\s+cực\s+trị\s+(?:của\s+hàm\s+số\s+)?là[^\.\n]*?(\d+)/i
-  ];
-  for (const regex of extremaRegexes) {
-    const match = exp.match(regex);
-    if (match && match[1]) {
-      const val = match[1].trim();
-      if (currentAns && currentAns !== val) {
-        return {
-          hasDiscrepancy: true,
-          suggestedAnswer: val,
-          reason: `Lời giải chi tiết kết luận có ${val} điểm cực trị, nhưng đáp án chấm hiện tại là "${currentAns}".`
-        };
-      }
-    }
-  }
-
-  // 3. Nhận diện số lượng ĐƯỜNG TIỆM CẬN:
-  const asymptoteRegexes = [
-    /(?:như\s+vậy\s+có\s+đúng|có\s+tất\s+cả|tổng\s+cộng\s+có|vậy\s+có|đồ\s+thị\s+có)\s*(\d+)\s*(?:đường\s+tiệm\s+cận|tiệm\s+cận)/i,
-    /số\s+đường\s+tiệm\s+cận\s+(?:của\s+đồ\s+thị\s+)?là[^\.\n]*?(\d+)/i
-  ];
-  for (const regex of asymptoteRegexes) {
-    const match = exp.match(regex);
-    if (match && match[1]) {
-      const val = match[1].trim();
-      if (currentAns && currentAns !== val) {
-        return {
-          hasDiscrepancy: true,
-          suggestedAnswer: val,
-          reason: `Lời giải chi tiết kết luận có ${val} đường tiệm cận, nhưng đáp án chấm hiện tại là "${currentAns}".`
-        };
-      }
-    }
-  }
-
-  // 4. Nhận diện "Vậy có X giá trị" / "Số giá trị nguyên là ... = X" / "Vậy có tất cả X giá trị"
-  const countRegexes = [
-    /(?:như\s+vậy\s+có\s+đúng|khoan[^\.\n]*?như\s+vậy\s+có\s+đúng)\s*(\d+)\s*giá\s+trị/i,
-    /(?:vậy\s+có|số\s+giá\s+trị\s+(?:nguyên|thực|m)?\s*(?:của\s+m\s+)?là[^\.\n]*?=\s*|có\s+tất\s+cả|tổng\s+cộng\s+có)\s*(\d+)\s*giá\s+trị/i,
-    /vậy\s+có\s*(\d+)\s*giá\s+trị\s*(?:nguyên|thực)?/i,
-    /vậy\s+(\d+)\s*giá\s+trị\s+nguyên/i,
-    /(?:có\s+tất\s+cả|tổng\s+cộng\s+có|vậy\s+có)\s*(\d+)\s*(?:số\s+nguyên|phần\s+tử|cách)/i
-  ];
-  for (const regex of countRegexes) {
-    const match = exp.match(regex);
-    if (match && match[1]) {
-      const val = match[1].trim();
-      if (currentAns && currentAns !== val) {
-        return {
-          hasDiscrepancy: true,
-          suggestedAnswer: val,
-          reason: `Lời giải chi tiết kết luận có ${val} giá trị, nhưng đáp án chấm hiện tại là "${currentAns}".`
-        };
-      }
-    }
-  }
-
-  // 5. Nhận diện "Đáp số: X" hoặc "Kết quả: X" hoặc "Vậy ... = X"
-  const resultRegex = /(?:đáp\s*số|kết\s*quả\s*(?:là)?|đáp\s*án\s*(?:là)?|vậy\s*(?:kết\s*quả|đáp\s*số|giá\s*trị\s*cần\s*tìm)?\s*[:=])\s*([0-9\/\-\.]+)(?:\s|$|\.)/i;
-  const resMatch = exp.match(resultRegex);
-  if (resMatch && resMatch[1]) {
-    const val = resMatch[1].trim();
-    if (currentAns && currentAns !== val && currentAns !== `Đáp án: ${val}`) {
-      const isMcqLetter = /^[A-D]$/i.test(currentAns);
-      if (!isMcqLetter || !q.options || q.options.length === 0) {
-        return {
-          hasDiscrepancy: true,
-          suggestedAnswer: val,
-          reason: `Lời giải chi tiết ghi đáp số là "${val}", nhưng đáp án chấm hiện tại là "${currentAns}".`
-        };
-      }
-    }
-  }
-
-  // 6. Nhận diện công thức kết luận cuối bài: "= X."
-  const tailEquationMatch = tail.match(/(?:vậy|do\s+đó|như\s+vậy|kết\s+luận)[^.\n]*?=\s*([0-9\/\-\.]+)\.?$/i);
-  if (tailEquationMatch && tailEquationMatch[1]) {
-    const val = tailEquationMatch[1].trim();
-    const isMcqLetter = /^[A-D]$/i.test(currentAns);
-    if ((!isMcqLetter || !q.options || q.options.length === 0) && currentAns && currentAns !== val) {
-      return {
-        hasDiscrepancy: true,
-        suggestedAnswer: val,
-        reason: `Lời giải chi tiết kết luận bằng "${val}", nhưng đáp án chấm hiện tại là "${currentAns}".`
-      };
-    }
-  }
-
-  // 7. Với câu trắc nghiệm nhiều lựa chọn (MCQ): "Chọn A" / "Chọn B" / "Chọn C" / "Chọn D"
-  if (q.type === 'mcq' || (Array.isArray(q.options) && q.options.length > 0)) {
-    const mcqMatch = exp.match(/(?:chọn|đáp\s*án\s*đúng\s*là|vậy\s*chọn)\s*(?:phương\s*án\s*|đáp\s*án\s*)?([A-D])\b/i);
-    if (mcqMatch && mcqMatch[1]) {
-      const expectedLetter = mcqMatch[1].toUpperCase();
-      if (currentAns && currentAns.toUpperCase() !== expectedLetter) {
+    // Chỉ tìm kết luận chọn đáp án ở câu chốt lời giải (tránh "chọn A làm điểm...", "chọn a > 0", "chọn A(1; 2)...")
+    const mcqConclusionRegex = /(?:(?:chọn\s+(?:phương\s*án\s*|đáp\s*án\s*)|(?:vậy|do\s+đó|kết\s*luận)\s+(?:chọn\s+)?(?:phương\s*án\s*|đáp\s*án\s*)?)\s*([A-D])\b|đáp\s*án\s*(?:đúng)?\s*(?:là)?\s*[:\.]?\s*([A-D])\b)(?!\s*(?:làm|là\s+gốc|là\s+điểm|thuộc|sao\s*cho|có\s*tọa\s*độ|\(|=\s*|>|<|,|∈|thành|theo|trên))/gi;
+    const matches = Array.from(exp.matchAll(mcqConclusionRegex));
+    if (matches.length > 0) {
+      const lastMatch = matches[matches.length - 1];
+      const expectedLetter = (lastMatch[1] || lastMatch[2]).toUpperCase();
+      if (effectiveLetter && effectiveLetter !== expectedLetter) {
         return {
           hasDiscrepancy: true,
           suggestedAnswer: expectedLetter,
           reason: `Lời giải chi tiết kết luận chọn đáp án "${expectedLetter}", nhưng đáp án chấm hiện tại là "${currentAns}".`
+        };
+      }
+      if (effectiveLetter && effectiveLetter === expectedLetter) {
+        return { hasDiscrepancy: false };
+      }
+    }
+
+    return { hasDiscrepancy: false };
+  }
+
+  // 3. VỚI CÂU HỎI TRẢ LỜI NGẮN (SHORT ANSWER / ĐIỀN ĐÁP SỐ TOÁN HỌC)
+  if (isShort) {
+    const qLower = qText.toLowerCase();
+
+    // Trường hợp đặc biệt 1: Bài toán tìm m để hàm số đồng biến y=(x-2)/(x-m) trên [-10; 10]
+    if (
+      (qText.includes('x-2') || qText.includes('x - 2')) && 
+      (qText.includes('x-m') || qText.includes('x - m')) && 
+      qText.includes('[-10; 10]')
+    ) {
+      if (currentAns !== '12') {
+        return {
+          hasDiscrepancy: true,
+          suggestedAnswer: '12',
+          reason: 'Hàm số đồng biến khi m < 2. Với m ∈ ℤ và m ∈ [-10; 10], m ∈ {-10, -9, ..., 0, 1} có 12 giá trị nguyên. Đáp án hiện tại không khớp với lời giải chi tiết.'
+        };
+      }
+    }
+
+    // Trường hợp đặc biệt 2: Phương trình lượng giác trên [0; 2pi]
+    if (
+      (qText.includes('cos') || exp.includes('cos')) &&
+      (qText.includes('[0; 2') || exp.includes('[0; 2') || exp.includes('[0, 2')) &&
+      (exp.includes('4 nghiệm') || exp.includes('bốn nghiệm') || exp.includes('có đúng 4'))
+    ) {
+      if (currentAns !== '4') {
+        return {
+          hasDiscrepancy: true,
+          suggestedAnswer: '4',
+          reason: 'Phương trình trên đoạn [0; 2π] có 4 nghiệm (x = 0, π/3, 5π/3, 2π). Lời giải kết luận 4 nghiệm nhưng đáp án lưu là "' + currentAns + '".'
+        };
+      }
+    }
+
+    // Chỉ nhận diện số lượng NGHIỆM nếu đề bài thực sự hỏi về số nghiệm
+    const asksRoots = /(?:có\s+bao\s+nhiêu|tìm\s+số|số)\s+nghiệm\b/i.test(qLower);
+    if (asksRoots) {
+      const rootRegexes = [
+        /(?:như\s+vậy\s+có\s+đúng|khoan[^\.\n]*?như\s+vậy\s+có\s+đúng)\s*(\d+)\s*nghiệm/i,
+        /(?:có\s+tất\s+cả|tổng\s+cộng\s+có|kết\s*luận\s+có|do\s+đó\s+có|vậy\s+có)\s*(\d+)\s*nghiệm/i,
+        /số\s+nghiệm\s+(?:của\s+phương\s+trình\s+)?(?:đã\s+cho\s+)?(?:trên[^\.\n]*?)?là[^\.\n]*?(\d+)(?:\s|$|\.)/i,
+        /vậy\s+(?:phương\s+trình\s+)?(?:đã\s+cho\s+)?có\s*(\d+)\s*nghiệm/i
+      ];
+      for (const regex of rootRegexes) {
+        const match = exp.match(regex);
+        if (match && match[1]) {
+          const val = match[1].trim();
+          if (currentAns && currentAns !== val) {
+            return {
+              hasDiscrepancy: true,
+              suggestedAnswer: val,
+              reason: `Lời giải chi tiết kết luận phương trình có ${val} nghiệm, nhưng đáp số hiện tại là "${currentAns}".`
+            };
+          }
+        }
+      }
+    }
+
+    // Chỉ nhận diện số lượng CỰC TRỊ nếu đề bài thực sự hỏi về số cực trị
+    const asksExtrema = /(?:có\s+bao\s+nhiêu|tìm\s+số|số)\s*(?:điểm\s+)?cực\s*trị\b/i.test(qLower);
+    if (asksExtrema) {
+      const extremaRegexes = [
+        /(?:có\s+tất\s+cả|tổng\s+cộng\s+có|vậy\s+có|hàm\s+số\s+có)\s*(\d+)\s*(?:điểm\s+cực\s+trị|cực\s+trị)/i,
+        /số\s+điểm\s+cực\s+trị\s+(?:của\s+hàm\s+số\s+)?là[^\.\n]*?(\d+)/i
+      ];
+      for (const regex of extremaRegexes) {
+        const match = exp.match(regex);
+        if (match && match[1]) {
+          const val = match[1].trim();
+          if (currentAns && currentAns !== val) {
+            return {
+              hasDiscrepancy: true,
+              suggestedAnswer: val,
+              reason: `Lời giải chi tiết kết luận có ${val} điểm cực trị, nhưng đáp số hiện tại là "${currentAns}".`
+            };
+          }
+        }
+      }
+    }
+
+    // Chỉ nhận diện số lượng TIỆM CẬN nếu đề bài thực sự hỏi về số tiệm cận
+    const asksAsymptotes = /(?:có\s+bao\s+nhiêu|tìm\s+số|số)\s*(?:đường\s+)?tiệm\s*cận\b/i.test(qLower);
+    if (asksAsymptotes) {
+      const asymptoteRegexes = [
+        /(?:có\s+tất\s+cả|tổng\s+cộng\s+có|vậy\s+có|đồ\s+thị\s+có)\s*(\d+)\s*(?:đường\s+tiệm\s+cận|tiệm\s+cận)/i,
+        /số\s+đường\s+tiệm\s+cận\s+(?:của\s+đồ\s+thị\s+)?là[^\.\n]*?(\d+)/i
+      ];
+      for (const regex of asymptoteRegexes) {
+        const match = exp.match(regex);
+        if (match && match[1]) {
+          const val = match[1].trim();
+          if (currentAns && currentAns !== val) {
+            return {
+              hasDiscrepancy: true,
+              suggestedAnswer: val,
+              reason: `Lời giải chi tiết kết luận có ${val} đường tiệm cận, nhưng đáp số hiện tại là "${currentAns}".`
+            };
+          }
+        }
+      }
+    }
+
+    // Chỉ nhận diện số lượng GIÁ TRỊ NGUYÊN nếu đề bài thực sự hỏi về số giá trị
+    const asksValuesCount = /(?:có\s+bao\s+nhiêu|tìm\s+số|số)\s*(?:giá\s*trị|số\s+nguyên)\b/i.test(qLower);
+    if (asksValuesCount) {
+      const countRegexes = [
+        /(?:như\s+vậy\s+có\s+đúng|khoan[^\.\n]*?như\s+vậy\s+có\s+đúng)\s*(\d+)\s*giá\s+trị/i,
+        /(?:vậy\s+có|số\s+giá\s+trị\s+(?:nguyên|thực|m)?\s*(?:của\s+m\s+)?là[^\.\n]*?=\s*|có\s+tất\s+cả|tổng\s+cộng\s+có)\s*(\d+)\s*giá\s+trị/i,
+        /vậy\s+có\s*(\d+)\s*giá\s+trị\s*(?:nguyên|thực)?/i,
+        /vậy\s+(\d+)\s*giá\s+trị\s+nguyên/i
+      ];
+      for (const regex of countRegexes) {
+        const match = exp.match(regex);
+        if (match && match[1]) {
+          const val = match[1].trim();
+          if (currentAns && currentAns !== val) {
+            return {
+              hasDiscrepancy: true,
+              suggestedAnswer: val,
+              reason: `Lời giải chi tiết kết luận có ${val} giá trị, nhưng đáp số hiện tại là "${currentAns}".`
+            };
+          }
+        }
+      }
+    }
+
+    // Nhận diện dòng kết luận cuối "Đáp số: X" hoặc "Kết quả: X" ở cuối bài giải
+    const tailResultRegex = /(?:đáp\s*số|kết\s*quả\s*(?:là)?|đáp\s*án\s*(?:là)?)\s*[:=]\s*\$?([0-9\/\-\.]+)\$?(?:\s*$|\.|\n)/i;
+    const resMatch = exp.match(tailResultRegex);
+    if (resMatch && resMatch[1]) {
+      const val = resMatch[1].trim();
+      if (currentAns && currentAns !== val && currentAns !== `Đáp án: ${val}`) {
+        return {
+          hasDiscrepancy: true,
+          suggestedAnswer: val,
+          reason: `Lời giải chi tiết ghi đáp số là "${val}", nhưng đáp số hiện tại là "${currentAns}".`
         };
       }
     }
@@ -916,6 +918,11 @@ export function detectAnswerDiscrepancy(q: any): AnswerDiscrepancyResult {
 export function autoReconcileQuestion(q: any): { question: any; changed: boolean; oldAnswer?: string; newAnswer?: string } {
   const check = detectAnswerDiscrepancy(q);
   if (check.hasDiscrepancy && check.suggestedAnswer) {
+    const isMcq = q.type === 'mcq' || (!q.type && Array.isArray(q.options) && q.options.length >= 2);
+    // Với MCQ, chỉ đổi đáp án nếu suggestedAnswer là chữ cái A-D
+    if (isMcq && !/^[A-D]$/i.test(check.suggestedAnswer)) {
+      return { question: q, changed: false };
+    }
     return {
       question: {
         ...q,

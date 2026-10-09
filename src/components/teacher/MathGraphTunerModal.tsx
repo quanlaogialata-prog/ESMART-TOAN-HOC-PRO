@@ -362,10 +362,46 @@ export default function MathGraphTunerModal({
 
             {graphType === 'parabola' && (
               <div className="space-y-3 bg-white p-3.5 rounded-xl border border-slate-200">
-                <div className="text-xs font-bold text-slate-800 pb-1 border-b border-slate-100 flex items-center gap-1.5">
-                  <Sparkles size={14} className="text-amber-500" />
-                  Đỉnh Parabol I(x; y) & Hướng bề lõm:
+                <div className="text-xs font-bold text-slate-800 pb-1 border-b border-slate-100 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles size={14} className="text-amber-500" />
+                    <span>Đỉnh Parabol I(x; y) & Hướng bề lõm:</span>
+                  </div>
                 </div>
+
+                {/* Phím nạp nhanh mẫu Parabol chuẩn */}
+                <div className="flex flex-col gap-1.5 p-2 bg-blue-50/60 rounded-lg border border-blue-200">
+                  <span className="text-[10px] font-bold text-blue-900 uppercase">Mẫu Parabol phổ biến:</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setParabVx(1);
+                        setParabVy(4);
+                        setParabOpenUp(false);
+                        setParabYInt(3);
+                      }}
+                      className="px-2 py-1 bg-white hover:bg-blue-100 text-blue-800 border border-blue-300 rounded text-[11px] font-bold transition-colors cursor-pointer shadow-2xs"
+                      title="y = -x² + 2x + 3: Đỉnh (1; 4), cắt Oy tại 3, cắt Ox tại -1 và 3"
+                    >
+                      ⭐ y = -x² + 2x + 3 (Cắt Oy tại 3, Ox tại -1 & 3)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setParabVx(1);
+                        setParabVy(-2);
+                        setParabOpenUp(true);
+                        setParabYInt(-1);
+                      }}
+                      className="px-2 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded text-[11px] font-semibold transition-colors cursor-pointer shadow-2xs"
+                      title="Đỉnh (1; -2), quay lên, cắt Oy tại -1"
+                    >
+                      y = x² - 2x - 1 (Đỉnh I(1; -2))
+                    </button>
+                  </div>
+                </div>
+
                 <div className="space-y-2.5">
                   <div className="grid grid-cols-2 gap-2">
                     <div>

@@ -14,7 +14,7 @@ import { QuestionItem } from '../../types/test';
 import { stripOptionPrefix, checkMcqAnswer, detectAnswerDiscrepancy, autoReconcileQuestion } from '../../utils/gradeEngine';
 import { exportGradebookPdf, exportGradebookExcel } from '../../utils/gradebookExport';
 import { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
-import { dataUrlToFile } from '../../lib/fileUtils';
+import { dataUrlToFile, ensureAttachmentDataUrl } from '../../lib/fileUtils';
 import { repairVietnameseDocument, convertTcvn3ToUnicode, healMathSvg } from '../../lib/vietnameseFont';
 import { 
   getCurrentSchoolYear, 
@@ -43,12 +43,30 @@ export default function ManageTests() {
 
   // Tự động nhận diện tài liệu tham chiếu từ Thư viện khi chuyển từ tab Thư viện tài liệu
   useEffect(() => {
-    const handlePendingRef = () => {
-      const pending = sessionStorage.getItem('pendingTestReference');
-      if (pending) {
+    const handlePendingRef = async (e?: any) => {
+      let ref = e?.detail?.refPayload || (window as any).__pendingTestReference;
+      (window as any).__pendingTestReference = null;
+      if (!ref) {
+        const pending = sessionStorage.getItem('pendingTestReference');
+        if (pending) {
+          try {
+            ref = JSON.parse(pending);
+            sessionStorage.removeItem('pendingTestReference');
+          } catch (e) {
+            console.error("Error reading pending test reference:", e);
+          }
+        }
+      }
+      if (ref) {
         try {
-          const ref = JSON.parse(pending);
-          sessionStorage.removeItem('pendingTestReference');
+          if (ref.attachment && !ref.attachment.dataUrl) {
+            try {
+              const resolvedUrl = await ensureAttachmentDataUrl(ref.attachment);
+              if (resolvedUrl) ref.attachment.dataUrl = resolvedUrl;
+            } catch (err) {
+              console.warn("Could not resolve attachment dataUrl:", err);
+            }
+          }
           setSelectedReference(ref);
           if (ref.grade) setNewGrade(ref.grade.toString());
           if (ref.topicId) setNewTopicId(ref.topicId);
@@ -696,8 +714,15 @@ export default function ManageTests() {
     setCustomVariantCodes('101, 102, 103, 104');
     setShuffleQuestions(true);
     setShuffleOptions(true);
+    setSelectedReference(null);
     setReferenceFile(null);
     setReferenceNotes('');
+    try {
+      delete (window as any).__pendingTestReference;
+      sessionStorage.removeItem('pendingTestReference');
+    } catch (e) {
+      // ignore
+    }
 
     const presets = formatPresets[format] || [];
     const selectedP = presetId ? presets.find(p => p.id === presetId) : presets[0];
@@ -709,6 +734,7 @@ export default function ManageTests() {
 
   const handleCloseCreateModal = () => {
     setShowCreateModal(false);
+    setSelectedReference(null);
     setNewFile(null);
     setNewAnswerFile(null);
     setSplitAnswers(false);
@@ -718,6 +744,12 @@ export default function ManageTests() {
     setSysError('');
     setSysMsg('');
     setEditingTestId(null);
+    try {
+      delete (window as any).__pendingTestReference;
+      sessionStorage.removeItem('pendingTestReference');
+    } catch (e) {
+      // ignore
+    }
   };
 
   const [autoGenType, setAutoGenType] = useState<'mcq_3part' | 'mcq_custom' | 'mcq' | 'essay' | 'mixed' | 'matrix'>('mcq_3part');
@@ -1328,32 +1360,60 @@ export default function ManageTests() {
   const handleCreateTest = async (e: React.FormEvent, customQuestions?: any[]) => {
     e.preventDefault();
     setSysError('');
-    if (!newTitle || !newDuration) {
-      setSysError('Vui lòng điền đầy đủ Tên đề kiểm tra và Thời gian.');
-      return;
+
+    const gradeNum = parseInt(newGrade, 10) || 12;
+    let effectiveTitle = (newTitle || '').trim();
+    if (!effectiveTitle) {
+      effectiveTitle = newFile?.name 
+        ? newFile.name.replace(/\.[^/.]+$/, "") 
+        : `Đề kiểm tra Toán lớp ${gradeNum}`;
+      setNewTitle(effectiveTitle);
+    }
+    
+    let effectiveDuration = (newDuration || '').trim();
+    if (!effectiveDuration) {
+      effectiveDuration = '45';
+      setNewDuration('45');
     }
     
     setIsSaving(true);
     
     // Find a valid topic for the selected grade to associate the test with
-    const gradeNum = parseInt(newGrade, 10);
     const validTopics = topics.filter(t => t.grade === gradeNum);
     let targetTopicId = newTopicId || (validTopics.length > 0 ? validTopics[0].id : `topic-fake-${gradeNum}`);
 
     // Validation based on creation mode
-    if (onlineCreationMode === 'upload' && !newFile && !editingTestId) {
-      setSysError('Vui lòng chọn tệp đề bài tải lên từ máy tính (PDF, Word, Ảnh).');
-      setIsSaving(false);
-      return;
+    let effectiveFile = newFile;
+    let effectiveCreationMode = onlineCreationMode;
+
+    if (customQuestions && customQuestions.length > 0) {
+      // Đã có danh sách câu hỏi trích xuất sẵn từ trước
+    } else if (effectiveCreationMode === 'upload' && !effectiveFile && !editingTestId) {
+      if (selectedReference?.attachment?.dataUrl && selectedReference.attachment.name) {
+        try {
+          const autoFile = dataUrlToFile(selectedReference.attachment.dataUrl, selectedReference.attachment.name, selectedReference.attachment.type);
+          effectiveFile = autoFile;
+          setNewFile(autoFile);
+        } catch (e) {
+          console.warn("Could not convert reference attachment to file:", e);
+        }
+      } else if (selectedReference?.knowledge) {
+        effectiveCreationMode = 'auto';
+        setOnlineCreationMode('auto');
+      } else {
+        setSysError('Vui lòng chọn tệp đề bài tải lên từ máy tính (PDF, Word, Ảnh) hoặc chọn tài liệu từ Thư viện.');
+        setIsSaving(false);
+        return;
+      }
     }
 
-    if (onlineCreationMode === 'matrix' && matrixSourceType === 'file' && !matrixFile && !editingTestId) {
+    if (effectiveCreationMode === 'matrix' && matrixSourceType === 'file' && !matrixFile && !editingTestId) {
       setSysError('Vui lòng chọn tệp ma trận đề thi (Excel, Word, PDF hoặc Ảnh).');
       setIsSaving(false);
       return;
     }
 
-    if (onlineCreationMode !== 'upload' && examFormat === 'mcq_custom') {
+    if (effectiveCreationMode !== 'upload' && examFormat === 'mcq_custom') {
       const selectedPartsCount = [customPart1Enabled, customPart2Enabled, customPart3Enabled].filter(Boolean).length;
       if (selectedPartsCount === 0) {
         setSysError('Vui lòng chọn ít nhất 1 phần trong cấu trúc trắc nghiệm tùy biến.');
@@ -1371,15 +1431,15 @@ export default function ManageTests() {
       let finalFileUrl = "";
       let extractionFileUrl = "";
       
-      if (newFile) {
+      if (effectiveFile) {
         extractionFileUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result as string);
           reader.onerror = reject;
-          reader.readAsDataURL(newFile);
+          reader.readAsDataURL(effectiveFile);
         });
 
-        if (newFile.size > 800000) {
+        if (effectiveFile.size > 800000) {
           setSysError('Tệp tải lên quá lớn (giới hạn ~800KB). Hệ thống sẽ trích xuất nhưng không lưu được gốc.'); setTimeout(() => setSysError(''), 5000);
         } else {
           finalFileUrl = extractionFileUrl;
@@ -1389,34 +1449,36 @@ export default function ManageTests() {
       let resolvedType = 'mcq';
       if (examFormat === 'essay') {
         resolvedType = 'essay';
-      } else if (examFormat === 'mixed' || onlineCreationMode === 'matrix') {
+      } else if (examFormat === 'mixed' || effectiveCreationMode === 'matrix') {
         resolvedType = 'mixed';
       } else {
         resolvedType = 'mcq';
       }
       
+      const resolvedTitle = newTitle.trim() || effectiveFile?.name?.replace(/\.[^/.]+$/, "") || `Đề kiểm tra Toán lớp ${gradeNum}`;
+      
       const testData: any = {
-        title: repairVietnameseDocument(convertTcvn3ToUnicode(newTitle)),
+        title: repairVietnameseDocument(convertTcvn3ToUnicode(resolvedTitle)),
         type: resolvedType,
         durationMinutes: parseInt(newDuration, 10),
         topicId: targetTopicId,
         grade: gradeNum,
         schoolYear: newSchoolYear || (selectedSchoolYear !== 'ALL' ? selectedSchoolYear : getCurrentSchoolYear()),
-        creationMode: onlineCreationMode,
+        creationMode: effectiveCreationMode,
         examFormat: examFormat,
-        autoGenType: (onlineCreationMode === 'matrix' ? 'matrix' : examFormat),
+        autoGenType: (effectiveCreationMode === 'matrix' ? 'matrix' : examFormat),
         formatType: examFormat,
         activePresetId
       };
 
-      if (onlineCreationMode === 'matrix') {
+      if (effectiveCreationMode === 'matrix') {
         testData.matrixSourceType = matrixSourceType;
         if (matrixSourceType === 'preset') {
           testData.matrixConfig = matrixConfig;
         }
       }
       
-      if (onlineCreationMode !== 'upload') {
+      if (effectiveCreationMode !== 'upload') {
         let computedMcqCount = 0;
         if (examFormat === 'mcq_3part') {
           const p1 = parseInt(part1Count, 10) || 12;
@@ -1508,7 +1570,7 @@ export default function ManageTests() {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'x-gemini-api-key': localStorage.getItem('gemini_api_key') || '' },
               body: JSON.stringify({
-                title: repairVietnameseDocument(convertTcvn3ToUnicode(newTitle)),
+                title: repairVietnameseDocument(convertTcvn3ToUnicode(resolvedTitle)),
                 grade: gradeNum,
                 autoGenType: (onlineCreationMode === 'matrix' ? 'matrix' : examFormat),
                 formatType: examFormat,
@@ -1540,16 +1602,19 @@ export default function ManageTests() {
             if (res.ok) {
               const rawGenerated = await res.json();
               if (Array.isArray(rawGenerated) && rawGenerated.length > 0) {
-                const generated = rawGenerated.map((q: any) => ({
-                  ...q,
-                  question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
-                  options: Array.isArray(q.options) 
-                    ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
-                    : [],
-                  explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
-                  correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer,
-                  figureSvg: q.figureSvg ? healMathSvg(q.figureSvg) : q.figureSvg
-                }));
+                const generated = rawGenerated.map((rawQ: any) => {
+                  const healedQ = autoReconcileQuestion(rawQ).question;
+                  return {
+                    ...healedQ,
+                    question: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.question || '')),
+                    options: Array.isArray(healedQ.options) 
+                      ? healedQ.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+                      : [],
+                    explanation: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.explanation || '')),
+                    correctAnswer: typeof healedQ.correctAnswer === 'string' ? repairVietnameseDocument(healedQ.correctAnswer) : healedQ.correctAnswer,
+                    figureSvg: healedQ.figureSvg ? healMathSvg(healedQ.figureSvg) : healedQ.figureSvg
+                  };
+                });
                 if (createMultiVariant) {
                   const codes = customVariantCodes.split(',').map(s => s.trim()).filter(Boolean);
                   const validCodes = codes.length > 0 ? codes : ['101', '102', '103', '104'];
@@ -1637,17 +1702,17 @@ export default function ManageTests() {
         }
       }
       
-      if (newFile) {
+      if (effectiveFile) {
         testData.fileUrl = finalFileUrl || "";
-        testData.fileName = newFile.name;
+        testData.fileName = effectiveFile.name;
 
-        if (splitAnswers && extractionFileUrl) {
+        if (splitAnswers && extractionFileUrl && (!customQuestions || customQuestions.length === 0)) {
            setSysMsg('Đang dùng AI để phân tích và tách riêng Đề bài / Đáp án... Vui lòng chờ (có thể mất 15-30s)...');
            try {
               const splitRes = await fetch('/api/split-document', {
                  method: 'POST',
                  headers: { 'Content-Type': 'application/json', 'x-gemini-api-key': localStorage.getItem('gemini_api_key') || '' },
-                 body: JSON.stringify({ fileDataUrl: extractionFileUrl, mimeType: newFile.type })
+                 body: JSON.stringify({ fileDataUrl: extractionFileUrl, mimeType: effectiveFile.type })
               });
               if (splitRes.ok) {
                  const splitData = await splitRes.json();
@@ -1692,7 +1757,7 @@ export default function ManageTests() {
         }
 
         if (selectedReference) {
-          testData.referenceDocId = selectedReference.lessonId || null;
+          testData.referenceDocId = selectedReference.lessonId || selectedReference.docId || null;
           testData.referenceDocTitle = selectedReference.lessonTitle || null;
           testData.referenceTopicName = selectedReference.topicName || null;
           testData.referenceGrade = selectedReference.grade || null;
@@ -1741,15 +1806,18 @@ export default function ManageTests() {
             if (res.ok) {
               const rawExtracted = await res.json();
               if (Array.isArray(rawExtracted) && rawExtracted.length > 0) {
-                const extracted = rawExtracted.map((q: any) => ({
-                  ...q,
-                  question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
-                  options: Array.isArray(q.options) 
-                    ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
-                    : [],
-                  explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
-                  correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
-                }));
+                const extracted = rawExtracted.map((rawQ: any) => {
+                  const healedQ = autoReconcileQuestion(rawQ).question;
+                  return {
+                    ...healedQ,
+                    question: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.question || '')),
+                    options: Array.isArray(healedQ.options) 
+                      ? healedQ.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+                      : [],
+                    explanation: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.explanation || '')),
+                    correctAnswer: typeof healedQ.correctAnswer === 'string' ? repairVietnameseDocument(healedQ.correctAnswer) : healedQ.correctAnswer
+                  };
+                });
                 testData.questionsData = JSON.stringify(extracted);
                 const mcqC = extracted.filter((q: any) => q.type === 'mcq').length;
                 const tfC = extracted.filter((q: any) => q.type === 'tf').length;
@@ -3194,15 +3262,21 @@ export default function ManageTests() {
                               );
                             })}
                             {q.correctAnswer && (
-                              <div className="mt-2 text-xs font-semibold text-amber-900 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">
-                                Đáp án đúng: {q.correctAnswer}
+                              <div className="mt-2 text-xs font-semibold text-amber-900 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200 flex items-center gap-1.5">
+                                <span>Đáp án đúng:</span>
+                                <span className="inline-block font-bold">
+                                  <MathText content={String(q.correctAnswer)} />
+                                </span>
                               </div>
                             )}
                           </div>
                         ) : q.type === 'short' ? (
                           <div className="pl-4 space-y-2">
-                            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs font-semibold text-emerald-900">
-                              Đáp số / Kết quả: <span className="font-bold underline">{q.correctAnswer || '(Chưa có)'}</span>
+                            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs font-semibold text-emerald-900 flex items-center gap-1.5 flex-wrap">
+                              <span>Đáp số / Kết quả:</span>
+                              <span className="font-bold underline inline-block">
+                                <MathText content={String(q.correctAnswer || '(Chưa có)')} />
+                              </span>
                             </div>
                           </div>
                         ) : (
@@ -3216,8 +3290,11 @@ export default function ManageTests() {
                               </div>
                             ))}
                             {q.correctAnswer && (
-                              <div className="mt-2 text-xs font-semibold text-blue-900 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200">
-                                Đáp án: {q.correctAnswer}
+                              <div className="mt-2 text-xs font-semibold text-blue-900 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200 flex items-center gap-1.5">
+                                <span>Đáp án:</span>
+                                <span className="inline-block font-bold">
+                                  <MathText content={String(q.correctAnswer)} />
+                                </span>
                               </div>
                             )}
                           </div>

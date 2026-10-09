@@ -48,7 +48,7 @@ import { generateTestVariants, TestVariant, groupQuestionsByExamStructure, detec
 import { stripOptionPrefix, detectAnswerDiscrepancy, autoReconcileQuestion } from '../../utils/gradeEngine';
 import EditQuestionsModal from '../../components/teacher/EditQuestionsModal';
 import DocumentReferenceSelectorModal, { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
-import { dataUrlToFile } from '../../lib/fileUtils';
+import { dataUrlToFile, ensureAttachmentDataUrl } from '../../lib/fileUtils';
 import { repairVietnameseDocument, convertTcvn3ToUnicode, healMathSvg } from '../../lib/vietnameseFont';
 import { 
   getCurrentSchoolYear, 
@@ -937,12 +937,30 @@ export default function ManageOfflineTests() {
     loadData();
 
     // Tự động nhận diện tài liệu tham chiếu từ Thư viện khi chuyển từ tab Thư viện tài liệu
-    const handlePendingOfflineRef = () => {
-      const pending = sessionStorage.getItem('pendingOfflineReference');
-      if (pending) {
+    const handlePendingOfflineRef = async (e?: any) => {
+      let ref = e?.detail?.refPayload || (window as any).__pendingOfflineReference;
+      (window as any).__pendingOfflineReference = null;
+      if (!ref) {
+        const pending = sessionStorage.getItem('pendingOfflineReference');
+        if (pending) {
+          try {
+            ref = JSON.parse(pending);
+            sessionStorage.removeItem('pendingOfflineReference');
+          } catch (err) {
+            console.error("Error reading pending offline reference:", err);
+          }
+        }
+      }
+      if (ref) {
         try {
-          const ref = JSON.parse(pending);
-          sessionStorage.removeItem('pendingOfflineReference');
+          if (ref.attachment && !ref.attachment.dataUrl) {
+            try {
+              const resolvedUrl = await ensureAttachmentDataUrl(ref.attachment);
+              if (resolvedUrl) ref.attachment.dataUrl = resolvedUrl;
+            } catch (err) {
+              console.warn("Could not resolve offline attachment dataUrl:", err);
+            }
+          }
           setSelectedOfflineRef(ref);
           setExamTitle(repairVietnameseDocument(convertTcvn3ToUnicode(ref.lessonTitle || ref.attachment?.name || 'Đề thi')));
           if (ref.grade) setExamGrade(Number(ref.grade) || 10);
@@ -956,7 +974,7 @@ export default function ManageOfflineTests() {
           setCreateTab('upload_new');
           setShowCreateModal(true);
         } catch (e) {
-          console.error("Error reading pending offline reference:", e);
+          console.error("Error processing pending offline reference:", e);
         }
       }
     };

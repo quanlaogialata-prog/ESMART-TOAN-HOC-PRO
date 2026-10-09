@@ -21,6 +21,8 @@ function hasVietnamese(str: string): boolean {
 function isPureMathString(str: string): boolean {
   let trimmed = str.trim();
   if (!trimmed) return false;
+  // Bỏ tiền tố phương án nếu có: "A. ", "B) ", "C: "
+  trimmed = trimmed.replace(/^[A-Da-d][\.\)\:\-]\s*/, '').trim();
   trimmed = trimmed.replace(/[–—−]/g, '-');
   if (hasVietnamese(trimmed)) return false;
 
@@ -28,14 +30,16 @@ function isPureMathString(str: string): boolean {
   if (/\^/.test(trimmed)) return true;
   // Chứa chỉ số dưới: u_2, u_3 = 7, x_1
   if (/_[0-9a-zA-Z]/.test(trimmed)) return true;
-  // Chứa dấu bằng hoặc bất đẳng thức / đạo hàm: u_2 = 3, y = 2x - 1, f'(x) = 0, x > 0
-  if (/=|(?<![a-zA-Z])<|>(?![a-zA-Z])|f'\(|y'/.test(trimmed)) return true;
+  // Chứa dấu bằng hoặc bất đẳng thức / đạo hàm: u_2 = 3, y = 2x - 1, f'(x) = 0, x > 0, m < 2, m \ge 2, m <= 2
+  if (/=|(?<![a-zA-Z])<|>(?![a-zA-Z])|f'\(|y'|\\le|\\ge|\\leq|\\geq|\\ne|\\neq/.test(trimmed)) return true;
   // Chứa lệnh LaTeX: \frac, \dfrac, \tfrac, \sqrt, \vec, \overrightarrow...
-  if (/\\((?:d|t)?frac|sqrt|vec|begin|cases|matrix|aligned|overrightarrow|overleftarrow|infty|alpha|beta|gamma|cdot|pi|pm|approx|neq|le|ge|leq|geq|times|div)/.test(trimmed)) return true;
-  // Khoảng/đoạn: (-1; 2), [0; +\infty)
-  if (/^[\(\[][\s\S]*;[\s\S]*[\)\]]$/.test(trimmed)) return true;
-  // Biểu thức đại số ngắn gồm biến số và toán tử: e.g. "3x - 1", "2x + y", "-x + 4"
-  if (/^[+\-]?[0-9a-zA-Z\s+\-*/()]+$/.test(trimmed) && /[a-zA-Z]/.test(trimmed) && /[+\-*/]/.test(trimmed)) {
+  if (/\\((?:d|t)?frac|sqrt|vec|begin|cases|matrix|aligned|overrightarrow|overleftarrow|infty|alpha|beta|gamma|cdot|pi|pm|approx|neq|le|ge|leq|geq|times|div|in|notin|subset|cup|cap|setminus|mathbb|Delta)/.test(trimmed)) return true;
+  // Khoảng/đoạn: (-1; 2), [0; +\infty), (-\infty; -6), (3; 6]
+  if (/^[\(\[][\s\S]*;[\s\S]*[\)\]]/.test(trimmed)) return true;
+  // Tập hợp \{...\}
+  if (/^\\\{[\s\S]*\\\}$/.test(trimmed)) return true;
+  // Biểu thức đại số ngắn gồm biến số và toán tử: e.g. "3x - 1", "2x + y", "-x + 4", "m < 2"
+  if (/^[+\-]?[0-9a-zA-Z\s+\-*/()<>=!]+$/.test(trimmed) && /[a-zA-Z]/.test(trimmed) && /[+\-*/<>=!]/.test(trimmed)) {
     return true;
   }
 
@@ -45,7 +49,35 @@ function isPureMathString(str: string): boolean {
 export default function MathText({ content, isDocument = false, className = '' }: MathTextProps) {
   let safeContent = content || "";
 
-  // 0. Sửa phông chữ tiếng Việt (TCVN3 / .VnTime, VNI Windows) và ký hiệu toán học
+  // 0. Sửa chữa lỗi artifact bị gãy trước đó (ví dụ \left bị gãy thành \le ft, \neq bị gãy thành \ne q)
+  safeContent = safeContent.replace(/\\le\s+ft(?=[^a-zA-Z]|$)/g, '\\left');
+  safeContent = safeContent.replace(/\\ne\s+q(?=[^a-zA-Z0-9]|$)/g, '\\neq');
+  safeContent = safeContent.replace(/\\ge\s+q(?=[^a-zA-Z0-9]|$)/g, '\\geq');
+
+  // 0. Sửa lỗi ký tự thoát dòng và phục hồi các lệnh LaTeX bị đứt gãy do \n (như \ne -> \n e, \notin -> \n otin)
+  safeContent = safeContent.replace(/\\r\\n/g, '\n');
+  safeContent = safeContent.replace(/\\n(?=[A-ZÀ-ỹa-z0-9\-\*\s])/g, (_match, offset, full) => {
+    const rest = full.slice(offset);
+    if (/^\\n(e|eq|otin|earrow|abla|u)\b/.test(rest)) {
+      return '\\n';
+    }
+    return '\n';
+  });
+  safeContent = safeContent.replace(/(?:^|\n)\s*e\s+([a-zA-Z0-9\-\+\\]+)/g, ' \\ne $1');
+  safeContent = safeContent.replace(/([^\n])\s*\n\s*e\s+([a-zA-Z0-9\-\+\\]+)/g, '$1 \\ne $2');
+  safeContent = safeContent.replace(/(?:^|\n)\s*otin\b/g, ' \\notin');
+  safeContent = safeContent.replace(/([^\n])\s*\n\s*otin\b/g, '$1 \\notin');
+  safeContent = safeContent.replace(/(?:^|\n)\s*earrow\b/g, ' \\nearrow');
+  safeContent = safeContent.replace(/([^\n])\s*\n\s*earrow\b/g, '$1 \\nearrow');
+  safeContent = safeContent.replace(/(?:^|\n)\s*eq\b/g, ' \\neq');
+  safeContent = safeContent.replace(/([^\n])\s*\n\s*eq\b/g, '$1 \\neq');
+
+  // Đảm bảo khoảng trắng giữa từ ngữ tiếng Việt và dấu math $ (tránh dính chữ ví dụ "của$m$" -> "của $m$", "$m$nên" -> "$m$ nên")
+  safeContent = safeContent.replace(/([a-zA-ZÀ-ỹ])\$([a-zA-Z0-9])/gu, (_m, p1, p2) => `${p1} $${p2}`);
+  safeContent = safeContent.replace(/([0-9a-zA-Z\)\}])\$([a-zA-ZÀ-ỹ])/gu, (_m, p1, p2) => `${p1}$ ${p2}`);
+  safeContent = safeContent.replace(/\.([A-ZÀ-ỹ])/gu, ". $1");
+
+  // 0.1 Sửa phông chữ tiếng Việt (TCVN3 / .VnTime, VNI Windows) và ký hiệu toán học
   safeContent = repairVietnameseDocument(safeContent);
 
   // 0.1 Dọn dẹp sạch sẽ các thẻ HTML rác <div align="center">, <center>, </div>
@@ -85,35 +117,42 @@ export default function MathText({ content, isDocument = false, className = '' }
     }
   }
 
-  // 3. Nếu toàn bộ chuỗi không có dấu $ nào nhưng là một biểu thức toán học rõ rệt (ví dụ: "3x^2 - 3", "u_2 = 3")
+  // 3. Nếu toàn bộ chuỗi không có dấu $ nào nhưng là một biểu thức toán học rõ rệt (ví dụ: "3x^2 - 3", "u_2 = 3", "m < 2", "(-1; 2)")
   if (!safeContent.includes('$') && isPureMathString(safeContent)) {
-    safeContent = `$${safeContent.trim()}$`;
+    const optPrefixMatch = safeContent.match(/^([A-Da-d][\.\)\:\-]\s*)(.+)$/);
+    if (optPrefixMatch) {
+      safeContent = `${optPrefixMatch[1]}$${optPrefixMatch[2].trim()}$`;
+    } else {
+      safeContent = `$${safeContent.trim()}$`;
+    }
   }
 
-  // 4. Chuẩn hóa khối ma trận / hệ phương trình \begin{...} ... \end{...}
-  // Hấp thụ toàn bộ các dấu $ bao quanh, loại bỏ $ lạc trong ruột và bảo toàn cấu trúc inline cho các lựa chọn trắc nghiệm
+  // 4. Chuẩn hóa khối ma trận / hệ phương trình \begin{...} ... \end{...} nằm NGOÀI dấu $
+  // Nếu môi trường \begin{...} đã nằm bên trong $...$ hoặc $$...$$ thì giữ nguyên để không làm vỡ công thức
+  const existingMathBlocks: string[] = [];
+  safeContent = safeContent.replace(/(\$\$[\s\S]*?\$\$|\$(?!\$)[\s\S]*?(?<!\$)\$)/g, (m) => {
+    existingMathBlocks.push(m);
+    return `___PRE_EXISTING_MATH_${existingMathBlocks.length - 1}___`;
+  });
+
   safeContent = safeContent.replace(
-    /(?:\$*(\\left\s*(?:\\.|.)\s*))?(\${1,2}\s*)?(\\left\s*(?:\\.|.)\s*)?\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\4\}(\s*\\right\s*(?:\\.|.))?(\s*\${1,2})?(?:\s*(\\right\s*(?:\\.|.))\$*)?/g,
-    (match, left1, openDollar, left2, env, inner, right1, closeDollar, right2) => {
-      let l = (left1 || left2 || '').replace(/\$/g, '').trim();
-      let r = (right1 || right2 || '').replace(/\$/g, '').trim();
+    /(?:(\\left\s*(?:\\.|.)\s*))?\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\2\}(\s*\\right\s*(?:\\.|.))?/g,
+    (_match, left, env, inner, right) => {
+      let l = (left || '').trim();
+      let r = (right || '').trim();
       let fixedInner = formatCasesBlock(inner.replace(/(?<!\\)\$/g, ''));
-      
       let body = `\\begin{${env}} ${fixedInner} \\end{${env}}`;
       if (l || r) {
         body = `${l} ${body} ${r}`.trim();
       }
-
-      const isDouble = (openDollar && openDollar.includes('$$')) || (closeDollar && closeDollar.includes('$$')) || match.includes('$$');
-      if (isDouble && isDocument) {
+      if (isDocument) {
         return `\n\n$$${body}$$\n\n`;
       }
-      if (isDouble) {
-        return `$$${body}$$`;
-      }
-      return `$${body}$`;
+      return `$$${body}$$`;
     }
   );
+
+  safeContent = safeContent.replace(/___PRE_EXISTING_MATH_(\d+)___/g, (_, idx) => existingMathBlocks[Number(idx)]);
 
   // 5. Tách và xử lý riêng biệt các khối văn bản thuần và khối công thức toán
   let parts = safeContent.split(/(\$\$[\s\S]*?\$\$|\$(?!\$)[\s\S]*?(?<!\$)\$)/);
@@ -144,21 +183,50 @@ export default function MathText({ content, isDocument = false, className = '' }
       parts[i] = parts[i].replace(/\\parallel/g, " $\\parallel$ ");
       parts[i] = parts[i].replace(/\\perp/g, " $\\perp$ ");
 
-      // E. Ký hiệu mũi tên BBT và các ký hiệu toán phổ biến: \nearrow, \searrow, \infty, \leq, \geq, \le, \ge...
+      // E. KHOẢNG ĐOẠN, TẬP HỢP VÀ HỢP KHOẢNG ĐOẠN (Phải xử lý TRƯỚC \infty để không làm vỡ (- \infty; ...))
+      parts[i] = parts[i].replace(
+        /(?<![a-zA-Z0-9\$\\])([\(\[][\+\-]?(?:\d+|\\infty|[a-zA-Z])\s*;\s*[\+\-]?(?:\d+|\\infty|[a-zA-Z])[\)\]](?:\s*(?:\\cup|\\cap|\\setminus)\s*[\(\[][\+\-]?(?:\d+|\\infty|[a-zA-Z])\s*;\s*[\+\-]?(?:\d+|\\infty|[a-zA-Z])[\)\]])*)/g,
+        '$$$1$$'
+      );
+      parts[i] = parts[i].replace(
+        /(?<![a-zA-Z0-9\$\\])(\\\{\s*[+\-]?[0-9a-zA-Z\dots\.,;\s\+\-]+\s*\\\})/g,
+        '$$$1$$'
+      );
+
+      // F. Bất đẳng thức kép và điều kiện tham số ngoài $
+      parts[i] = parts[i].replace(
+        /(?<![a-zA-Z0-9\$\\])([+\-]?[0-9a-zA-Z\\]+)\s*(<|<=|>|>=|\\le|\\ge|\\leq|\\geq)\s*([a-zA-Z])\s*(<|<=|>|>=|\\le|\\ge|\\leq|\\geq)\s*([+\-]?[0-9a-zA-Z\\]+)(?![a-zA-Z0-9_\$\^])/g,
+        (_m, p1, op1, varName, op2, p2) => {
+          const cleanOp1 = (op1 === '<=' || op1 === '\\leq') ? '\\le' : (op1 === '>=' || op1 === '\\geq') ? '\\ge' : op1;
+          const cleanOp2 = (op2 === '<=' || op2 === '\\leq') ? '\\le' : (op2 === '>=' || op2 === '\\geq') ? '\\ge' : op2;
+          return `$${p1} ${cleanOp1} ${varName} ${cleanOp2} ${p2}$`;
+        }
+      );
+      parts[i] = parts[i].replace(
+        /(?<![a-zA-Z0-9\$\\])((?:\\Delta|y'|f'\(x\)|[a-zA-Z](?:')?))\s*(<=|>=|!=|<|>|\\le|\\ge|\\leq|\\geq|\\neq|\\ne)\s*([+\-]?(?:[0-9]+(?:\.[0-9]+)?|[a-zA-Z]|\\(?:d|t)?frac\{[^{}]+\}\{[^{}]+\}))(?![a-zA-Z0-9_\$\^])/g,
+        (_m, v, op, right) => {
+          const cleanOp = (op === '<=' || op === '\\leq') ? '\\le' : (op === '>=' || op === '\\geq') ? '\\ge' : (op === '!=' || op === '\\ne') ? '\\neq' : op;
+          return `$${v} ${cleanOp} ${right}$`;
+        }
+      );
+      parts[i] = parts[i].replace(
+        /(?<![a-zA-Z0-9\$\\])(-[a-zA-Z])\s*(<=|>=|!=|<|>|\\le|\\ge|\\leq|\\geq|\\neq|\\ne)\s*([+\-]?[0-9]+(?:\.[0-9]+)?)(?![a-zA-Z0-9_\$\^])/g,
+        (_m, v, op, right) => {
+          const cleanOp = (op === '<=' || op === '\\leq') ? '\\le' : (op === '>=' || op === '\\geq') ? '\\ge' : (op === '!=' || op === '\\ne') ? '\\neq' : op;
+          return `$${v} ${cleanOp} ${right}$`;
+        }
+      );
+
+      // G. Ký hiệu mũi tên BBT và các ký hiệu toán phổ biến
       parts[i] = parts[i].replace(/\\(nearrow|searrow|uparrow|downarrow|infty|pm|mp|leq|geq|le|ge|in|notin|subset|supset|cup|cap|emptyset|approx|equiv|forall|exists|alpha|beta|gamma|theta|pi|Delta|lambda|sigma|omega|Omega|times|div|neq)\b/g, (_m, p1) => `$\\${p1}$`);
 
-      // F. Tự động nhận diện đa thức chứa lũy thừa chưa có $ trong văn bản (ví dụ: 3x^2 - 3, 3x^2 + 3, x^2 - 3, 3x^2)
+      // H. Tự động nhận diện đa thức chứa lũy thừa chưa có $ trong văn bản
       parts[i] = parts[i].replace(/(?<![a-zA-Z0-9\$\\])([0-9]*[a-zA-Z\)]\s*\^\s*\{?[0-9a-zA-Z\+\-]+\}?(?:\s*[+\-]\s*[0-9a-zA-Z]+)*)(?![a-zA-Z0-9\$\^])/g, '$$$1$$');
 
-      // G. Tự động nhận diện dãy số / chỉ số dưới toán học (u_1, u_2, x_0, y_0, a_n hoặc có dấu bằng u_2 = 3, u_n = 2n + 1)
-      // CHỈ áp dụng cho các biến toán học đơn lẻ (u, x, y, z, a, b, c, n, k, m) theo sau bởi số hoặc n, k, m
-      // Tuyệt đối không khớp với từ tiếng Việt có dấu gạch dưới như giai_Toan, tap_hop, file_name
+      // I. Dãy số / chỉ số dưới toán học
       parts[i] = parts[i].replace(/(?<![\p{L}\p{N}\$\\])([uxyzabcnkm])_([0-9]+|[nkm])(\s*=\s*[0-9a-zA-Z\+\-\*\/]+)?(?![\p{L}\p{N}\$_])/gu, (_m, p1, p2, p3) => `$${p1}_${p2}${p3 || ''}$`);
 
-      // H. Tự động nhận diện khoảng đoạn toán học (ví dụ: (-1; 2), [0; 3], (-\infty; 1))
-      parts[i] = parts[i].replace(/(?<![a-zA-Z0-9\$\\])([\(\[][\+\-]?(?:\d+|\\infty)\s*;\s*[\+\-]?(?:\d+|\\infty)[\)\]])/g, '$$$1$$');
-
-      // I. Mũi tên suy ra / tương đương dạng ký hiệu hoặc chữ
+      // J. Mũi tên suy ra / tương đương dạng ký hiệu hoặc chữ
       parts[i] = parts[i].replace(/\\?(Leftrightarrow|Rightarrow|Leftarrow|rightarrow|leftarrow|Longleftrightarrow|Longrightarrow)\b/g, (_m, p1) => ` $\\${p1}$ `);
       parts[i] = parts[i].replace(/\/\=/g, ' $\\neq$ ');
       parts[i] = parts[i].replace(/\(\*\)/g, '(&#42;)');
@@ -170,18 +238,44 @@ export default function MathText({ content, isDocument = false, className = '' }
       parts[i] = parts[i].replace(/(?<![a-zA-Z\\])(Leftrightarrow|Rightarrow|Leftarrow|rightarrow|leftarrow)\b/g, '\\$1');
       parts[i] = parts[i].replace(/\/\=/g, '\\neq ');
       if (parts[i].startsWith('$$') && parts[i].endsWith('$$')) {
-        let inner = parts[i].slice(2, -2).replace(/(?<!\\)\$/g, '');
-        inner = inner.replace(/\n/g, ' '); 
-        inner = inner.replace(/ \\ /g, ' \\\\ ');
-        parts[i] = `$$${inner}$$`;
+        let inner = parts[i].slice(2, -2).replace(/(?<!\\)\$/g, '').trim();
+        parts[i] = `\n\n$$\n${inner}\n$$\n\n`;
+        if (i > 0 && typeof parts[i - 1] === 'string') {
+          parts[i - 1] = parts[i - 1].replace(/[ \t]+$/, '');
+        }
       } else if (parts[i].startsWith('$') && parts[i].endsWith('$')) {
-        let inner = parts[i].slice(1, -1).replace(/(?<!\\)\$/g, '');
+        let inner = parts[i].slice(1, -1).replace(/(?<!\\)\$/g, '').trim();
         parts[i] = `$${inner}$`;
       }
     }
   }
   
   safeContent = parts.join('');
+
+  // 5.1 Dọn dẹp dollar thừa và ký hiệu phân cách
+  safeContent = safeContent.replace(/\${3,}/g, '$$');
+  safeContent = safeContent.replace(/\$\s*;\s*\$/g, '; ');
+  safeContent = safeContent.replace(/\$\s*,\s*\$/g, ', ');
+
+  // 5.2 Đảm bảo macro LaTeX không dính liền biến số (e.g. \Leftrightarrowm -> \Leftrightarrow m, \inm -> \in m)
+  safeContent = safeContent.replace(/\\(Longleftrightarrow|Longrightarrow|Leftrightarrow|Rightarrow|Leftarrow|rightarrow|leftarrow|notin|infty|setminus|approx|times|equiv|forall|exists|Delta|cdot|perp|parallel|cup|cap|geq|leq|neq|pm|mp)([a-zA-Z0-9])/g, '\\$1 $2');
+  safeContent = safeContent.replace(/\\(Longleftrightarrow|Longrightarrow|Leftrightarrow|Rightarrow|Leftarrow|rightarrow|leftarrow)([\+\-])/g, '\\$1 $2');
+  safeContent = safeContent.replace(/\\in([0-9]|[a-zA-Z](?![a-zA-Z]))/g, '\\in $1');
+  // CHỈ tách le, ge, ne khi theo sau là CHỮ SỐ (0-9). TUYỆT ĐỐI KHÔNG tách trước chữ cái [a-zA-Z]
+  safeContent = safeContent.replace(/\\(le|ge|ne)([0-9])/g, '\\$1 $2');
+  safeContent = safeContent.replace(/([0-9a-zA-Z\)])\\(Longleftrightarrow|Longrightarrow|Leftrightarrow|Rightarrow|Leftarrow|rightarrow|leftarrow|notin|infty|setminus|approx|times|equiv|forall|exists|Delta|cdot|perp|parallel|cup|cap|geq|leq|neq|pm|mp|le|ge|ne|in)\b/g, '$1 \\$2');
+
+  // Khắc phục lại nếu còn sót \le ft hoặc \ne q
+  safeContent = safeContent.replace(/\\le\s+ft(?=[^a-zA-Z]|$)/g, '\\left');
+  safeContent = safeContent.replace(/\\ne\s+q(?=[^a-zA-Z0-9]|$)/g, '\\neq');
+  safeContent = safeContent.replace(/\\ge\s+q(?=[^a-zA-Z0-9]|$)/g, '\\geq');
+
+  // 5.3 Đảm bảo không còn tồn đọng token chưa giải nén trong bất kỳ trường hợp nào
+  let tokenCleanupPass = 0;
+  while (safeContent.includes('___MATH_TOK_') && tokenCleanupPass < 5) {
+    safeContent = safeContent.replace(/___MATH_TOK_\d+___/g, '');
+    tokenCleanupPass++;
+  }
 
   // 6. Khôi phục các khối SVG vào Markdown code block
   safeContent = safeContent.replace(/___MATH_SVG_BLOCK_(\d+)___/g, (_m, idx) => {
@@ -249,16 +343,41 @@ export default function MathText({ content, isDocument = false, className = '' }
   }
 
   return (
-    <span className={`katex-wrapper ${className}`}>
+    <div className={`katex-wrapper inline-block w-full ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkMath]}
         rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}
         components={{
-          p: ({node, ...props}) => <span {...props} />
+          p: ({node, ...props}) => <p className="mb-1.5 last:mb-0 leading-relaxed whitespace-pre-line" {...props} />,
+          ul: ({node, ...props}) => <ul className="list-disc pl-5 my-1.5 space-y-1" {...props} />,
+          ol: ({node, ...props}) => <ol className="list-decimal pl-5 my-1.5 space-y-1" {...props} />,
+          li: ({node, ...props}) => <li className="leading-relaxed" {...props} />,
+          strong: ({node, ...props}) => <strong className="font-bold text-gray-900" {...props} />,
+          em: ({node, ...props}) => <em className="italic" {...props} />,
+          blockquote: ({node, ...props}) => <blockquote className="border-l-3 border-emerald-500 bg-emerald-50/60 p-2 my-2 rounded-r-md text-xs leading-relaxed" {...props} />,
+          table: ({node, ...props}) => <div className="overflow-x-auto my-2 rounded-lg border border-gray-200"><table className="min-w-full border-collapse text-xs" {...props} /></div>,
+          th: ({node, ...props}) => <th className="border border-gray-200 bg-gray-100 px-2.5 py-1 font-bold text-center text-gray-900" {...props} />,
+          td: ({node, ...props}) => <td className="border border-gray-200 px-2.5 py-1 text-center text-gray-800 bg-white" {...props} />,
+          code: ({node, className: codeClass, children, ...props}: any) => {
+            const match = /language-(\w+)/.exec(codeClass || '');
+            const codeStr = String(children || '').trim();
+            if (match?.[1] === 'svg' || codeStr.startsWith('<svg')) {
+              const healedSvg = healMathSvg(codeStr);
+              return (
+                <div className="my-3 p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-col items-center justify-center">
+                  <div 
+                    className="w-full max-w-sm mx-auto [&>svg]:w-full [&>svg]:h-auto flex items-center justify-center"
+                    dangerouslySetInnerHTML={{ __html: healedSvg }} 
+                  />
+                </div>
+              );
+            }
+            return <code className="bg-gray-100 text-purple-700 px-1 py-0.5 rounded text-xs font-mono" {...props}>{children}</code>;
+          }
         }}
       >
         {safeContent}
       </ReactMarkdown>
-    </span>
+    </div>
   );
 }

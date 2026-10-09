@@ -826,8 +826,24 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
       knowledge: cleanKnowledge
     };
 
-    // Always store in session storage so ManageTests can pick it up
-    sessionStorage.setItem('pendingTestReference', JSON.stringify(refPayload));
+    // Always store in window and session storage so ManageTests can pick it up
+    try {
+      (window as any).__pendingTestReference = refPayload;
+      const safePayload = {
+        ...refPayload,
+        attachment: fullAttachment ? {
+          name: fullAttachment.name,
+          type: fullAttachment.type,
+          size: fullAttachment.size,
+          fileId: fullAttachment.fileId,
+          dataUrl: (fullAttachment.dataUrl && fullAttachment.dataUrl.length > 300000 ? '' : fullAttachment.dataUrl)
+        } : null
+      };
+      sessionStorage.setItem('pendingTestReference', JSON.stringify(safePayload));
+    } catch (sessionErr) {
+      console.warn('SessionStorage quota warning for test reference:', sessionErr);
+    }
+
     window.dispatchEvent(new CustomEvent('switch-dashboard-tab', { detail: { tab: 'tests', refPayload } }));
     setSysMsg(`Đã chọn tài liệu "${cleanTitle}" làm tham chiếu. Đang chuyển sang trang Đề thi online...`);
     setTimeout(() => setSysMsg(''), 3000);
@@ -889,8 +905,24 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
       knowledge: cleanKnowledge
     };
 
-    // Always store in session storage so ManageOfflineTests can pick it up
-    sessionStorage.setItem('pendingOfflineReference', JSON.stringify(refPayload));
+    // Always store in window and session storage so ManageOfflineTests can pick it up
+    try {
+      (window as any).__pendingOfflineReference = refPayload;
+      const safePayload = {
+        ...refPayload,
+        attachment: fullAttachment ? {
+          name: fullAttachment.name,
+          type: fullAttachment.type,
+          size: fullAttachment.size,
+          fileId: fullAttachment.fileId,
+          dataUrl: (fullAttachment.dataUrl && fullAttachment.dataUrl.length > 300000 ? '' : fullAttachment.dataUrl)
+        } : null
+      };
+      sessionStorage.setItem('pendingOfflineReference', JSON.stringify(safePayload));
+    } catch (sessionErr) {
+      console.warn('SessionStorage quota warning for offline reference:', sessionErr);
+    }
+
     window.dispatchEvent(new CustomEvent('switch-dashboard-tab', { detail: { tab: 'offline-tests', refPayload } }));
     setSysMsg(`Đã chọn tài liệu "${cleanTitle}" làm đề gốc. Đang chuyển sang trang Đề thi offline...`);
     setTimeout(() => setSysMsg(''), 3000);
