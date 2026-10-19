@@ -482,12 +482,931 @@ export const CURRICULUM_BANK: Record<number, CurriculumQuestion[]> = {
         variationGuide: "Thay đổi khoảng/đoạn xét nghiệm"
       }
     }
+  ],
+  8: [
+    // ==========================================
+    // KHỐI 8: TOÁN LỚP 8 (SGK KẾT NỐI TRI THỨC VỚI CUỘC SỐNG)
+    // ĐẦY ĐỦ 10 CHƯƠNG VỚI CÁC PHẦN MCQ, TF, SHORT, ESSAY
+    // ==========================================
+
+    // --- CHƯƠNG 1: ĐA THỨC NHIỀU BIẾN VÀ CÁC PHÉP TOÁN ---
+    {
+      id: "q8_ch1_mcq1",
+      type: "mcq",
+      question: "Bậc của đa thức $A = 4x^3y^2 - 5x^2y^4 + 7xy - 1$ là",
+      options: ["A. $5$", "B. $6$", "C. $7$", "D. $4$"],
+      correctAnswer: "B",
+      points: 0.25,
+      explanation: "Đa thức đã cho có các hạng tử với bậc lần lượt là $5$, $6$, $2$, $0$. Bậc của đa thức là bậc cao nhất trong dạng thu gọn, tức là $6$.\nChọn B.",
+      reference: {
+        topic: "Chương 1: Đa thức nhiều biến và các phép toán",
+        curriculumLesson: "Toán 8 - Chương 1: Đa thức nhiều biến",
+        cognitiveLevel: "Nhận biết",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Bậc của đa thức là bậc của hạng tử có bậc cao nhất",
+        variationGuide: "Thay đổi số mũ của các biến"
+      }
+    },
+    {
+      id: "q8_ch1_mcq2",
+      type: "mcq",
+      question: "Thu gọn đa thức $P = 2x^2y + 3xy^2 - 5x^2y + xy^2$ ta được",
+      options: ["A. $-3x^2y + 4xy^2$", "B. $3x^2y + 4xy^2$", "C. $-3x^2y + 2xy^2$", "D. $-7x^2y + 4xy^2$"],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Nhóm các đơn thức đồng dạng: $P = (2 - 5)x^2y + (3 + 1)xy^2 = -3x^2y + 4xy^2$.\nChọn A.",
+      reference: {
+        topic: "Chương 1: Đa thức nhiều biến và các phép toán",
+        curriculumLesson: "Toán 8 - Chương 1: Cộng trừ đa thức nhiều biến",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Cộng trừ các đơn thức đồng dạng để thu gọn đa thức",
+        variationGuide: "Đổi hệ số các hạng tử"
+      }
+    },
+    {
+      id: "q8_ch1_tf1",
+      type: "tf",
+      question: "Cho hai đa thức $A = 3x^2y - 2xy^2 + 5$ và $B = x^2y + 2xy^2 - 1$. Xét tính đúng sai của các khẳng định sau:",
+      options: [
+        "a) Bậc của đa thức $A$ là $3$.",
+        "b) Tổng $A + B = 4x^2y + 4$.",
+        "c) Hiệu $A - B = 2x^2y - 4xy^2 + 6$.",
+        "d) Tại $x = 1, y = 2$, giá trị của đa thức $A$ bằng $3$."
+      ],
+      correctAnswer: "a-Đ, b-Đ, c-Đ, d-Đ",
+      points: 1.0,
+      explanation: "Kiểm tra từng ý:\n- Ý a: Các hạng tử của $A$ có bậc cao nhất là $2+1=3$. -> Đúng.\n- Ý b: $A + B = (3+1)x^2y + (-2+2)xy^2 + (5-1) = 4x^2y + 4$. -> Đúng.\n- Ý c: $A - B = (3-1)x^2y + (-2-2)xy^2 + (5-(-1)) = 2x^2y - 4xy^2 + 6$. -> Đúng.\n- Ý d: $A(1,2) = 3(1)^2(2) - 2(1)(2)^2 + 5 = 6 - 8 + 5 = 3$. -> Đúng.\nKết luận: a-Đ, b-Đ, c-Đ, d-Đ.",
+      reference: {
+        topic: "Chương 1: Đa thức nhiều biến và các phép toán",
+        curriculumLesson: "Toán 8 - Chương 1: Các phép toán trên đa thức nhiều biến",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Cộng, trừ và tính giá trị đa thức nhiều biến",
+        variationGuide: "Thay đổi biểu thức A, B"
+      }
+    },
+    {
+      id: "q8_ch1_short1",
+      type: "short",
+      question: "Tính giá trị của đa thức $M = 2x^2y - 3xy + 4$ tại $x = 2$ và $y = -1$.",
+      options: [],
+      correctAnswer: "2",
+      points: 0.5,
+      explanation: "Thay $x = 2, y = -1$ vào $M$:\n$M = 2(2)^2(-1) - 3(2)(-1) + 4 = 2(4)(-1) + 6 + 4 = -8 + 10 = 2$.\nĐáp số: 2.",
+      reference: {
+        topic: "Chương 1: Đa thức nhiều biến và các phép toán",
+        curriculumLesson: "Toán 8 - Chương 1: Giá trị của đa thức",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Tính giá trị biểu thức đại số tại điểm",
+        variationGuide: "Đổi giá trị x, y"
+      }
+    },
+    {
+      id: "q8_ch1_essay1",
+      type: "essay",
+      question: "Cho hai đa thức $P = 5x^2y - 3xy^2 + 2x - 1$ và $Q = -2x^2y + 3xy^2 - 5x + 7$.\na) Tính tổng $P + Q$ và tìm bậc của đa thức tổng.\nb) Tính giá trị của $P + Q$ tại $x = 1, y = 3$.",
+      options: [],
+      correctAnswer: "a) 3x^2y - 3x + 6, bậc 3; b) 12",
+      points: 2.0,
+      explanation: "a) Ta có: $P + Q = (5 - 2)x^2y + (-3 + 3)xy^2 + (2 - 5)x + (-1 + 7) = 3x^2y - 3x + 6$.\nBậc của đa thức tổng là bậc của $3x^2y$, tức là $2 + 1 = 3$.\nb) Tại $x = 1, y = 3$: $(P + Q) = 3(1)^2(3) - 3(1) + 6 = 9 - 3 + 6 = 12$.",
+      reference: {
+        topic: "Chương 1: Đa thức nhiều biến và các phép toán",
+        curriculumLesson: "Toán 8 - Chương 1: Cộng trừ đa thức",
+        cognitiveLevel: "Vận dụng",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Cộng trừ đa thức và tính giá trị",
+        variationGuide: "Thay đổi biểu thức P và Q"
+      }
+    },
+    {
+      id: "q8_ch1_essay2",
+      type: "essay",
+      question: "Cho đa thức $A = 2x^2y - 4xy + 3x^2y - xy + 5$ và đa thức $B = x^2y + 5xy - 3$.\na) Thu gọn đa thức $A$ và xác định bậc của đa thức $A$.\nb) Tìm đa thức $C = A - B$.\nc) Tính giá trị của đa thức $C$ tại $x = -1$ và $y = 2$.",
+      options: [],
+      correctAnswer: "a) A = 5x^2y - 5xy + 5 (bậc 3); b) C = 4x^2y - 10xy + 8; c) 36",
+      points: 2.0,
+      explanation: "a) Thu gọn $A$: $A = (2 + 3)x^2y + (-4 - 1)xy + 5 = 5x^2y - 5xy + 5$. Hạng tử có bậc cao nhất là $5x^2y$ có bậc là $2 + 1 = 3$.\nb) $C = A - B = (5x^2y - 5xy + 5) - (x^2y + 5xy - 3) = 4x^2y - 10xy + 8$.\nc) Thay $x = -1, y = 2$ vào $C$:\n$C = 4(-1)^2(2) - 10(-1)(2) + 8 = 4(1)(2) + 20 + 8 = 8 + 20 + 8 = 36$.",
+      reference: {
+        topic: "Chương 1: Đa thức nhiều biến và các phép toán",
+        curriculumLesson: "Toán 8 - Chương 1: Thu gọn và tính giá trị đa thức",
+        cognitiveLevel: "Vận dụng",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Thu gọn, trừ đa thức và tính giá trị biểu thức",
+        variationGuide: "Đổi các hệ số số học và giá trị biến"
+      }
+    },
+
+    // --- CHƯƠNG 2: HẰNG ĐẲNG THỨC ĐÁNG NHỚ VÀ PHÂN TÍCH ĐA THỨC THÀNH NHÂN TỬ ---
+    {
+      id: "q8_ch2_mcq1",
+      type: "mcq",
+      question: "Khai triển của hằng đẳng thức $(2x - 3y)^2$ là",
+      options: [
+        "A. $4x^2 - 12xy + 9y^2$",
+        "B. $4x^2 - 6xy + 9y^2$",
+        "C. $4x^2 + 12xy + 9y^2$",
+        "D. $2x^2 - 12xy + 3y^2$"
+      ],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Áp dụng $(a - b)^2 = a^2 - 2ab + b^2$ với $a = 2x, b = 3y$: $(2x - 3y)^2 = 4x^2 - 12xy + 9y^2$.\nChọn A.",
+      reference: {
+        topic: "Chương 2: Hằng đẳng thức đáng nhớ và Phân tích đa thức thành nhân tử",
+        curriculumLesson: "Toán 8 - Chương 2: Bảy hằng đẳng thức đáng nhớ",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "(a - b)^2 = a^2 - 2ab + b^2",
+        variationGuide: "Thay đổi hệ số"
+      }
+    },
+    {
+      id: "q8_ch2_mcq2",
+      type: "mcq",
+      question: "Phân tích đa thức $x^2 - 16y^2$ thành nhân tử ta được",
+      options: [
+        "A. $(x - 4y)(x + 4y)$",
+        "B. $(x - 16y)(x + 16y)$",
+        "C. $(x - 4y)^2$",
+        "D. $(x + 4y)^2$"
+      ],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Áp dụng hằng đẳng thức hiệu hai bình phương $a^2 - b^2 = (a - b)(a + b)$ với $a = x, b = 4y$.\nChọn A.",
+      reference: {
+        topic: "Chương 2: Hằng đẳng thức đáng nhớ và Phân tích đa thức thành nhân tử",
+        curriculumLesson: "Toán 8 - Chương 2: Phân tích đa thức thành nhân tử",
+        cognitiveLevel: "Nhận biết",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "a^2 - b^2 = (a - b)(a + b)",
+        variationGuide: "Đổi 16y^2 thành 25y^2"
+      }
+    },
+    {
+      id: "q8_ch2_tf1",
+      type: "tf",
+      question: "Cho các biểu thức liên quan đến hằng đẳng thức đáng nhớ lớp 8. Xét tính đúng sai:",
+      options: [
+        "a) $(x + y)^2 = x^2 + 2xy + y^2$ đúng với mọi số thực $x, y$.",
+        "b) $(x - 2y)^2 = x^2 - 4xy + 4y^2$.",
+        "c) $a^3 - b^3 = (a - b)(a^2 - ab + b^2)$.",
+        "d) Giá trị của biểu thức $P = x^2 - 6x + 9$ tại $x = 13$ bằng $100$."
+      ],
+      correctAnswer: "a-Đ, b-Đ, c-S, d-Đ",
+      points: 1.0,
+      explanation: "Ý a đúng; Ý b đúng; Ý c sai vì đúng phải là $+ab$; Ý d: $P = (x-3)^2 = (13-3)^2 = 100$, đúng.\nKết luận: a-Đ, b-Đ, c-S, d-Đ.",
+      reference: {
+        topic: "Chương 2: Hằng đẳng thức đáng nhớ và Phân tích đa thức thành nhân tử",
+        curriculumLesson: "Toán 8 - Chương 2: Bảy hằng đẳng thức đáng nhớ",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Nhận dạng và vận dụng 7 hằng đẳng thức",
+        variationGuide: "Đổi biểu thức P"
+      }
+    },
+    {
+      id: "q8_ch2_short1",
+      type: "short",
+      question: "Tìm giá trị của $x$ biết: $(x + 2)^2 - x(x - 3) = 18$.",
+      options: [],
+      correctAnswer: "2",
+      points: 0.5,
+      explanation: "Khai triển: $x^2 + 4x + 4 - x^2 + 3x = 18 \\Leftrightarrow 7x + 4 = 18 \\Leftrightarrow 7x = 14 \\Leftrightarrow x = 2$.\nĐáp số: 2.",
+      reference: {
+        topic: "Chương 2: Hằng đẳng thức đáng nhớ và Phân tích đa thức thành nhân tử",
+        curriculumLesson: "Toán 8 - Chương 2: Vận dụng hằng đẳng thức tìm x",
+        cognitiveLevel: "Vận dụng",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Khai triển hằng đẳng thức để giải phương trình",
+        variationGuide: "Đổi các hệ số"
+      }
+    },
+    {
+      id: "q8_ch2_essay1",
+      type: "essay",
+      question: "a) Rút gọn biểu thức: $A = (2x + 1)^2 - (2x - 1)^2 - 8x$.\nb) Phân tích đa thức sau thành nhân tử: $B = x^3 - 4x^2 + 4x$.\nc) Tìm giá trị của $x$ để đa thức $B = 0$.",
+      options: [],
+      correctAnswer: "a) 0; b) x(x - 2)^2; c) x = 0 hoặc x = 2",
+      points: 2.0,
+      explanation: "a) Áp dụng hằng đẳng thức hiệu hai bình phương:\n$A = [(2x + 1) - (2x - 1)][(2x + 1) + (2x - 1)] - 8x = (2)(4x) - 8x = 8x - 8x = 0$.\nb) Đặt nhân tử chung $x$: $B = x(x^2 - 4x + 4) = x(x - 2)^2$.\nc) $B = 0 \\Leftrightarrow x(x - 2)^2 = 0 \\Leftrightarrow x = 0$ hoặc $x - 2 = 0 \\Leftrightarrow x = 0$ hoặc $x = 2$.",
+      reference: {
+        topic: "Chương 2: Hằng đẳng thức đáng nhớ và Phân tích đa thức thành nhân tử",
+        curriculumLesson: "Toán 8 - Chương 2: Rút gọn biểu thức và phân tích đa thức",
+        cognitiveLevel: "Vận dụng",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Hằng đẳng thức đáng nhớ, phân tích đa thức thành nhân tử",
+        variationGuide: "Đổi các hệ số hằng đẳng thức"
+      }
+    },
+    {
+      id: "q8_ch2_essay2",
+      type: "essay",
+      question: "Cho biểu thức: $P = (x + 3)(x^2 - 3x + 9) - (x - 2)(x^2 + 2x + 4)$.\na) Rút gọn biểu thức $P$.\nb) Chứng minh rằng giá trị của biểu thức $P$ không phụ thuộc vào giá trị của biến $x$.",
+      options: [],
+      correctAnswer: "a) P = 35; b) P = 35 là hằng số",
+      points: 1.5,
+      explanation: "a) Áp dụng hằng đẳng thức tổng hai lập phương và hiệu hai lập phương:\n$(x + 3)(x^2 - 3x + 9) = x^3 + 3^3 = x^3 + 27$.\n$(x - 2)(x^2 + 2x + 4) = x^3 - 2^3 = x^3 - 8$.\nDo đó: $P = (x^3 + 27) - (x^3 - 8) = x^3 + 27 - x^3 + 8 = 35$.\nb) Vì kết quả $P = 35$ là một hằng số không chứa biến $x$, nên giá trị của biểu thức $P$ luôn bằng $35$ với mọi giá trị của $x$, tức là không phụ thuộc vào giá trị của biến $x$.",
+      reference: {
+        topic: "Chương 2: Hằng đẳng thức đáng nhớ và Phân tích đa thức thành nhân tử",
+        curriculumLesson: "Toán 8 - Chương 2: Hằng đẳng thức lập phương",
+        cognitiveLevel: "Vận dụng cao",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Tổng và hiệu hai lập phương",
+        variationGuide: "Đổi các hằng số 2 và 3"
+      }
+    },
+
+    // --- CHƯƠNG 3: TỨ GIÁC ---
+    {
+      id: "q8_ch3_mcq1",
+      type: "mcq",
+      question: "Tứ giác có hai đường chéo cắt nhau tại trung điểm của mỗi đường là hình gì?",
+      options: [
+        "A. Hình bình hành",
+        "B. Hình thang cân",
+        "C. Hình thang vuông",
+        "D. Tứ giác thường"
+      ],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Theo dấu hiệu nhận biết hình bình hành: Tứ giác có hai đường chéo cắt nhau tại trung điểm mỗi đường là hình bình hành.\nChọn A.",
+      reference: {
+        topic: "Chương 3: Tứ giác",
+        curriculumLesson: "Toán 8 - Chương 3: Hình bình hành",
+        cognitiveLevel: "Nhận biết",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Dấu hiệu nhận biết hình bình hành qua đường chéo",
+        variationGuide: "Hỏi về hình thoi hoặc hình chữ nhật"
+      }
+    },
+    {
+      id: "q8_ch3_mcq2",
+      type: "mcq",
+      question: "Tổng các góc của một tứ giác lồi bằng",
+      options: ["A. $360^\\circ$", "B. $180^\\circ$", "C. $270^\\circ$", "D. $540^\\circ$"],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Định lý: Tổng bốn góc của một tứ giác lồi luôn bằng $360^\\circ$.\nChọn A.",
+      reference: {
+        topic: "Chương 3: Tứ giác",
+        curriculumLesson: "Toán 8 - Chương 3: Định lý tổng các góc của tứ giác",
+        cognitiveLevel: "Nhận biết",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Tổng bốn góc của tứ giác bằng 360 độ",
+        variationGuide: "Cho 3 góc tính góc còn lại"
+      }
+    },
+    {
+      id: "q8_ch3_tf1",
+      type: "tf",
+      question: "Cho hình bình hành $ABCD$ có hai đường chéo $AC$ và $BD$ cắt nhau tại $O$. Xét tính đúng sai của các khẳng định sau:",
+      options: [
+        "a) $AB = CD$ và $AD = BC$.",
+        "b) Điểm $O$ là trung điểm của cả $AC$ và $BD$.",
+        "c) Nếu $AC = BD$ thì $ABCD$ trở thành hình thoi.",
+        "d) Nếu $AC \\perp BD$ thì $ABCD$ là hình thoi."
+      ],
+      correctAnswer: "a-Đ, b-Đ, c-S, d-Đ",
+      points: 1.0,
+      explanation: "Phân tích:\n- Ý a: Các cạnh đối của hình bình hành bằng nhau. -> Đúng.\n- Ý b: Hai đường chéo cắt nhau tại trung điểm. -> Đúng.\n- Ý c: Hình bình hành có hai đường chéo bằng nhau là hình chữ nhật, không phải hình thoi. -> Sai.\n- Ý d: Hình bình hành có hai đường chéo vuông góc là hình thoi. -> Đúng.\nKết luận: a-Đ, b-Đ, c-S, d-Đ.",
+      reference: {
+        topic: "Chương 3: Tứ giác",
+        curriculumLesson: "Toán 8 - Chương 3: Hình bình hành và hình thoi",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Dấu hiệu nhận biết hình bình hành, hình chữ nhật, hình thoi",
+        variationGuide: "Đổi sang hình chữ nhật"
+      }
+    },
+    {
+      id: "q8_ch3_short1",
+      type: "short",
+      question: "Cho tứ giác $ABCD$ có $\\widehat{A} = 70^\\circ, \\widehat{B} = 80^\\circ, \\widehat{C} = 100^\\circ$. Tính số đo góc $D$ (độ).",
+      options: [],
+      correctAnswer: "110",
+      points: 0.5,
+      explanation: "Tổng 4 góc tứ giác: $\\widehat{A} + \\widehat{B} + \\widehat{C} + \\widehat{D} = 360^\\circ \\Rightarrow \\widehat{D} = 360^\\circ - (70^\\circ + 80^\\circ + 100^\\circ) = 110^\\circ$.\nĐáp số: 110.",
+      reference: {
+        topic: "Chương 3: Tứ giác",
+        curriculumLesson: "Toán 8 - Chương 3: Tính góc trong tứ giác",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Tổng các góc trong tứ giác bằng 360 độ",
+        variationGuide: "Đổi số đo 3 góc"
+      }
+    },
+    {
+      id: "q8_ch3_essay1",
+      type: "essay",
+      question: "Cho tam giác $ABC$ cân tại $A$. Gọi $M, N$ lần lượt là trung điểm của các cạnh $AB, AC$.\na) Chứng minh tứ giác $BMNC$ là hình thang cân.\nb) Biết $BC = 10\\text{ cm}$, tính độ dài đoạn thẳng $MN$.",
+      options: [],
+      correctAnswer: "a) BMNC là hình thang cân; b) MN = 5 cm",
+      points: 2.0,
+      explanation: "a) Vì $M, N$ là trung điểm $AB, AC$ nên $MN$ là đường trung bình của tam giác $ABC$. Do đó $MN // BC \\Rightarrow BMNC$ là hình thang. Mặt khác tam giác $ABC$ cân tại $A$ nên $\\widehat{B} = \\widehat{C}$. Hình thang có hai góc kề một đáy bằng nhau là hình thang cân.\nb) Đường trung bình $MN = \\frac{1}{2} BC = \\frac{10}{2} = 5\\text{ cm}$.",
+      reference: {
+        topic: "Chương 3: Tứ giác",
+        curriculumLesson: "Toán 8 - Chương 3: Hình thang cân",
+        cognitiveLevel: "Vận dụng",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Đường trung bình và chứng minh hình thang cân",
+        variationGuide: "Đổi độ dài BC"
+      }
+    },
+
+    // --- CHƯƠNG 4: ĐỊNH LÝ THALÈS TRONG TAM GIÁC ---
+    {
+      id: "q8_ch4_mcq1",
+      type: "mcq",
+      question: "Cho tam giác $ABC$, đường thẳng $d // BC$ cắt $AB, AC$ lần lượt tại $M, N$. Theo định lý Thalès, khẳng định nào đúng?",
+      options: [
+        "A. $\\frac{AM}{AB} = \\frac{AN}{AC}$",
+        "B. $\\frac{AM}{MB} = \\frac{AC}{AN}$",
+        "C. $\\frac{AM}{AN} = \\frac{AB}{MN}$",
+        "D. $\\frac{MB}{AB} = \\frac{AN}{AC}$"
+      ],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Theo định lý Thalès: Đường thẳng song song với một cạnh của tam giác định ra trên hai cạnh còn lại các đoạn thẳng tương ứng tỉ lệ: $\\frac{AM}{AB} = \\frac{AN}{AC}$.\nChọn A.",
+      reference: {
+        topic: "Chương 4: Định lý Thalès trong tam giác",
+        curriculumLesson: "Toán 8 - Chương 4: Định lý Thalès",
+        cognitiveLevel: "Nhận biết",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Định lý Thalès: MN // BC => AM/AB = AN/AC",
+        variationGuide: "Đổi tên đỉnh"
+      }
+    },
+    {
+      id: "q8_ch4_mcq2",
+      type: "mcq",
+      question: "Cho tam giác $ABC$ có độ dài cạnh $BC = 12\\text{ cm}$. Đoạn thẳng nối trung điểm của hai cạnh $AB$ và $AC$ có độ dài bằng",
+      options: ["A. $6\\text{ cm}$", "B. $24\\text{ cm}$", "C. $4\\text{ cm}$", "D. $8\\text{ cm}$"],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Đoạn thẳng nối trung điểm hai cạnh là đường trung bình của tam giác. Đường trung bình song song và bằng một nửa cạnh đáy: $MN = \\frac{1}{2} BC = 6\\text{ cm}$.\nChọn A.",
+      reference: {
+        topic: "Chương 4: Định lý Thalès trong tam giác",
+        curriculumLesson: "Toán 8 - Chương 4: Đường trung bình của tam giác",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Độ dài đường trung bình bằng nửa cạnh đáy",
+        variationGuide: "Đổi độ dài BC"
+      }
+    },
+    {
+      id: "q8_ch4_tf1",
+      type: "tf",
+      question: "Cho tam giác $ABC$ có $AB = 6\\text{ cm}, AC = 9\\text{ cm}$. Trên $AB$ lấy điểm $M$ sao cho $AM = 2\\text{ cm}$. Kẻ $MN // BC$ ($N \\in AC$). Xét tính đúng sai:",
+      options: [
+        "a) Tỉ số $\\frac{AM}{AB} = \\frac{1}{3}$.",
+        "b) Theo định lý Thalès, $\\frac{AN}{AC} = \\frac{AM}{AB} = \\frac{1}{3}$.",
+        "c) Độ dài đoạn thẳng $AN = 3\\text{ cm}$.",
+        "d) Độ dài đoạn thẳng $NC = 6\\text{ cm}$."
+      ],
+      correctAnswer: "a-Đ, b-Đ, c-Đ, d-Đ",
+      points: 1.0,
+      explanation: "Phân tích:\n- Ý a: $AM/AB = 2/6 = 1/3$. -> Đúng.\n- Ý b: Định lý Thalès $AN/AC = AM/AB = 1/3$. -> Đúng.\n- Ý c: $AN = \\frac{1}{3} AC = \\frac{1}{3} \\cdot 9 = 3\\text{ cm}$. -> Đúng.\n- Ý d: $NC = AC - AN = 9 - 3 = 6\\text{ cm}$. -> Đúng.\nKết luận: a-Đ, b-Đ, c-Đ, d-Đ.",
+      reference: {
+        topic: "Chương 4: Định lý Thalès trong tam giác",
+        curriculumLesson: "Toán 8 - Chương 4: Vận dụng định lý Thalès",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Vận dụng định lý Thalès tính độ dài đoạn thẳng",
+        variationGuide: "Đổi kích thước các đoạn thẳng"
+      }
+    },
+    {
+      id: "q8_ch4_short1",
+      type: "short",
+      question: "Cho tam giác $ABC$ có $AB = 10\\text{ cm}$. Lấy $M \\in AB$ sao cho $AM = 4\\text{ cm}$. Kẻ $MN // BC$ ($N \\in AC$). Biết $BC = 15\\text{ cm}$, tính độ dài $MN$ (cm).",
+      options: [],
+      correctAnswer: "6",
+      points: 0.5,
+      explanation: "Theo hệ quả định lý Thalès: $\\frac{MN}{BC} = \\frac{AM}{AB} = \\frac{4}{10} = \\frac{2}{5} \\Rightarrow MN = \\frac{2}{5} \\cdot 15 = 6\\text{ cm}$.\nĐáp số: 6.",
+      reference: {
+        topic: "Chương 4: Định lý Thalès trong tam giác",
+        curriculumLesson: "Toán 8 - Chương 4: Hệ quả định lý Thalès",
+        cognitiveLevel: "Vận dụng",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Hệ quả định lý Thalès MN/BC = AM/AB",
+        variationGuide: "Thay đổi số liệu"
+      }
+    },
+
+    // --- CHƯƠNG 5: DỮ LIỆU VÀ BIỂU ĐỒ ---
+    {
+      id: "q8_ch5_mcq1",
+      type: "mcq",
+      question: "Biểu đồ thích hợp nhất để biểu diễn tỉ lệ phần trăm các thành phần trong một tổng thể là",
+      options: [
+        "A. Biểu đồ hình quạt tròn",
+        "B. Biểu đồ đoạn thẳng",
+        "C. Biểu đồ cột kép",
+        "D. Biểu đồ tranh"
+      ],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Biểu đồ hình quạt tròn biểu diễn tỉ lệ phần trăm của từng phần so với tổng thể 100%.\nChọn A.",
+      reference: {
+        topic: "Chương 5: Dữ liệu và biểu đồ",
+        curriculumLesson: "Toán 8 - Chương 5: Biểu đồ hình quạt tròn",
+        cognitiveLevel: "Nhận biết",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Biểu đồ hình quạt tròn thể hiện cơ cấu phần trăm",
+        variationGuide: "Hỏi về biểu đồ đoạn thẳng (thể hiện xu hướng theo thời gian)"
+      }
+    },
+    {
+      id: "q8_ch5_mcq2",
+      type: "mcq",
+      question: "Dữ liệu nào sau đây là dữ liệu định lượng?",
+      options: [
+        "A. Chiều cao của các bạn học sinh trong lớp (cm)",
+        "B. Màu sắc yêu thích của các bạn học sinh",
+        "C. Tên các môn học yêu thích",
+        "D. Xếp loại hạnh kiểm học sinh (Tốt, Khá, Đạt)"
+      ],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Dữ liệu định lượng là dữ liệu nhận giá trị bằng số (như chiều cao, cân nặng, điểm số).\nChọn A.",
+      reference: {
+        topic: "Chương 5: Dữ liệu và biểu đồ",
+        curriculumLesson: "Toán 8 - Chương 5: Thu thập và phân loại dữ liệu",
+        cognitiveLevel: "Nhận biết",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Phân biệt dữ liệu định tính và định lượng",
+        variationGuide: "Đổi các ví dụ dữ liệu"
+      }
+    },
+    {
+      id: "q8_ch5_tf1",
+      type: "tf",
+      question: "Một cuộc khảo sát 200 học sinh khối 8 về phương tiện đến trường cho kết quả: Xe đạp 50%, Đi bộ 30%, Xe buýt 15%, Xe máy điện 5%. Xét tính đúng sai:",
+      options: [
+        "a) Số học sinh đi xe đạp là 100 học sinh.",
+        "b) Số học sinh đi bộ là 60 học sinh.",
+        "c) Biểu đồ thích hợp nhất để biểu diễn kết quả này là biểu đồ hình quạt tròn.",
+        "d) Số học sinh đi xe buýt nhiều hơn số học sinh đi xe máy điện là 15 học sinh."
+      ],
+      correctAnswer: "a-Đ, b-Đ, c-Đ, d-S",
+      points: 1.0,
+      explanation: "Tính toán:\n- Xe đạp: 50% * 200 = 100. -> Đúng.\n- Đi bộ: 30% * 200 = 60. -> Đúng.\n- Dạng tỉ lệ cơ cấu dùng biểu đồ quạt tròn. -> Đúng.\n- Xe buýt: 15% * 200 = 30; Xe máy điện: 5% * 200 = 10. Chênh lệch là 30 - 10 = 20 học sinh, không phải 15. -> Sai.\nKết luận: a-Đ, b-Đ, c-Đ, d-S.",
+      reference: {
+        topic: "Chương 5: Dữ liệu và biểu đồ",
+        curriculumLesson: "Toán 8 - Chương 5: Phân tích số liệu thống kê",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Tính số lượng từ tỉ lệ phần trăm trên biểu đồ",
+        variationGuide: "Đổi số học sinh khảo sát"
+      }
+    },
+    {
+      id: "q8_ch5_short1",
+      type: "short",
+      question: "Một cuộc khảo sát gồm 300 học sinh lớp 8 có 40% học sinh yêu thích môn Toán. Tính số học sinh yêu thích môn Toán.",
+      options: [],
+      correctAnswer: "120",
+      points: 0.5,
+      explanation: "Số học sinh yêu thích môn Toán: $300 \\times 40\\% = 300 \\times 0.4 = 120$ học sinh.\nĐáp số: 120.",
+      reference: {
+        topic: "Chương 5: Dữ liệu và biểu đồ",
+        curriculumLesson: "Toán 8 - Chương 5: Tính toán từ số liệu thống kê",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Tính giá trị phần trăm của một tập dữ liệu",
+        variationGuide: "Đổi số học sinh và phần trăm"
+      }
+    },
+
+    // --- CHƯƠNG 6: PHÂN THỨC ĐẠI SỐ VÀ CÁC PHÉP TÍNH ---
+    {
+      id: "q8_ch6_mcq1",
+      type: "mcq",
+      question: "Điều kiện xác định của phân thức đại số $\\frac{2x - 1}{x - 3}$ là",
+      options: ["A. $x \\neq 3$", "B. $x \\neq -3$", "C. $x \\neq \\frac{1}{2}$", "D. $x \\in \\mathbb{R}$"],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Phân thức đại số xác định khi mẫu thức khác 0: $x - 3 \\neq 0 \\Leftrightarrow x \\neq 3$.\nChọn A.",
+      reference: {
+        topic: "Chương 6: Phân thức đại số và các phép tính",
+        curriculumLesson: "Toán 8 - Chương 6: Điều kiện xác định của phân thức đại số",
+        cognitiveLevel: "Nhận biết",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Điều kiện xác định của phân thức đại số là mẫu khác 0",
+        variationGuide: "Đổi mẫu thức thành x + a"
+      }
+    },
+    {
+      id: "q8_ch6_mcq2",
+      type: "mcq",
+      question: "Rút gọn phân thức $\\frac{x^2 - 9}{x - 3}$ (với $x \\neq 3$) ta được",
+      options: ["A. $x + 3$", "B. $x - 3$", "C. $x + 9$", "D. $3$"],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Phân tích tử thức thành nhân tử: $\\frac{(x - 3)(x + 3)}{x - 3} = x + 3$.\nChọn A.",
+      reference: {
+        topic: "Chương 6: Phân thức đại số và các phép tính",
+        curriculumLesson: "Toán 8 - Chương 6: Rút gọn phân thức đại số",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Rút gọn phân thức bằng cách chia cả tử và mẫu cho nhân tử chung",
+        variationGuide: "Thay 9 thành 16 hoặc 25"
+      }
+    },
+    {
+      id: "q8_ch6_tf1",
+      type: "tf",
+      question: "Cho biểu thức $A = \\frac{x^2 - 4}{x + 2}$. Xét tính đúng sai của các khẳng định sau:",
+      options: [
+        "a) Điều kiện xác định của biểu thức $A$ là $x \\neq -2$.",
+        "b) Với $x \\neq -2$, rút gọn biểu thức $A$ ta được $A = x - 2$.",
+        "c) Tại $x = 10$, giá trị của biểu thức $A$ bằng $8$.",
+        "d) Với mọi số thực $x$, biểu thức $A$ luôn nhận giá trị dương."
+      ],
+      correctAnswer: "a-Đ, b-Đ, c-Đ, d-S",
+      points: 1.0,
+      explanation: "Ý a: $x+2 \\neq 0 \\Leftrightarrow x \\neq -2$. Đúng;\nÝ b: $A = (x-2)(x+2)/(x+2) = x - 2$. Đúng;\nÝ c: $A(10) = 10 - 2 = 8$. Đúng;\nÝ d: Khi $x = 0 \\Rightarrow A = -2 < 0$, khẳng định luôn dương là sai.\nKết luận: a-Đ, b-Đ, c-Đ, d-S.",
+      reference: {
+        topic: "Chương 6: Phân thức đại số và các phép tính",
+        curriculumLesson: "Toán 8 - Chương 6: Rút gọn và tính giá trị phân thức",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Điều kiện và rút gọn phân thức",
+        variationGuide: "Thay đổi biểu thức A"
+      }
+    },
+    {
+      id: "q8_ch6_short1",
+      type: "short",
+      question: "Tính giá trị của phân thức $P = \\frac{x^2 - 16}{x - 4}$ tại $x = 24$.",
+      options: [],
+      correctAnswer: "28",
+      points: 0.5,
+      explanation: "Rút gọn $P = x + 4$. Thay $x = 24$: $P = 24 + 4 = 28$.\nĐáp số: 28.",
+      reference: {
+        topic: "Chương 6: Phân thức đại số và các phép tính",
+        curriculumLesson: "Toán 8 - Chương 6: Rút gọn và tính giá trị phân thức",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Rút gọn trước khi thay số",
+        variationGuide: "Đổi 16 thành 25 và x = 35"
+      }
+    },
+
+    // --- CHƯƠNG 7: PHƯƠNG TRÌNH BẬC NHẤT MỘT ẨN VÀ HÀM SỐ BẬC NHẤT ---
+    {
+      id: "q8_ch7_mcq1",
+      type: "mcq",
+      question: "Hệ số góc của đường thẳng $y = -3x + 5$ là",
+      options: ["A. $-3$", "B. $5$", "C. $3$", "D. $-5$"],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Hàm số bậc nhất $y = ax + b$ có hệ số góc là $a = -3$.\nChọn A.",
+      reference: {
+        topic: "Chương 7: Phương trình bậc nhất một ẩn và Hàm số bậc nhất",
+        curriculumLesson: "Toán 8 - Chương 7: Hàm số bậc nhất y = ax + b",
+        cognitiveLevel: "Nhận biết",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Hệ số góc của đường thẳng y = ax + b là a",
+        variationGuide: "Đổi hệ số a và b"
+      }
+    },
+    {
+      id: "q8_ch7_mcq2",
+      type: "mcq",
+      question: "Nghiệm của phương trình bậc nhất $2x - 8 = 0$ là",
+      options: ["A. $x = 4$", "B. $x = -4$", "C. $x = 8$", "D. $x = 2$"],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Ta có $2x = 8 \\Leftrightarrow x = 4$.\nChọn A.",
+      reference: {
+        topic: "Chương 7: Phương trình bậc nhất một ẩn và Hàm số bậc nhất",
+        curriculumLesson: "Toán 8 - Chương 7: Phương trình bậc nhất một ẩn",
+        cognitiveLevel: "Nhận biết",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Giải phương trình bậc nhất ax + b = 0",
+        variationGuide: "Đổi hệ số phương trình"
+      }
+    },
+    {
+      id: "q8_ch7_tf1",
+      type: "tf",
+      question: "Cho hàm số bậc nhất $y = f(x) = 2x - 4$. Xét tính đúng sai của các khẳng định sau:",
+      options: [
+        "a) Hàm số $y = 2x - 4$ có hệ số góc $a = 2 > 0$ nên đồng biến trên $\\mathbb{R}$.",
+        "b) Đồ thị hàm số cắt trục hoành tại điểm $A(2; 0)$.",
+        "c) Đồ thị hàm số cắt trục tung tại điểm $B(0; -4)$.",
+        "d) Điểm $M(3; 5)$ thuộc đồ thị hàm số đã cho."
+      ],
+      correctAnswer: "a-Đ, b-Đ, c-Đ, d-S",
+      points: 1.0,
+      explanation: "Ý a: $a=2>0$ đồng biến. Đúng;\nÝ b: $y=0 \\Rightarrow 2x=4 \\Rightarrow x=2$. Đúng;\nÝ c: $x=0 \\Rightarrow y=-4$. Đúng;\nÝ d: $f(3) = 2(3) - 4 = 2 \\neq 5$. Sai.\nKết luận: a-Đ, b-Đ, c-Đ, d-S.",
+      reference: {
+        topic: "Chương 7: Phương trình bậc nhất một ẩn và Hàm số bậc nhất",
+        curriculumLesson: "Toán 8 - Chương 7: Đồ thị hàm số bậc nhất",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Tính đồng biến và tọa độ giao điểm của hàm số bậc nhất",
+        variationGuide: "Đổi hàm số"
+      }
+    },
+    {
+      id: "q8_ch7_short1",
+      type: "short",
+      question: "Một người đi xe máy từ A đến B với vận tốc $40\\text{ km/h}$. Khi về người đó đi với vận tốc $30\\text{ km/h}$ nên thời gian về nhiều hơn thời gian đi là $45$ phút ($0.75$ giờ). Tính quãng đường AB (km).",
+      options: [],
+      correctAnswer: "90",
+      points: 0.5,
+      explanation: "Phương trình: $\\frac{x}{30} - \\frac{x}{40} = \\frac{3}{4} \\Leftrightarrow \\frac{x}{120} = \\frac{3}{4} \\Leftrightarrow x = 90\\text{ km}$.\nĐáp số: 90.",
+      reference: {
+        topic: "Chương 7: Phương trình bậc nhất một ẩn và Hàm số bậc nhất",
+        curriculumLesson: "Toán 8 - Chương 7: Giải bài toán bằng cách lập phương trình",
+        cognitiveLevel: "Vận dụng",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Lập phương trình chuyển động",
+        variationGuide: "Đổi vận tốc và thời gian"
+      }
+    },
+
+    // --- CHƯƠNG 8: MỞ ĐẦU VỀ TÍNH XÁC SUẤT CỦA BIẾN CỐ ---
+    {
+      id: "q8_ch8_mcq1",
+      type: "mcq",
+      question: "Gieo một con xúc xắc 6 mặt cân đối một lần. Biến cố nào sau đây là biến cố chắc chắn?",
+      options: [
+        "A. Số chấm xuất hiện nhỏ hơn 7",
+        "B. Số chấm xuất hiện là số chẵn",
+        "C. Số chấm xuất hiện là số lẻ",
+        "D. Số chấm xuất hiện bằng 6"
+      ],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Con xúc xắc 6 mặt có các mặt $\{1, 2, 3, 4, 5, 6\}$, mọi số chấm đều nhỏ hơn 7 nên biến cố 'Số chấm nhỏ hơn 7' luôn xảy ra (biến cố chắc chắn).\nChọn A.",
+      reference: {
+        topic: "Chương 8: Mở đầu về tính xác suất của biến cố",
+        curriculumLesson: "Toán 8 - Chương 8: Biến cố chắc chắn, không thể, ngẫu nhiên",
+        cognitiveLevel: "Nhận biết",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Định nghĩa biến cố chắc chắn",
+        variationGuide: "Hỏi về biến cố không thể"
+      }
+    },
+    {
+      id: "q8_ch8_mcq2",
+      type: "mcq",
+      question: "Gieo một con xúc xắc 6 mặt cân đối một lần. Xác suất để xuất hiện mặt có số chấm là số chẵn bằng",
+      options: ["A. $\\frac{1}{2}$", "B. $\\frac{1}{3}$", "C. $\\frac{1}{6}$", "D. $\\frac{2}{3}$"],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Các kết quả có thể là $\{1, 2, 3, 4, 5, 6\}$ (6 kết quả). Các kết quả thuận lợi cho mặt chẵn là $\{2, 4, 6\}$ (3 kết quả). Xác suất: $P = \\frac{3}{6} = \\frac{1}{2}$.\nChọn A.",
+      reference: {
+        topic: "Chương 8: Mở đầu về tính xác suất của biến cố",
+        curriculumLesson: "Toán 8 - Chương 8: Xác suất của biến cố ngẫu nhiên",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Xác suất cổ điển P = số kết quả thuận lợi / tổng số kết quả",
+        variationGuide: "Hỏi về số chấm là số nguyên tố"
+      }
+    },
+    {
+      id: "q8_ch8_tf1",
+      type: "tf",
+      question: "Một hộp chứa 10 tấm thẻ cùng loại được đánh số từ 1 đến 10. Rút ngẫu nhiên một tấm thẻ. Xét tính đúng sai:",
+      options: [
+        "a) Số kết quả có thể xảy ra của phép thử là 10.",
+        "b) Biến cố 'Rút được thẻ ghi số 11' là biến cố không thể.",
+        "c) Xác suất rút được tấm thẻ ghi số nguyên tố bằng $\\frac{2}{5}$.",
+        "d) Xác suất rút được tấm thẻ ghi số chia hết cho 3 bằng $\\frac{3}{10}$."
+      ],
+      correctAnswer: "a-Đ, b-Đ, c-Đ, d-Đ",
+      points: 1.0,
+      explanation: "Phân tích:\n- Ý a: Có 10 tấm thẻ nên có 10 kết quả đồng khả năng. -> Đúng.\n- Ý b: Thẻ chỉ từ 1 đến 10 nên không thể rút được số 11. -> Đúng.\n- Ý c: Các số nguyên tố là $\{2, 3, 5, 7\}$ (4 số). Xác suất $P = 4/10 = 2/5$. -> Đúng.\n- Ý d: Các số chia hết cho 3 là $\{3, 6, 9\}$ (3 số). Xác suất $P = 3/10$. -> Đúng.\nKết luận: a-Đ, b-Đ, c-Đ, d-Đ.",
+      reference: {
+        topic: "Chương 8: Mở đầu về tính xác suất của biến cố",
+        curriculumLesson: "Toán 8 - Chương 8: Xác suất của biến cố ngẫu nhiên trong trò chơi đơn giản",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Xác định số kết quả thuận lợi và tính xác suất",
+        variationGuide: "Đổi số lượng thẻ"
+      }
+    },
+    {
+      id: "q8_ch8_short1",
+      type: "short",
+      question: "Một hộp có 5 viên bi xanh, 3 viên bi đỏ và 2 viên bi vàng có kích thước như nhau. Lấy ngẫu nhiên một viên bi. Tính xác suất lấy được viên bi màu xanh (viết dưới dạng số thập phân, ví dụ: 0.5).",
+      options: [],
+      correctAnswer: "0.5",
+      points: 0.5,
+      explanation: "Tổng số viên bi: $5 + 3 + 2 = 10$ viên bi. Số viên bi xanh là 5. Xác suất lấy được viên bi màu xanh: $P = \\frac{5}{10} = 0.5$.\nĐáp số: 0.5.",
+      reference: {
+        topic: "Chương 8: Mở đầu về tính xác suất của biến cố",
+        curriculumLesson: "Toán 8 - Chương 8: Xác suất thực nghiệm và cổ điển",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Tính xác suất biến cố lấy vật ngẫu nhiên",
+        variationGuide: "Đổi số lượng các viên bi"
+      }
+    },
+
+    // --- CHƯƠNG 9: TAM GIÁC ĐỒNG DẠNG VÀ ĐỊNH LÝ PYTHAGORE ĐẢO ---
+    {
+      id: "q8_ch9_mcq1",
+      type: "mcq",
+      question: "Cho tam giác $ABC$ đồng dạng với tam giác $DEF$ theo tỉ số đồng dạng $k = 2$. Tỉ số diện tích $\\frac{S_{\\Delta ABC}}{S_{\\Delta DEF}}$ bằng",
+      options: ["A. $4$", "B. $2$", "C. $\\frac{1}{2}$", "D. $\\frac{1}{4}$"],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Tỉ số diện tích hai tam giác đồng dạng bằng bình phương tỉ số đồng dạng: $k^2 = 2^2 = 4$.\nChọn A.",
+      reference: {
+        topic: "Chương 9: Tam giác đồng dạng và Định lý Pythagore đảo",
+        curriculumLesson: "Toán 8 - Chương 9: Định lý về hai tam giác đồng dạng",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Tỉ số diện tích bằng bình phương tỉ số đồng dạng",
+        variationGuide: "Thay đổi k"
+      }
+    },
+    {
+      id: "q8_ch9_mcq2",
+      type: "mcq",
+      question: "Tam giác có độ dài ba cạnh nào sau đây là tam giác vuông (theo định lý Pythagore đảo)?",
+      options: [
+        "A. $3\\text{ cm}, 4\\text{ cm}, 5\\text{ cm}$",
+        "B. $2\\text{ cm}, 3\\text{ cm}, 4\\text{ cm}$",
+        "C. $4\\text{ cm}, 5\\text{ cm}, 6\\text{ cm}$",
+        "D. $5\\text{ cm}, 6\\text{ cm}, 7\\text{ cm}$"
+      ],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Kiểm tra $3^2 + 4^2 = 9 + 16 = 25 = 5^2$. Theo định lý Pythagore đảo, đây là tam giác vuông.\nChọn A.",
+      reference: {
+        topic: "Chương 9: Tam giác đồng dạng và Định lý Pythagore đảo",
+        curriculumLesson: "Toán 8 - Chương 9: Định lý Pythagore đảo",
+        cognitiveLevel: "Nhận biết",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Định lý Pythagore đảo: a^2 + b^2 = c^2 thì tam giác vuông",
+        variationGuide: "Đổi bộ ba số Pythagore: 6, 8, 10 hoặc 5, 12, 13"
+      }
+    },
+    {
+      id: "q8_ch9_tf1",
+      type: "tf",
+      question: "Cho tam giác $ABC$ có $AB = 4\\text{ cm}, AC = 6\\text{ cm}, BC = 8\\text{ cm}$ và tam giác $A'B'C'$ đồng dạng với $\\Delta ABC$ theo tỉ số $k = 2$. Xét tính đúng sai:",
+      options: [
+        "a) Độ dài cạnh $A'B' = 8\\text{ cm}$.",
+        "b) Chu vi của tam giác $ABC$ bằng $18\\text{ cm}$.",
+        "c) Chu vi của tam giác $A'B'C'$ bằng $36\\text{ cm}$.",
+        "d) Tỉ số chu vi của hai tam giác bằng $4$."
+      ],
+      correctAnswer: "a-Đ, b-Đ, c-Đ, d-S",
+      points: 1.0,
+      explanation: "Phân tích:\n- Ý a: $A'B' = k \\cdot AB = 2 \\cdot 4 = 8\\text{ cm}$. -> Đúng.\n- Ý b: $P_{ABC} = 4 + 6 + 8 = 18\\text{ cm}$. -> Đúng.\n- Ý c: Tỉ số chu vi bằng tỉ số đồng dạng $k = 2 \\Rightarrow P_{A'B'C'} = 2 \\cdot 18 = 36\\text{ cm}$. -> Đúng.\n- Ý d: Tỉ số chu vi bằng $k = 2$, không phải 4 (tỉ số diện tích mới bằng 4). -> Sai.\nKết luận: a-Đ, b-Đ, c-Đ, d-S.",
+      reference: {
+        topic: "Chương 9: Tam giác đồng dạng và Định lý Pythagore đảo",
+        curriculumLesson: "Toán 8 - Chương 9: Tính chất của hai tam giác đồng dạng",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Tỉ số chu vi bằng tỉ số đồng dạng k",
+        variationGuide: "Đổi tỉ số k"
+      }
+    },
+    {
+      id: "q8_ch9_short1",
+      type: "short",
+      question: "Một chiếc cọc cắm thẳng đứng trên mặt đất có chiều cao $2\\text{ m}$ và bóng trên mặt đất dài $1.5\\text{ m}$. Cùng thời điểm đó, bóng của một cột cờ trên mặt đất dài $12\\text{ m}$. Tính chiều cao của cột cờ (m).",
+      options: [],
+      correctAnswer: "16",
+      points: 0.5,
+      explanation: "Hai tam giác tạo bởi vật và bóng đồng dạng với nhau: $\\frac{h_{\\text{cột cờ}}}{h_{\\text{cọc}}} = \\frac{\\text{bóng cột cờ}}{\\text{bóng cọc}} \\Rightarrow \\frac{h}{2} = \\frac{12}{1.5} = 8 \\Rightarrow h = 16\\text{ m}$.\nĐáp số: 16.",
+      reference: {
+        topic: "Chương 9: Tam giác đồng dạng và Định lý Pythagore đảo",
+        curriculumLesson: "Toán 8 - Chương 9: Ứng dụng thực tế của tam giác đồng dạng",
+        cognitiveLevel: "Vận dụng",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Ứng dụng tam giác đồng dạng đo khoảng cách chiều cao thực địa",
+        variationGuide: "Đổi số đo cọc và bóng"
+      }
+    },
+
+    // --- CHƯƠNG 10: MỘT SỐ HÌNH KHỐI TRONG THỰC TIỄN (HÌNH CHÓP TAM GIÁC ĐỀU VÀ HÌNH CHÓP TỨ GIÁC ĐỀU) ---
+    {
+      id: "q8_ch10_mcq1",
+      type: "mcq",
+      question: "Đáy của hình chóp tứ giác đều là hình gì?",
+      options: ["A. Hình vuông", "B. Hình chữ nhật", "C. Hình thoi", "D. Hình bình hành"],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Theo định nghĩa: Hình chóp tứ giác đều có đáy là một đa giác đều (hình vuông) và các mặt bên là tam giác cân bằng nhau.\nChọn A.",
+      reference: {
+        topic: "Chương 10: Một số hình khối trong thực tiễn (Hình chóp tam giác đều và Hình chóp tứ giác đều)",
+        curriculumLesson: "Toán 8 - Chương 10: Hình chóp tứ giác đều",
+        cognitiveLevel: "Nhận biết",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "Đáy của hình chóp tứ giác đều là hình vuông",
+        variationGuide: "Hỏi về hình chóp tam giác đều (đáy là tam giác đều)"
+      }
+    },
+    {
+      id: "q8_ch10_mcq2",
+      type: "mcq",
+      question: "Thể tích của hình chóp có diện tích đáy $S$ và chiều cao $h$ được tính theo công thức nào?",
+      options: ["A. $V = \\frac{1}{3} S \\cdot h$", "B. $V = S \\cdot h$", "C. $V = \\frac{1}{2} S \\cdot h$", "D. $V = 3 S \\cdot h$"],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Công thức tính thể tích hình chóp: $V = \\frac{1}{3} S \\cdot h$.\nChọn A.",
+      reference: {
+        topic: "Chương 10: Một số hình khối trong thực tiễn (Hình chóp tam giác đều và Hình chóp tứ giác đều)",
+        curriculumLesson: "Toán 8 - Chương 10: Thể tích hình chóp đều",
+        cognitiveLevel: "Nhận biết",
+        competency: "Tư duy và lập luận toán học",
+        coreKnowledge: "V = 1/3 * S_đáy * h",
+        variationGuide: "Hỏi về diện tích xung quanh"
+      }
+    },
+    {
+      id: "q8_ch10_tf1",
+      type: "tf",
+      question: "Một chiếc lều có dạng hình chóp tứ giác đều, đáy là hình vuông cạnh $a = 4\\text{ m}$, chiều cao của hình chóp là $h = 3\\text{ m}$. Xét tính đúng sai:",
+      options: [
+        "a) Diện tích đáy của lều là $S_{\\text{đáy}} = 16\\text{ m}^2$.",
+        "b) Thể tích không gian bên trong lều là $V = 16\\text{ m}^3$.",
+        "c) Các mặt bên của chiếc lều là các tam giác cân bằng nhau.",
+        "d) Nếu tăng cạnh đáy lên gấp đôi và giữ nguyên chiều cao thì thể tích tăng gấp đôi."
+      ],
+      correctAnswer: "a-Đ, b-Đ, c-Đ, d-S",
+      points: 1.0,
+      explanation: "Ý a: $S = 4^2 = 16$. Đúng;\nÝ b: $V = \\frac{1}{3} \\cdot 16 \\cdot 3 = 16\\text{ m}^3$. Đúng;\nÝ c: Mặt bên hình chóp đều là tam giác cân bằng nhau. Đúng;\nÝ d: Cạnh đáy tăng 2 lần thì diện tích đáy tăng 4 lần nên thể tích tăng 4 lần. Sai.\nKết luận: a-Đ, b-Đ, c-Đ, d-S.",
+      reference: {
+        topic: "Chương 10: Một số hình khối trong thực tiễn (Hình chóp tam giác đều và Hình chóp tứ giác đều)",
+        curriculumLesson: "Toán 8 - Chương 10: Thể tích hình chóp tứ giác đều",
+        cognitiveLevel: "Vận dụng",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "Thể tích hình chóp tứ giác đều và sự thay đổi tỉ lệ",
+        variationGuide: "Đổi kích thước lều"
+      }
+    },
+    {
+      id: "q8_ch10_short1",
+      type: "short",
+      question: "Một khối rubik hình chóp tam giác đều có diện tích đáy bằng $18\\sqrt{3}\\text{ cm}^2$ và chiều cao bằng $4\\text{ cm}$. Tính thể tích của khối rubik đó theo đơn vị $\\text{cm}^3$ (kết quả có dạng $a\\sqrt{3}$, điền số nguyên $a$).",
+      options: [],
+      correctAnswer: "24",
+      points: 0.5,
+      explanation: "Thể tích $V = \\frac{1}{3} S \\cdot h = \\frac{1}{3} \\cdot 18\\sqrt{3} \\cdot 4 = 24\\sqrt{3}\\text{ cm}^3$. Số nguyên $a = 24$.\nĐáp số: 24.",
+      reference: {
+        topic: "Chương 10: Một số hình khối trong thực tiễn (Hình chóp tam giác đều và Hình chóp tứ giác đều)",
+        curriculumLesson: "Toán 8 - Chương 10: Thể tích hình chóp tam giác đều",
+        cognitiveLevel: "Thông hiểu",
+        competency: "Giải quyết vấn đề toán học",
+        coreKnowledge: "V = 1/3 * S_đáy * h",
+        variationGuide: "Đổi diện tích đáy và chiều cao"
+      }
+    }
+  ],
+  9: [
+    // Khối 9: Căn thức, Hàm số bậc nhất, Hệ phương trình, Hệ thức lượng, Đường tròn
+    {
+      id: "q9_p1_1",
+      type: "mcq",
+      question: "Căn bậc hai số học của $25$ là",
+      options: ["A. $5$", "B. $-5$", "C. $\\pm 5$", "D. $625$"],
+      correctAnswer: "A",
+      points: 0.25,
+      explanation: "Căn bậc hai số học của số dương a là số dương x sao cho x^2 = a. Với a = 25 thì căn bậc hai số học là 5.\nChọn A.",
+      reference: { topic: "Căn bậc hai", curriculumLesson: "Toán 9: Căn bậc hai và căn bậc ba", cognitiveLevel: "Nhận biết", competency: "Tư duy và lập luận toán học", coreKnowledge: "Căn bậc hai số học là số không âm", variationGuide: "Thay đổi số 25" }
+    }
   ]
 };
 
+// Hàm xác định số thứ tự chương (1-10) của Toán 8 từ chuỗi chuyên đề hoặc nội dung câu hỏi
+export function getGrade8ChapterNumber(text: string): number | null {
+  if (!text) return null;
+  const t = text.toLowerCase();
+  const chMatch = t.match(/chương\s*(\d+)/i);
+  if (chMatch) {
+    const num = parseInt(chMatch[1], 10);
+    if (num >= 1 && num <= 10) return num;
+  }
+  // Kiểm tra Chương 6 Phân thức trước để phân thức không bao giờ bị nhận nhầm thành đa thức
+  if (/\b(phân thức|mẫu thức|quy đồng mẫu|rút gọn phân thức|điều kiện xác định của phân thức)\b/i.test(t)) return 6;
+  // Chương 2: Hằng đẳng thức đáng nhớ & Phân tích đa thức thành nhân tử
+  if (/\b(hằng đẳng thức|phân tích đa thức thành nhân tử|nhân tử chung|hiệu hai bình phương|bình phương một tổng|bình phương một hiệu)\b/i.test(t)) return 2;
+  // Chương 1: Đa thức nhiều biến (bao gồm đơn thức, đa thức, bậc của đa thức, thu gọn đa thức, phép tính đa thức)
+  if (/\b(đa thức|đơn thức|đơn thức đồng dạng|bậc của đa thức|thu gọn đa thức|bậc của đơn thức)\b/i.test(t)) return 1;
+  if (/\b(tứ giác|hình bình hành|hình thoi|hình chữ nhật|hình vuông|hình thang cân|tổng các góc của một tứ giác)\b/i.test(t) && !/\bchóp\b/i.test(t)) return 3;
+  if (/\b(thalès|thales|đường trung bình của tam giác|đoạn thẳng tỉ lệ|tính chất đường phân giác)\b/i.test(t) && !/\bđồng dạng\b/i.test(t)) return 4;
+  if (/\b(biểu đồ hình quạt|biểu đồ đoạn thẳng|dữ liệu định tính|dữ liệu định lượng|thu thập và tổ chức dữ liệu|biểu đồ cột kép)\b/i.test(t)) return 5;
+  if (/\b(hàm số bậc nhất|hệ số góc|phương trình bậc nhất một ẩn|giải bài toán bằng cách lập phương trình)\b/i.test(t) || /y\s*=\s*-?\d*x\s*[+-]\s*\d+/.test(t)) return 7;
+  if (/\b(xác suất|biến cố ngẫu nhiên|biến cố chắc chắn|biến cố không thể|kết quả thuận lợi|không gian mẫu)\b/i.test(t)) return 8;
+  if (/\b(tam giác đồng dạng|tỉ số đồng dạng|đồng dạng|pythagore đảo)\b/i.test(t) && !/\bthalès\b/i.test(t)) return 9;
+  if (/\b(hình chóp|chóp tam giác đều|chóp tứ giác đều|trung đoạn|thể tích hình chóp)\b/i.test(t)) return 10;
+  return null;
+}
+
 // Fallback generator thông minh đáp ứng chính xác số lượng câu hỏi và định dạng đề thi
 export function generateCurriculumFallbackQuestions(params: {
-  grade?: number;
+  grade?: number | string;
   title?: string;
   formatType?: string;
   mcqCount?: number;
@@ -496,34 +1415,270 @@ export function generateCurriculumFallbackQuestions(params: {
   part3Count?: number;
   essayCount?: number;
   customPartsConfig?: any;
+  referenceNotes?: string;
+  referenceKnowledge?: string;
+  topicTitle?: string;
+  selectedTopicTitles?: string[];
+  customEssayItems?: any[];
+  autoGenType?: string;
 }): CurriculumQuestion[] {
-  const grade = params.grade || 12;
-  const bank = CURRICULUM_BANK[grade] || CURRICULUM_BANK[12];
+  // Tự động phân tích khối lớp từ tham số grade hoặc trích xuất từ tiêu đề, ghi chú
+  let grade = Number(params.grade);
+  if (!grade || isNaN(grade) || grade < 6 || grade > 12) {
+    const textToSearch = `${params.title || ''} ${params.referenceNotes || ''} ${params.topicTitle || ''} ${params.referenceKnowledge || ''}`;
+    const match = textToSearch.match(/(?:lớp|khối|toán)\s*([6-9]|1[0-2])\b/i);
+    if (match && match[1]) {
+      grade = parseInt(match[1], 10);
+    } else {
+      grade = 8;
+    }
+  }
 
-  const p1Pool = bank.filter(q => q.type === 'mcq');
-  const p2Pool = bank.filter(q => q.type === 'tf');
-  const p3Pool = bank.filter(q => q.type === 'short');
-  const essayPool = bank.filter(q => q.type === 'essay');
+  // Trích xuất danh sách các chuyên đề mục tiêu
+  let targetTopics: string[] = [];
+  if (Array.isArray(params.selectedTopicTitles) && params.selectedTopicTitles.length > 0) {
+    targetTopics = params.selectedTopicTitles.map(s => String(s).trim()).filter(Boolean);
+  } else if (params.referenceNotes) {
+    const multiMatch = params.referenceNotes.match(/\[(?:Các chuyên đề(?:\s*\(\d+\))?|Chuyên đề):\s*([^\]]+)\]/i);
+    if (multiMatch && multiMatch[1]) {
+      targetTopics = multiMatch[1].split(/;\s*/).map((s: string) => s.trim()).filter(Boolean);
+    } else {
+      const topicM = params.referenceNotes.match(/(?:Chuyên đề trọng tâm|Chuyên đề|Các chuyên đề|Phạm vi kiến thức)[:\s]*([^\n\r<]+)/i);
+      if (topicM && topicM[1]) {
+        targetTopics = topicM[1].split(/[,;]\s*/).map(s => s.trim()).filter(Boolean);
+      }
+    }
+  } else if (params.topicTitle) {
+    targetTopics = params.topicTitle.split(/;\s*/).map((s: string) => s.trim()).filter(Boolean);
+  }
+
+  // Quét toàn bộ nguồn phạm vi để xác định chính xác ý định chuyên đề của giáo viên
+  const allScopeSources = `${params.title || ''} ${params.referenceNotes || ''} ${params.referenceKnowledge || ''} ${params.topicTitle || ''} ${(params.selectedTopicTitles || []).join(' ')}`;
+  const hasNegativeRational = /\b(không\s+(?:có\s+|ra\s+)?phân\s*thức|chưa\s*học\s*phân\s*thức|loại\s*bỏ\s*phân\s*thức|chỉ\s*đa\s*thức|không\s*phải\s*phân\s*thức)\b/i.test(allScopeSources);
+  const userExplicitlySelectedPoly = targetTopics.some(t => /\b(đa thức|đơn thức)\b/i.test(t)) || /\b(đa thức|đơn thức)\b/i.test(allScopeSources);
+  const userExplicitlySelectedRational = !hasNegativeRational && targetTopics.some(t => /\b(phân thức|mẫu thức)\b/i.test(t) && !/\b(không|chưa|loại|trừ)\b/i.test(t));
+
+  const isRatInScope = userExplicitlySelectedRational;
+  const isPolyInScope = (userExplicitlySelectedPoly || hasNegativeRational) && !isRatInScope;
+
+  if (isPolyInScope && !isRatInScope) {
+    targetTopics = targetTopics.filter(t => !/\b(phân thức|mẫu thức)\b/i.test(t));
+    if (targetTopics.length === 0 || !targetTopics.some(t => /\b(đa thức|đơn thức)\b/i.test(t))) {
+      targetTopics.unshift('Chương 1: Đa thức nhiều biến và các phép toán');
+    }
+  }
+
+  // Chọn ngân hàng câu hỏi phù hợp nhất với khối lớp
+  const bank = CURRICULUM_BANK[grade] || (grade <= 9 ? CURRICULUM_BANK[8] : CURRICULUM_BANK[12]);
+
+  // Bộ lọc chuyên đề chính xác theo chương toán học
+  const selectedChapters8 = grade === 8 && targetTopics.length > 0
+    ? Array.from(new Set(targetTopics.map(t => getGrade8ChapterNumber(t)).filter((n): n is number => n !== null)))
+    : [];
+
+  // Kiểm tra đặc biệt: Nếu giáo viên CHỌN ĐA THỨC và KHÔNG CHỌN PHÂN THỨC
+  const userWantsRational = isRatInScope;
+  const userWantsPolynomial = isPolyInScope;
+
+  const matchesTargetTopics = (q: CurriculumQuestion): boolean => {
+    if (targetTopics.length === 0) return true;
+    const qScopeText = `${q.reference?.curriculumLesson || ''} ${q.reference?.topic || ''} ${q.question || ''}`;
+    const lowerQ = qScopeText.toLowerCase();
+
+    // TUYỆT ĐỐI LOẠI BỎ CÂU HỎI PHÂN THỨC KHI GIÁO VIÊN CHỈ CHỌN ĐA THỨC
+    if (userWantsPolynomial && !userWantsRational) {
+      if (/\b(phân thức|mẫu thức|quy đồng mẫu|rút gọn phân thức|điều kiện xác định của phân thức)\b/i.test(lowerQ)) {
+        return false;
+      }
+    }
+
+    if (grade === 8 && selectedChapters8.length > 0) {
+      const qCh = getGrade8ChapterNumber(qScopeText);
+      if (qCh !== null) {
+        return selectedChapters8.includes(qCh);
+      }
+    }
+
+    return targetTopics.some(t => {
+      const lowerT = t.toLowerCase();
+      const chMatch = lowerT.match(/chương\s*(\d+)/i);
+      if (chMatch && lowerQ.includes(`chương ${chMatch[1]}`)) return true;
+      if (lowerT.includes('đa thức') && lowerQ.includes('đa thức') && !lowerQ.includes('phân thức')) return true;
+      if (lowerT.includes('hằng đẳng thức') && lowerQ.includes('hằng đẳng thức')) return true;
+      if (lowerT.includes('phân thức') && lowerQ.includes('phân thức')) return true;
+      const cleaned = lowerT.replace(/^(chương\s*\d+:?|bài\s*\d+:?)/i, '').replace(/[.,;!?()]/g, ' ').trim();
+      const words = cleaned.split(/\s+/).filter(w => w.length >= 4 && !['toán', 'trong', 'các', 'phép', 'phần', 'thức'].includes(w));
+      return words.length > 0 && words.every(w => lowerQ.includes(w));
+    });
+  };
+
+  const filteredBank = targetTopics.length > 0 ? bank.filter(matchesTargetTopics) : bank;
+  let activeBank = (filteredBank.length > 0 ? filteredBank : bank).filter(q => {
+    // Nếu giáo viên chỉ chọn đa thức, ngay cả khi fallback không tìm thấy thì TUYỆT ĐỐI không lấy phân thức
+    if (userWantsPolynomial && !userWantsRational) {
+      const qScopeText = `${q.reference?.curriculumLesson || ''} ${q.reference?.topic || ''} ${q.question || ''} ${q.explanation || ''}`.toLowerCase();
+      if (/\b(phân thức|mẫu thức|quy đồng mẫu|rút gọn phân thức|điều kiện xác định của phân thức)\b/i.test(qScopeText) ||
+          /\\frac\{[^\}]+\}\{[^0-9\\\}\s]*[a-zA-Z][^\}]*\}/.test(q.question)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  let p1Pool = activeBank.filter(q => q.type === 'mcq');
+  let p2Pool = activeBank.filter(q => q.type === 'tf');
+  let p3Pool = activeBank.filter(q => q.type === 'short');
+  let essayPool = activeBank.filter(q => q.type === 'essay');
+
+  // Đảm bảo không bao giờ lấy từ chuyên đề chưa chọn
+  if (p1Pool.length === 0) p1Pool = activeBank;
+  if (p2Pool.length === 0) p2Pool = activeBank.filter(q => q.type === 'tf').length > 0 ? activeBank.filter(q => q.type === 'tf') : activeBank;
+  if (p3Pool.length === 0) p3Pool = activeBank.filter(q => q.type === 'short').length > 0 ? activeBank.filter(q => q.type === 'short') : activeBank;
+  if (essayPool.length === 0) essayPool = activeBank.filter(q => q.type === 'essay').length > 0 ? activeBank.filter(q => q.type === 'essay') : p3Pool;
 
   const format = params.formatType || 'mcq_3part';
   const result: CurriculumQuestion[] = [];
 
   const getSubArray = (pool: CurriculumQuestion[], count: number, prefix: string) => {
-    if (count <= 0) return [];
+    if (count <= 0 || pool.length === 0) return [];
     const items: CurriculumQuestion[] = [];
     for (let i = 0; i < count; i++) {
       const template = pool[i % pool.length];
+      const assignedTopic = targetTopics.length > 0
+        ? targetTopics[i % targetTopics.length]
+        : (template.reference?.topic || `Chuyên đề Toán ${grade}`);
+
       items.push({
         ...template,
         id: `${prefix}_${i + 1}`,
-        // Đổi số thứ tự câu nếu cần
-        question: template.question
+        question: template.question,
+        reference: {
+          topic: assignedTopic,
+          curriculumLesson: template.reference?.curriculumLesson || `SGK Toán ${grade} - Kết nối tri thức`,
+          cognitiveLevel: template.reference?.cognitiveLevel || (i < count / 2 ? 'Nhận biết' : 'Thông hiểu'),
+          competency: template.reference?.competency || 'Tư duy và lập luận toán học',
+          coreKnowledge: template.reference?.coreKnowledge || 'Chuẩn kiến thức SGK GDPT',
+          variationGuide: template.reference?.variationGuide || 'Đổi các hệ số số học tương đương'
+        }
       });
     }
     return items;
   };
 
-  if (format === 'mcq_3part') {
+  if (format === 'description') {
+    const cfg = params.customPartsConfig || {};
+    const notesText = `${params.referenceNotes || ''} ${params.title || ''} ${params.referenceKnowledge || ''}`;
+    const isPureEssayInNotes = 
+      /(?:cấu\s*trúc|hình\s*thức|kiểu\s*đề|dạng\s*đề|phương\s*thức|hình\s*thức\s*kiểm\s*tra|định\s*dạng)[:\s]*(?:đề\s*)?(?:100%?\s*)?tự\s*luận/i.test(notesText) ||
+      /(?:cấu\s*trúc\s*tự\s*luận|hình\s*thức\s*tự\s*luận|100%?\s*tự\s*luận|đề\s*(?:thi|kiểm\s*tra)\s*(?:chuyên\s*đề\s*)?tự\s*luận|đề\s*tự\s*luận|bài\s*toán\s*tự\s*luận|toàn\s*bộ\s*tự\s*luận|chỉ\s*tự\s*luận|thi\s*tự\s*luận)/i.test(notesText) ||
+      (!/(?:trắc\s*nghiệm\s*4\s*lựa\s*chọn|4\s*lựa\s*chọn|đúng\s*[\/\-]\s*sai|trả\s*lời\s*ngắn|điền\s*số)/i.test(notesText) && /(?:tự\s*luận|bài\s*toán\s*tự\s*luận)/i.test(notesText)) ||
+      (!/(?:đúng\s*[\/\-]\s*sai\s*:\s*[1-9]|4\s*lựa\s*chọn\s*:\s*[1-9]|trả\s*lời\s*ngắn\s*:\s*[1-9])/i.test(notesText) && /(?:tự\s*luận\s*:\s*[1-9]|\b\d+\s*câu\s*tự\s*luận|\b\d+\s*bài\s*tự\s*luận)/i.test(notesText)) ||
+      params.autoGenType === 'essay' || params.formatType === 'essay';
+
+    const hasExplicitTF = /(?:đúng\s*[\/\-]\s*sai|trắc\s*nghiệm\s*đúng\s*sai)/i.test(notesText) &&
+      !/\b(?:không\s+(?:có\s+|ra\s+)?đúng\s*[\/\-]\s*sai|đúng\s*[\/\-]\s*sai\s*[:=]\s*0\b)/i.test(notesText) &&
+      !isPureEssayInNotes;
+
+    const p1Cnt = Number(params.part1Count || cfg.part1Count) || 0;
+    const hasP1 = !isPureEssayInNotes && (cfg.enablePart1 === true || (cfg.enablePart1 !== false && p1Cnt > 0));
+
+    const p2Cnt = Number(params.part2Count || cfg.part2Count) || 0;
+    // QUAN TRỌNG: Chỉ bật Phần II Đúng/Sai nếu form mô tả có yêu cầu Đúng/Sai rõ ràng và không phải đề tự luận
+    const hasP2 = !isPureEssayInNotes && hasExplicitTF && (cfg.enablePart2 === true && p2Cnt > 0);
+
+    const p3Cnt = Number(params.part3Count || cfg.part3Count) || 0;
+    const hasP3 = !isPureEssayInNotes && (cfg.enablePart3 === true && p3Cnt > 0);
+
+    if (hasP1 && p1Cnt > 0) {
+      result.push(...getSubArray(p1Pool, p1Cnt, 'p1'));
+    }
+    if (hasP2 && p2Cnt > 0) {
+      result.push(...getSubArray(p2Pool, p2Cnt, 'p2'));
+    }
+    if (hasP3 && p3Cnt > 0) {
+      result.push(...getSubArray(p3Pool, p3Cnt, 'p3'));
+    }
+
+    let activeEssayItems = (params.customEssayItems && Array.isArray(params.customEssayItems) && params.customEssayItems.length > 0)
+      ? params.customEssayItems
+      : undefined;
+
+    if (!activeEssayItems && params.referenceNotes) {
+      const parsedEssays: any[] = [];
+      const essayRegex = /(?:^|\n|<li[^>]*>|<p[^>]*>|[•\-\*])[ \t]*(?:Câu|Bài)\s*(\d+)[\s\(\):.]*([^:\n\r<]+)?[:\-.]\s*([^\n\r<]+)/gi;
+      let m;
+      while ((m = essayRegex.exec(params.referenceNotes)) !== null) {
+        const num = parseInt(m[1], 10);
+        const rawMeta = m[2] || '';
+        let desc = m[3].trim();
+        if (!desc || desc.length < 5) continue;
+        if (userWantsPolynomial && !userWantsRational) {
+          desc = desc.replace(/đa thức\/phân thức/gi, 'đa thức').replace(/phân thức/gi, 'đa thức');
+        }
+        const ptMatch = (rawMeta + ' ' + desc).match(/(\d+(?:[.,]\d+)?)\s*(?:điểm|đ\b)/i);
+        const points = ptMatch ? parseFloat(ptMatch[1].replace(',', '.')) : 1.0;
+        let level = 'VD';
+        if (/nhận\s*biết|NB\b/i.test(rawMeta + ' ' + desc)) level = 'NB';
+        else if (/thông\s*hiểu|TH\b/i.test(rawMeta + ' ' + desc)) level = 'TH';
+        else if (/vận\s*dụng\s*cao|VDC\b/i.test(rawMeta + ' ' + desc)) level = 'VDC';
+        parsedEssays.push({
+          id: `essay_${num}`,
+          order: num,
+          title: `Bài toán tự luận ${num}${ptMatch ? ` (${points.toFixed(1)} điểm)` : ''}`,
+          topicScope: targetTopics[0] || (userWantsPolynomial ? 'Đa thức nhiều biến & Hằng đẳng thức' : `Toán lớp ${grade}`),
+          description: desc,
+          points: points,
+          level: level
+        });
+      }
+      if (parsedEssays.length > 0) {
+        activeEssayItems = parsedEssays;
+      }
+    }
+
+    if (activeEssayItems && activeEssayItems.length > 0) {
+      activeEssayItems.forEach((item: any, idx: number) => {
+        result.push({
+          id: `essay_${idx + 1}`,
+          type: "essay",
+          question: `Bài ${idx + 1} (${item.points || 1.0} điểm): ${item.title || 'Bài toán tự luận'}.\n${item.description || 'Thực hiện yêu cầu bài toán.'}`,
+          options: [],
+          correctAnswer: `Đáp số và hướng dẫn giải cho bài toán: ${item.title || ''}`,
+          points: Number(item.points) || 1.0,
+          explanation: `Lời giải chi tiết từng bước cho ${item.title || 'bài toán'}:\n- Áp dụng các định lý, công thức thuộc phạm vi: ${item.topicScope || 'Kiến thức trọng tâm'}.\n- Trình bày lời giải mạch lạc, chặt chẽ, kết luận đáp số đúng chuẩn.`,
+          reference: {
+            topic: item.topicScope || (targetTopics[0] || (userWantsPolynomial ? 'Đa thức nhiều biến & Hằng đẳng thức' : `Toán lớp ${grade}`)),
+            curriculumLesson: `SGK Toán ${grade} - Kết nối tri thức`,
+            cognitiveLevel: item.level === 'VDC' ? 'Vận dụng cao' : (item.level === 'VD' ? 'Vận dụng' : 'Thông hiểu'),
+            competency: 'Giải quyết vấn đề toán học',
+            coreKnowledge: item.topicScope || 'Kiến thức tự luận',
+            variationGuide: 'Thay đổi các tham số số học'
+          }
+        });
+      });
+    } else if (params.essayCount && Number(params.essayCount) > 0) {
+      const eCnt = Number(params.essayCount);
+      for (let i = 0; i < eCnt; i++) {
+        result.push({
+          id: `essay_${i + 1}`,
+          type: "essay",
+          question: `Bài ${i + 1} (${(10 / eCnt).toFixed(1)} điểm): Bài toán tự luận môn Toán lớp ${grade}.\nCho bài toán bám sát chuyên đề ${targetTopics[0] || 'Kiến thức SGK Kết nối tri thức'}. Học sinh trình bày lời giải chi tiết.`,
+          options: [],
+          correctAnswer: `Đáp số bài toán ${i + 1}`,
+          points: Number((10 / eCnt).toFixed(1)),
+          explanation: `Hướng dẫn giải chi tiết từng bước cho bài toán ${i + 1}.`,
+          reference: {
+            topic: targetTopics[0] || (userWantsPolynomial ? 'Đa thức nhiều biến & Hằng đẳng thức' : `Toán lớp ${grade}`),
+            curriculumLesson: `SGK Toán ${grade} - Kết nối tri thức`,
+            cognitiveLevel: i === 0 ? 'Thông hiểu' : 'Vận dụng',
+            competency: 'Giải quyết vấn đề toán học',
+            coreKnowledge: 'Kiến thức tự luận chuẩn SGK',
+            variationGuide: 'Đổi số liệu đề bài'
+          }
+        });
+      }
+    }
+  } else if (format === 'mcq_3part') {
     const c1 = Number(params.part1Count) || 12;
     const c2 = Number(params.part2Count) || 4;
     const c3 = Number(params.part3Count) || 6;
@@ -546,13 +1701,81 @@ export function generateCurriculumFallbackQuestions(params: {
       result.push(...getSubArray(p1Pool, 10, 'cp1'));
     }
   } else if (format === 'essay') {
-    const cEssay = Number(params.essayCount) || 3;
-    result.push(...getSubArray(essayPool.length > 0 ? essayPool : p3Pool, cEssay, 'essay'));
+    let activeEssayItems = (params.customEssayItems && Array.isArray(params.customEssayItems) && params.customEssayItems.length > 0)
+      ? params.customEssayItems
+      : undefined;
+
+    if (activeEssayItems && activeEssayItems.length > 0) {
+      activeEssayItems.forEach((item: any, idx: number) => {
+        result.push({
+          id: `essay_${idx + 1}`,
+          type: "essay",
+          question: `Bài ${idx + 1} (${item.points || 1.0} điểm): ${item.title || 'Bài toán tự luận'}.\n${item.description || 'Thực hiện yêu cầu bài toán.'}`,
+          options: [],
+          correctAnswer: `Đáp số và hướng dẫn giải cho bài toán: ${item.title || ''}`,
+          points: Number(item.points) || 1.0,
+          explanation: `Lời giải chi tiết từng bước cho ${item.title || 'bài toán'}:\n- Áp dụng các định lý, công thức thuộc phạm vi: ${item.topicScope || 'Kiến thức trọng tâm'}.\n- Trình bày lời giải mạch lạc, chặt chẽ, kết luận đáp số đúng chuẩn.`,
+          reference: {
+            topic: item.topicScope || (targetTopics[0] || (userWantsPolynomial ? 'Đa thức nhiều biến & Hằng đẳng thức' : `Toán lớp ${grade}`)),
+            curriculumLesson: `SGK Toán ${grade} - Kết nối tri thức`,
+            cognitiveLevel: item.level === 'VDC' ? 'Vận dụng cao' : (item.level === 'VD' ? 'Vận dụng' : 'Thông hiểu'),
+            competency: 'Giải quyết vấn đề toán học',
+            coreKnowledge: item.topicScope || 'Kiến thức tự luận',
+            variationGuide: 'Thay đổi các tham số số học'
+          }
+        });
+      });
+    } else {
+      const cEssay = Number(params.essayCount) || 3;
+      const validEssayPool = essayPool.length > 0 ? essayPool : activeBank.filter(q => q.type === 'essay');
+      for (let i = 0; i < cEssay; i++) {
+        const template = validEssayPool.length > 0 ? validEssayPool[i % validEssayPool.length] : null;
+        const assignedTopic = targetTopics.length > 0 ? targetTopics[i % targetTopics.length] : (template?.reference?.topic || (userWantsPolynomial ? 'Đa thức nhiều biến & Hằng đẳng thức' : `Chuyên đề Toán ${grade}`));
+        result.push({
+          id: `essay_${i + 1}`,
+          type: "essay",
+          question: template ? template.question : `Bài ${i + 1} (${(10 / cEssay).toFixed(1)} điểm): Bài toán tự luận môn Toán lớp ${grade}.\nCho bài toán bám sát chuyên đề ${assignedTopic}. Học sinh trình bày lời giải chi tiết.`,
+          options: [],
+          correctAnswer: template ? template.correctAnswer : `Đáp số bài toán ${i + 1}`,
+          points: Number((10 / cEssay).toFixed(1)),
+          explanation: template ? template.explanation : `Hướng dẫn giải chi tiết từng bước cho bài toán ${i + 1}.`,
+          reference: {
+            topic: assignedTopic,
+            curriculumLesson: template?.reference?.curriculumLesson || `SGK Toán ${grade} - Kết nối tri thức`,
+            cognitiveLevel: i === 0 ? 'Thông hiểu' : (i === cEssay - 1 ? 'Vận dụng cao' : 'Vận dụng'),
+            competency: 'Giải quyết vấn đề toán học',
+            coreKnowledge: 'Kiến thức tự luận chuẩn SGK',
+            variationGuide: 'Đổi số liệu đề bài'
+          }
+        });
+      }
+    }
   } else if (format === 'mixed') {
     const cMcq = Number(params.mcqCount) || 12;
     const cEssay = Number(params.essayCount) || 2;
     result.push(...getSubArray(p1Pool, cMcq, 'mixed_mcq'));
-    result.push(...getSubArray(p3Pool, cEssay, 'mixed_essay'));
+    const validEssayPool = essayPool.length > 0 ? essayPool : activeBank.filter(q => q.type === 'essay');
+    for (let i = 0; i < cEssay; i++) {
+      const template = validEssayPool.length > 0 ? validEssayPool[i % validEssayPool.length] : null;
+      const assignedTopic = targetTopics.length > 0 ? targetTopics[i % targetTopics.length] : (template?.reference?.topic || `Toán lớp ${grade}`);
+      result.push({
+        id: `mixed_essay_${i + 1}`,
+        type: "essay",
+        question: template ? template.question : `Bài ${i + 1} (1.5 điểm): Bài toán tự luận chuyên đề ${assignedTopic}. Trình bày lời giải chi tiết.`,
+        options: [],
+        correctAnswer: template ? template.correctAnswer : `Đáp số bài ${i + 1}`,
+        points: 1.5,
+        explanation: template ? template.explanation : `Lời giải chi tiết cho bài ${i + 1}.`,
+        reference: {
+          topic: assignedTopic,
+          curriculumLesson: `SGK Toán ${grade} - Kết nối tri thức`,
+          cognitiveLevel: 'Vận dụng',
+          competency: 'Giải quyết vấn đề toán học',
+          coreKnowledge: 'Kiến thức tự luận chuẩn SGK',
+          variationGuide: 'Đổi số liệu'
+        }
+      });
+    }
   } else {
     const totalMcq = Number(params.mcqCount) || 10;
     result.push(...getSubArray(p1Pool, totalMcq, 'q'));

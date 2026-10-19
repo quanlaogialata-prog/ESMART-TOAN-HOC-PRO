@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router';
 import AdminDashboard from './admin/ManageTeachers';
 import DocumentLibrary from './teacher/DocumentLibrary';
+import ManageTopicPractices from './teacher/ManageTopicPractices';
 import ManageTests from './teacher/ManageTests';
 import ManageOfflineTests from './teacher/ManageOfflineTests';
 import ManageSubmissions from './teacher/ManageSubmissions';
@@ -10,7 +11,7 @@ import Gradebook from './teacher/Gradebook';
 import StudentDashboard from './student/StudentDashboard';
 import SettingsModal from '../components/SettingsModal';
 
-type Tab = 'curriculum' | 'tests' | 'offline-tests' | 'grading' | 'gradebook' | 'admin' | 'student';
+type Tab = 'curriculum' | 'topic-practice' | 'tests' | 'offline-tests' | 'grading' | 'gradebook' | 'admin' | 'student';
 
 export default function Dashboard() {
   const { user, role, loading, logout } = useAuth();
@@ -68,6 +69,13 @@ export default function Dashboard() {
               📚 Thư viện tài liệu
             </button>
             <button 
+              onClick={() => setActiveTab('topic-practice')}
+              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'topic-practice' ? 'bg-white text-blue-600 shadow-sm font-semibold' : 'text-gray-600 hover:text-gray-900'}`}
+              title="Mục bài ôn luyện theo chủ đề từ bài học copy-paste dạng bài kiểm tra để in và tải xuống"
+            >
+              🎯 Bài ôn luyện theo chủ đề
+            </button>
+            <button 
               onClick={() => setActiveTab('tests')}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'tests' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
             >
@@ -95,9 +103,9 @@ export default function Dashboard() {
         )}
 
         <div className="flex items-center gap-4">
-          <span className="text-gray-700 font-medium">{user.displayName}</span>
-          <button onClick={() => setShowSettings(true)} className="text-gray-600 hover:text-gray-900 text-sm font-semibold">Cài đặt</button>
-          <button onClick={logout} className="text-red-500 hover:text-red-700 text-sm font-semibold">Đăng xuất</button>
+          <span className="text-gray-700 font-medium">{user?.displayName || user?.email || 'Giáo viên'}</span>
+          <button onClick={() => setShowSettings(true)} className="text-gray-600 hover:text-gray-900 text-sm font-semibold cursor-pointer">Cài đặt</button>
+          <button onClick={logout} className="text-red-500 hover:text-red-700 text-sm font-semibold cursor-pointer">Đăng xuất</button>
         </div>
       </header>
       <main className="flex-1 p-4 sm:p-6 overflow-x-hidden overflow-y-auto min-w-0">
@@ -108,6 +116,7 @@ export default function Dashboard() {
             onNavigateToOfflineTests={() => setActiveTab('offline-tests')} 
           />
         )}
+        {(role === 'teacher' || role === 'admin') && activeTab === 'topic-practice' && <ManageTopicPractices />}
         {(role === 'teacher' || role === 'admin') && activeTab === 'tests' && <ManageTests />}
         {(role === 'teacher' || role === 'admin') && activeTab === 'offline-tests' && <ManageOfflineTests />}
         {(role === 'teacher' || role === 'admin') && activeTab === 'grading' && <ManageSubmissions />}

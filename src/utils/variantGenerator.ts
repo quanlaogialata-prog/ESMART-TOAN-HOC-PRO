@@ -27,7 +27,22 @@ export function detectQuestionType(q: any): QuestionType {
 
   // If no options
   if (opts.length === 0) {
-    if (rawQ.includes('tự luận') || rawQ.includes('chứng minh') || (ans && ans.length > 30) || (q.points && q.points > 2)) {
+    const isEssayProblem = 
+      /^(?:bài|bài\s*tập|ví\s*dụ)\s*\d+/i.test(q.question || '') ||
+      /(?:^|\n)\s*[a-d]\)/i.test(q.question || '') ||
+      rawQ.includes('tự luận') || 
+      rawQ.includes('chứng minh') || 
+      rawQ.includes('rút gọn') || 
+      rawQ.includes('tính giá trị') || 
+      rawQ.includes('giải phương trình') || 
+      rawQ.includes('giải hệ') || 
+      rawQ.includes('tìm x') || 
+      rawQ.includes('tìm m') || 
+      rawQ.includes('vẽ đồ thị') || 
+      (ans && ans.length > 25) || 
+      (q.points && q.points >= 1.0);
+
+    if (isEssayProblem) {
       return 'essay';
     }
     return 'short';

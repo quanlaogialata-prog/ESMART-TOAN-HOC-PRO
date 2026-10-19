@@ -1225,8 +1225,17 @@ export default function ManageOfflineTests() {
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.details || errData.error || 'Không thể trích xuất câu hỏi từ học liệu.');
       }
-      const rawQuestions = await res.json();
+      const resJson = await res.json();
+      const rawQuestions = Array.isArray(resJson) ? resJson : (resJson.questions || []);
+      const testInfo = (!Array.isArray(resJson) && resJson.testInfo) ? resJson.testInfo : null;
+
       if (Array.isArray(rawQuestions) && rawQuestions.length > 0) {
+        if (testInfo) {
+          if (testInfo.title && !examTitle) setExamTitle(repairVietnameseDocument(convertTcvn3ToUnicode(testInfo.title)));
+          if (testInfo.grade) setExamGrade(Number(testInfo.grade));
+          if (testInfo.durationMinutes) setExamDuration(Number(testInfo.durationMinutes));
+          if (testInfo.schoolYear) setExamSchoolYear(testInfo.schoolYear);
+        }
         const questions = rawQuestions.map((q: any) => ({
           ...q,
           question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
@@ -1297,8 +1306,18 @@ export default function ManageOfflineTests() {
           throw new Error(errData.details || errData.error || 'Không thể trích xuất câu hỏi từ file.');
         }
 
-        const rawQuestions = await res.json();
+        const resJson = await res.json();
+        const rawQuestions = Array.isArray(resJson) ? resJson : (resJson.questions || []);
+        const testInfo = (!Array.isArray(resJson) && resJson.testInfo) ? resJson.testInfo : null;
+
         if (Array.isArray(rawQuestions) && rawQuestions.length > 0) {
+          if (testInfo) {
+            if (testInfo.title) setExamTitle(repairVietnameseDocument(convertTcvn3ToUnicode(testInfo.title)));
+            if (testInfo.grade) setExamGrade(Number(testInfo.grade));
+            if (testInfo.durationMinutes) setExamDuration(Number(testInfo.durationMinutes));
+            if (testInfo.schoolYear) setExamSchoolYear(testInfo.schoolYear);
+          }
+
           const questions = rawQuestions.map((q: any) => ({
             ...q,
             question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
@@ -1310,20 +1329,26 @@ export default function ManageOfflineTests() {
           setExtractedQuestions(questions);
 
           // Auto-detect exam structure
-          const hasEssay = questions.some((q: any) => detectQuestionType(q) === 'essay');
-          const hasTfOrShort = questions.some((q: any) => {
-            const t = detectQuestionType(q);
-            return t === 'tf' || t === 'short';
-          });
-          if (hasEssay) {
+          if (testInfo?.examFormat === 'mixed') {
             setExamStructure('mixed');
-          } else if (hasTfOrShort) {
-            setExamStructure('standard_3parts');
+          } else if (testInfo?.examFormat === 'essay') {
+            setExamStructure('essay_only');
           } else {
-            setExamStructure('standard_3parts');
+            const hasEssay = questions.some((q: any) => detectQuestionType(q) === 'essay');
+            const hasTfOrShort = questions.some((q: any) => {
+              const t = detectQuestionType(q);
+              return t === 'tf' || t === 'short';
+            });
+            if (hasEssay) {
+              setExamStructure('mixed');
+            } else if (hasTfOrShort) {
+              setExamStructure('standard_3parts');
+            } else {
+              setExamStructure('standard_3parts');
+            }
           }
 
-          setSysMsg(`Đã trích xuất thành công ${questions.length} câu hỏi từ file "${file.name}"!`);
+          setSysMsg(`Đã tự động nhận diện thông tin và trích xuất thành công ${questions.length} câu hỏi từ file "${file.name}"!`);
           setTimeout(() => setSysMsg(''), 5000);
         } else {
           setSysError('Không tìm thấy câu hỏi trắc nghiệm/tự luận trong file tải lên. Bạn có thể kiểm tra lại định dạng file.');

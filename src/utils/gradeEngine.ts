@@ -936,3 +936,108 @@ export function autoReconcileQuestion(q: any): { question: any; changed: boolean
   return { question: q, changed: false };
 }
 
+/**
+ * Tự động thiết lập biểu điểm chuẩn (Scoring Rubric) cho toàn bộ đề thi (tổng 10.0 điểm).
+ * Áp dụng chuẩn đề thi Bộ GD&ĐT (Trắc nghiệm 3 phần hoặc các cấu trúc đề thi phổ biến Việt Nam).
+ */
+export function autoEstablishScoringRubric(questions: any[]): any[] {
+  if (!Array.isArray(questions) || questions.length === 0) return [];
+
+  const totalCount = questions.length;
+  const mcqQuestions = questions.filter(q => q.type === 'mcq' || (!q.type && Array.isArray(q.options) && q.options.length >= 2));
+  const tfQuestions = questions.filter(q => q.type === 'tf');
+  const shortQuestions = questions.filter(q => q.type === 'short');
+  const essayQuestions = questions.filter(q => q.type === 'essay');
+
+  // Kiểm tra nếu tất cả câu hỏi đã có điểm được ghi nhận sẵn từ đề gốc (ví dụ [1.0đ]) và tổng xấp xỉ 10.0 điểm
+  const explicitPointsSum = questions.reduce((sum, q) => sum + (typeof q.points === 'number' && !isNaN(q.points) ? q.points : 0), 0);
+  if (explicitPointsSum >= 9.8 && explicitPointsSum <= 10.2 && questions.every(q => typeof q.points === 'number' && q.points > 0)) {
+    return questions.map(q => ({
+      ...q,
+      points: Math.round(q.points * 100) / 100
+    }));
+  }
+
+  // Trường hợp 1: Cấu trúc chuẩn 3 phần (MCQ, Đúng/Sai, Trả lời ngắn) theo Bộ GD&ĐT
+  if (tfQuestions.length > 0 || shortQuestions.length > 0) {
+    const hasEssay = essayQuestions.length > 0;
+    const targetMcqTotal = hasEssay ? 2.5 : 3.0;
+    const targetTfTotal = hasEssay ? 3.0 : 4.0;
+    const targetShortTotal = hasEssay ? 2.5 : 3.0;
+    const targetEssayTotal = hasEssay ? 2.0 : 0.0;
+
+    const mcqPts = mcqQuestions.length > 0 ? Math.round((targetMcqTotal / mcqQuestions.length) * 100) / 100 : 0.25;
+    const tfPts = tfQuestions.length > 0 ? Math.round((targetTfTotal / tfQuestions.length) * 100) / 100 : 1.0;
+    const shortPts = shortQuestions.length > 0 ? Math.round((targetShortTotal / shortQuestions.length) * 100) / 100 : 0.5;
+    const essayPts = essayQuestions.length > 0 ? Math.round((targetEssayTotal / essayQuestions.length) * 10) / 10 : 1.0;
+
+    return questions.map(q => {
+      let p = mcqPts;
+      if (q.type === 'tf') p = tfPts;
+      else if (q.type === 'short') p = shortPts;
+      else if (q.type === 'essay') p = essayPts;
+      return {
+        ...q,
+        points: p
+      };
+    });
+  }
+
+  // Trường hợp 2: Đề thuần trắc nghiệm (MCQ)
+  if (mcqQuestions.length === totalCount) {
+    let perQuestion = 0.25;
+    if (totalCount === 50) perQuestion = 0.2;
+    else if (totalCount === 40) perQuestion = 0.25;
+    else if (totalCount === 25) perQuestion = 0.4;
+    else if (totalCount === 20) perQuestion = 0.5;
+    else if (totalCount === 10) perQuestion = 1.0;
+    else {
+      perQuestion = Math.round((10.0 / totalCount) * 100) / 100;
+    }
+
+    return questions.map((q, idx) => {
+      let p = perQuestion;
+      if (idx === totalCount - 1) {
+        const sumPrevious = perQuestion * (totalCount - 1);
+        const remainder = Math.round((10.0 - sumPrevious) * 100) / 100;
+        if (remainder > 0 && Math.abs(remainder - perQuestion) <= 0.25) {
+          p = remainder;
+        }
+      }
+      return {
+        ...q,
+        points: p
+      };
+    });
+  }
+
+  // Trường hợp 3: Đề hỗn hợp Trắc nghiệm + Tự luận
+  if (essayQuestions.length > 0 && mcqQuestions.length > 0) {
+    const mcqTarget = 7.0;
+    const essayTarget = 3.0;
+    const perMcq = Math.round((mcqTarget / mcqQuestions.length) * 100) / 100;
+    const perEssay = Math.round((essayTarget / essayQuestions.length) * 10) / 10;
+    return questions.map(q => ({
+      ...q,
+      points: q.type === 'essay' ? perEssay : perMcq
+    }));
+  }
+
+  // Trường hợp mặc định: Chia đều 10.0 điểm
+  const perItem = Math.round((10.0 / totalCount) * 100) / 100;
+  return questions.map((q, idx) => {
+    let p = perItem;
+    if (idx === totalCount - 1) {
+      const sumPrevious = perItem * (totalCount - 1);
+      const remainder = Math.round((10.0 - sumPrevious) * 100) / 100;
+      if (remainder > 0 && Math.abs(remainder - perItem) <= 0.5) {
+        p = remainder;
+      }
+    }
+    return {
+      ...q,
+      points: p
+    };
+  });
+}
+

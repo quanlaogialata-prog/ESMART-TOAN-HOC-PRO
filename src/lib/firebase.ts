@@ -5,9 +5,7 @@ import {
   getFirestore, 
   doc, 
   getDocFromServer, 
-  Firestore,
-  persistentLocalCache,
-  persistentMultipleTabManager
+  Firestore
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -17,12 +15,14 @@ let firestoreInstance: Firestore;
 try {
   firestoreInstance = initializeFirestore(app, {
     experimentalForceLongPolling: true,
-    localCache: persistentLocalCache({
-      tabManager: persistentMultipleTabManager()
-    })
   }, firebaseConfig.firestoreDatabaseId);
 } catch (e) {
-  firestoreInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  try {
+    firestoreInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  } catch (err2) {
+    console.error("Firestore initialization fallback:", err2);
+    firestoreInstance = getFirestore(app);
+  }
 }
 
 export const db = firestoreInstance;
@@ -37,7 +37,7 @@ export async function testConnection() {
     console.log("Firebase connected successfully");
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
+      console.warn("Firebase client offline warning.");
     }
   }
 }

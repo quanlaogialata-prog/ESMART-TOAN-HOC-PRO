@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, getDocs, getDocsFromCache, addDoc, where, deleteDoc, doc, updateDoc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db, FIRESTORE_UPGRADE_URL } from '../../lib/firebase';
-import { FileText, Plus, Upload, Clock, List, Calendar, X, Trash2, Eye, Pencil, ArrowLeft, Folder, FolderCheck, Layers, Shuffle, CheckCircle, Copy, Sparkles, Printer, FileCheck, ShieldCheck, LayoutGrid, FileSpreadsheet, Check, ChevronRight, ChevronDown, ChevronUp, BookOpen, Sliders, HelpCircle, Info, Users, AlertTriangle, ExternalLink } from 'lucide-react';
+import { FileText, Plus, Upload, Clock, List, Calendar, X, Trash2, Eye, Pencil, ArrowLeft, Folder, FolderCheck, Layers, Shuffle, CheckCircle, Copy, Sparkles, Printer, FileCheck, ShieldCheck, LayoutGrid, FileSpreadsheet, Check, ChevronRight, ChevronDown, ChevronUp, BookOpen, Sliders, HelpCircle, Info, Users, AlertTriangle, ExternalLink, Edit3 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import MathText from '../../components/MathText';
 import { generateTestVariants, TestVariant } from '../../utils/variantGenerator';
@@ -192,6 +192,20 @@ export default function ManageTests() {
       const topicsData = topicsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
       setTopics(topicsData);
 
+      // 2.5 Lessons with cache fallback
+      try {
+        let lessonsSnap;
+        try {
+          lessonsSnap = await getDocs(collection(db, 'lessons'));
+        } catch {
+          lessonsSnap = await getDocsFromCache(collection(db, 'lessons'));
+        }
+        const lessonsData = lessonsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+        setLessons(lessonsData);
+      } catch (errLessons) {
+        console.warn('Error loading lessons in ManageTests:', errLessons);
+      }
+
       // 3. Tests with cache fallback
       let testsSnap;
       try {
@@ -364,21 +378,23 @@ export default function ManageTests() {
   const [newAnswerFile, setNewAnswerFile] = useState<File | null>(null);
   const [splitAnswers, setSplitAnswers] = useState(false);
 
-  // 3 Phương thức tạo đề online:
-  // 1. 'auto': Tạo đề thi tự động (AI & Ngân hàng đề)
-  // 2. 'upload': Tạo đề từ đề tải lên (PDF, DOCX, Ảnh -> Trích xuất trực tuyến)
-  // 3. 'matrix': Tạo đề theo ma trận có sẵn (Tải file hoặc chọn khung chuẩn)
+  // Các phương thức tạo đề online:
+  // 1. Tạo đề tự động: 'auto' (Chuẩn SGK & Định dạng)
+  // 2. Tạo đề từ đề tải lên: 'upload' (Lấy 100% gốc từ file đề)
+  // 3. Tạo đề theo ma trận: 'matrix' (Thiết lập ma trận phân bổ mức độ nhận thức NB-TH-VD-VDC hoặc tệp ma trận)
   const [onlineCreationMode, setOnlineCreationMode] = useState<'auto' | 'upload' | 'matrix'>('auto');
 
-  // 4 Hình thức đề thi trong mỗi phương thức:
-  // 1. 'mcq_3part': Trắc nghiệm 3 phần (Chuẩn Bộ GD&ĐT)
-  // 2. 'mcq_custom': Trắc nghiệm tùy biến (Chọn 1 hoặc 2 phần)
-  // 3. 'essay': Tự luận
-  // 4. 'mixed': Tổng hợp (Trắc nghiệm + Tự luận)
+  // Hình thức đề thi:
+  // 'mcq_3part', 'mcq_custom', 'essay', 'mixed'
   const [examFormat, setExamFormat] = useState<'mcq_3part' | 'mcq_custom' | 'essay' | 'mixed'>('mcq_3part');
 
-  // Ma trận có sẵn:
-  const [matrixSourceType, setMatrixSourceType] = useState<'preset' | 'file'>('preset');
+  // Ma trận đề thi & Bản đặc tả:
+  const [matrixSourceType, setMatrixSourceType] = useState<'preset' | 'file' | 'text'>('file');
+  const [matrixText, setMatrixText] = useState<string>('');
+
+  // Đề tải lên hoặc dán trực tiếp:
+  const [uploadSourceType, setUploadSourceType] = useState<'file' | 'text'>('file');
+  const [uploadPastedText, setUploadPastedText] = useState<string>('');
   const [selectedMatrixPreset, setSelectedMatrixPreset] = useState<string>('matrix_4321');
   const [matrixConfig, setMatrixConfig] = useState<{
     name: string;
@@ -651,7 +667,7 @@ export default function ManageTests() {
     }
   ];
 
-  const applyPreset = (p: any, format: 'mcq_3part' | 'mcq_custom' | 'essay' | 'mixed') => {
+  const applyPreset = (p: any, format: 'mcq_3part' | 'mcq_custom' | 'essay' | 'mixed' | string) => {
     setActivePresetId(p.id);
     setNewDuration(p.duration);
     if (!newTitle || newTitle.startsWith('Đề ') || newTitle === '') {
@@ -700,13 +716,16 @@ export default function ManageTests() {
     setOnlineCreationMode(mode);
     setExamFormat(format);
     setCreatingType(format === 'essay' ? 'essay' : (format === 'mixed' ? 'mixed' : 'mcq'));
-    setAutoGenType(mode === 'matrix' ? 'matrix' : format);
+    setAutoGenType(mode === 'matrix' ? 'matrix' : (format as any));
     setNewFile(null);
     setNewAnswerFile(null);
     setMatrixFile(null);
+    setMatrixText('');
+    setUploadPastedText('');
+    setUploadSourceType('file');
     setSplitAnswers(false);
-    setMatrixSourceType('preset');
-    setNewGrade(selectedGrade ? selectedGrade.toString() : '9');
+    setMatrixSourceType('file');
+    setNewGrade(selectedGrade ? selectedGrade.toString() : '8');
     setNewTopicId(selectedTopicId || '');
     setNewSchoolYear(selectedSchoolYear === 'ALL' ? getCurrentSchoolYear() : selectedSchoolYear);
     setCreateMultiVariant(false);
@@ -729,6 +748,13 @@ export default function ManageTests() {
     if (selectedP) {
       applyPreset(selectedP, format);
     }
+
+    if (mode === 'matrix') {
+      const defaultMp = matrixPresets[0];
+      if (defaultMp) {
+        applyMatrixPreset(defaultMp);
+      }
+    }
     setShowCreateModal(true);
   };
 
@@ -737,6 +763,8 @@ export default function ManageTests() {
     setSelectedReference(null);
     setNewFile(null);
     setNewAnswerFile(null);
+    setMatrixText('');
+    setUploadPastedText('');
     setSplitAnswers(false);
     setMatrixFile(null);
     setReferenceFile(null);
@@ -771,6 +799,38 @@ export default function ManageTests() {
   const [customPart2Count, setCustomPart2Count] = useState('4');
   const [customPart3Enabled, setCustomPart3Enabled] = useState(false);
   const [customPart3Count, setCustomPart3Count] = useState('4');
+
+  // Trạng thái cho Tạo đề theo mô tả (Tự luận tùy biến & từng câu)
+  const [customEssayEnabled, setCustomEssayEnabled] = useState<boolean>(true);
+  const [customEssayItems, setCustomEssayItems] = useState<any[]>([
+    {
+      id: 'essay_1',
+      order: 1,
+      title: 'Rút gọn biểu thức và tính giá trị',
+      topicScope: 'Đa thức nhiều biến & Hằng đẳng thức',
+      description: 'Cho biểu thức đa thức: ý a) Thu gọn đa thức P; ý b) Tính giá trị của P tại x, y cho trước',
+      points: 1.5,
+      level: 'TH'
+    },
+    {
+      id: 'essay_2',
+      order: 2,
+      title: 'Giải toán bằng cách lập phương trình',
+      topicScope: 'Phương trình bậc nhất một ẩn / Phân tích đa thức',
+      description: 'Bài toán có lời văn gắn với thực tế năng suất, chuyển động hoặc kinh tế; lập phương trình để tìm đại lượng chưa biết',
+      points: 1.5,
+      level: 'VD'
+    },
+    {
+      id: 'essay_3',
+      order: 3,
+      title: 'Hình học phẳng: Tứ giác & Định lý Thalès',
+      topicScope: 'Tứ giác (Hình bình hành, chữ nhật) & Định lý Thalès',
+      description: 'Cho hình vẽ: ý a) Chứng minh tứ giác là hình bình hành; ý b) Áp dụng định lí Thalès tính độ dài đoạn thẳng',
+      points: 2.0,
+      level: 'VD'
+    }
+  ]);
 
   const [showMakeOnlineModal, setShowMakeOnlineModal] = useState(false);
   const [makeOnlineTest, setMakeOnlineTest] = useState<any>(null);
@@ -1361,7 +1421,23 @@ export default function ManageTests() {
     e.preventDefault();
     setSysError('');
 
-    const gradeNum = parseInt(newGrade, 10) || 12;
+    // Tự động phân tích và chuẩn hóa khối lớp thực tế từ tài liệu tham chiếu / phạm vi kiến thức
+    let detectedGradeNum = parseInt(newGrade, 10);
+    const textToScan = `${referenceNotes || ''} ${selectedReference?.topicName || ''} ${(selectedReference as any)?.lessonTitle || ''} ${newTitle || ''}`;
+    const detectedScopeMatch = textToScan.match(/(?:lớp|khối|toán)\s*([6-9]|1[0-2])\b/i);
+    if (detectedScopeMatch && detectedScopeMatch[1]) {
+      detectedGradeNum = parseInt(detectedScopeMatch[1], 10);
+    } else if (selectedReference?.grade) {
+      detectedGradeNum = Number(selectedReference.grade);
+    }
+    if (!detectedGradeNum || isNaN(detectedGradeNum) || detectedGradeNum < 6 || detectedGradeNum > 12) {
+      detectedGradeNum = 8;
+    }
+    const gradeNum = detectedGradeNum;
+    if (newGrade !== gradeNum.toString()) {
+      setNewGrade(gradeNum.toString());
+    }
+
     let effectiveTitle = (newTitle || '').trim();
     if (!effectiveTitle) {
       effectiveTitle = newFile?.name 
@@ -1380,7 +1456,26 @@ export default function ManageTests() {
     
     // Find a valid topic for the selected grade to associate the test with
     const validTopics = topics.filter(t => t.grade === gradeNum);
-    let targetTopicId = newTopicId || (validTopics.length > 0 ? validTopics[0].id : `topic-fake-${gradeNum}`);
+    let targetTopicId = newTopicId;
+    if (!targetTopicId) {
+      if (validTopics.length > 0) {
+        targetTopicId = validTopics[0].id;
+      } else {
+        try {
+          const defaultTopicDoc = await addDoc(collection(db, 'topics'), {
+            name: `Chuyên đề 1: Khối ${gradeNum}`,
+            grade: gradeNum,
+            isSpecial: false,
+            schoolYear: newSchoolYear || (selectedSchoolYear !== 'ALL' ? selectedSchoolYear : getCurrentSchoolYear()),
+            createdAt: new Date().toISOString()
+          });
+          targetTopicId = defaultTopicDoc.id;
+          setTopics(prev => [...prev, { id: defaultTopicDoc.id, name: `Chuyên đề 1: Khối ${gradeNum}`, grade: gradeNum }]);
+        } catch (e) {
+          targetTopicId = `topic-general-${gradeNum}`;
+        }
+      }
+    }
 
     // Validation based on creation mode
     let effectiveFile = newFile;
@@ -1389,26 +1484,23 @@ export default function ManageTests() {
     if (customQuestions && customQuestions.length > 0) {
       // Đã có danh sách câu hỏi trích xuất sẵn từ trước
     } else if (effectiveCreationMode === 'upload' && !effectiveFile && !editingTestId) {
-      if (selectedReference?.attachment?.dataUrl && selectedReference.attachment.name) {
-        try {
-          const autoFile = dataUrlToFile(selectedReference.attachment.dataUrl, selectedReference.attachment.name, selectedReference.attachment.type);
-          effectiveFile = autoFile;
-          setNewFile(autoFile);
-        } catch (e) {
-          console.warn("Could not convert reference attachment to file:", e);
-        }
-      } else if (selectedReference?.knowledge) {
-        effectiveCreationMode = 'auto';
-        setOnlineCreationMode('auto');
+      if (uploadSourceType === 'text' && uploadPastedText && uploadPastedText.trim().length > 10) {
+        setSysError('Vui lòng bấm nút "Trích xuất câu hỏi từ văn bản vừa dán" để AI phân tích và hiển thị danh sách câu hỏi trước khi lưu đề!');
       } else {
-        setSysError('Vui lòng chọn tệp đề bài tải lên từ máy tính (PDF, Word, Ảnh) hoặc chọn tài liệu từ Thư viện.');
-        setIsSaving(false);
-        return;
+        setSysError('Vui lòng tải lên tệp đề bài (PDF, Word, Ảnh) hoặc dán nội dung đề thi vào ô văn bản.');
       }
+      setIsSaving(false);
+      return;
     }
 
     if (effectiveCreationMode === 'matrix' && matrixSourceType === 'file' && !matrixFile && !editingTestId) {
-      setSysError('Vui lòng chọn tệp ma trận đề thi (Excel, Word, PDF hoặc Ảnh).');
+      setSysError('Vui lòng chọn tệp ma trận đề thi (Excel, Word, PDF hoặc Ảnh) hoặc chuyển sang dán nội dung ma trận.');
+      setIsSaving(false);
+      return;
+    }
+
+    if (effectiveCreationMode === 'matrix' && matrixSourceType === 'text' && (!matrixText || matrixText.trim().length < 10) && !editingTestId) {
+      setSysError('Vui lòng nhập hoặc dán nội dung ma trận đề thi và bản đặc tả (tối thiểu 10 ký tự).');
       setIsSaving(false);
       return;
     }
@@ -1471,6 +1563,32 @@ export default function ManageTests() {
         activePresetId
       };
 
+      // Trích xuất và liên kết danh sách các chuyên đề đã chọn
+      const multiMatch = referenceNotes?.match(/\[(?:Các chuyên đề(?:\s*\(\d+\))?|Chuyên đề):\s*([^\]]+)\]/i);
+      let parsedTopicTitles: string[] = [];
+      if (multiMatch && multiMatch[1]) {
+        parsedTopicTitles = multiMatch[1].split(/;\s*/).map(s => s.trim()).filter(Boolean);
+      } else if (referenceNotes && /chương\s*\d+/i.test(referenceNotes)) {
+        const lines = referenceNotes.split('\n');
+        for (const l of lines) {
+          if (/chương\s*\d+/i.test(l)) {
+            const cleanL = l.replace(/^[•\-\*\s]+/, '').replace(/^\[.*?\]\s*/, '').trim();
+            const parts = cleanL.split(/;\s*/).map(s => s.trim()).filter(Boolean);
+            parsedTopicTitles.push(...parts);
+          }
+        }
+      }
+      if (parsedTopicTitles.length > 0) {
+        testData.selectedTopicTitles = parsedTopicTitles;
+        const matchedTopicIds = topics
+          .filter(t => t.grade === gradeNum && parsedTopicTitles.some(pt => (t.name || t.title || '').toLowerCase().includes(pt.toLowerCase().substring(0, 15))))
+          .map(t => t.id);
+        if (targetTopicId && !matchedTopicIds.includes(targetTopicId)) {
+          matchedTopicIds.unshift(targetTopicId);
+        }
+        testData.topicIds = matchedTopicIds;
+      }
+
       if (effectiveCreationMode === 'matrix') {
         testData.matrixSourceType = matrixSourceType;
         if (matrixSourceType === 'preset') {
@@ -1478,6 +1596,16 @@ export default function ManageTests() {
         }
       }
       
+      let finalEnableP1 = customPart1Enabled;
+      let finalEnableP2 = customPart2Enabled;
+      let finalEnableP3 = customPart3Enabled;
+      let finalEnableEssay = customEssayEnabled;
+      let sanitizedEssayItems = customEssayItems;
+      let p1 = 0;
+      let p2 = 0;
+      let p3 = 0;
+      let isExplicitPureEssay = examFormat === 'essay';
+
       if (effectiveCreationMode !== 'upload') {
         let computedMcqCount = 0;
         if (examFormat === 'mcq_3part') {
@@ -1540,7 +1668,9 @@ export default function ManageTests() {
           let referenceFileDataUrl = "";
           let referenceFileMimeType = "";
           let referenceFileName = "";
-          if ((onlineCreationMode === 'auto' || onlineCreationMode === 'matrix') && referenceFile) {
+          let referenceKnowledgeContent = selectedReference?.knowledge ? repairVietnameseDocument(convertTcvn3ToUnicode(selectedReference.knowledge)) : undefined;
+
+          if (onlineCreationMode === 'auto' && referenceFile) {
             referenceFileDataUrl = await new Promise<string>((resolve, reject) => {
               const reader = new FileReader();
               reader.onload = () => resolve(reader.result as string);
@@ -1555,47 +1685,86 @@ export default function ManageTests() {
               referenceFileMimeType = selectedReference.attachment.type || '';
               referenceFileName = selectedReference.attachment.name || '';
             }
+          } else if (onlineCreationMode === 'matrix') {
+            // Mặc định lấy theo thư viện tài liệu tham chiếu (các bài học chuẩn SGK KNTT của khối lớp này)
+            referenceFileName = 'Thư viện tài liệu tham chiếu SGK Toán Kết nối tri thức';
+            const gradeLessons = lessons.filter(l => {
+              const top = topics.find(t => t.id === l.topicId);
+              return top?.grade === gradeNum;
+            });
+            if (gradeLessons.length > 0) {
+              referenceKnowledgeContent = gradeLessons
+                .map(l => `Bài học: ${l.title}\nLý thuyết & Dạng bài chuẩn SGK: ${l.knowledge || ''}`)
+                .join('\n\n')
+                .slice(0, 15000);
+            }
           }
 
           const currentTopicObj = topics.find(t => t.id === newTopicId);
+          let resolvedTopicTitles: string[] = (testData.selectedTopicTitles && testData.selectedTopicTitles.length > 0)
+            ? testData.selectedTopicTitles
+            : (multiMatch && multiMatch[1]
+                ? multiMatch[1].split(/;\s*/).map((s: string) => s.trim()).filter(Boolean)
+                : (currentTopicObj?.title || currentTopicObj?.name ? [currentTopicObj.title || currentTopicObj.name] : []));
+
+          const isScopePoly = /\b(đa thức|đơn thức)\b/i.test(`${resolvedTitle} ${referenceNotes || ''} ${resolvedTopicTitles.join(' ')}`);
+          const userExplicitlyWantedRational = resolvedTopicTitles.some(t => /\b(phân thức|mẫu thức)\b/i.test(t) && !/\b(không|chưa|loại|trừ)\b/i.test(t)) ||
+            (/\b(chuyên\s*đề\s*phân\s*thức|chương\s*6\b)\b/i.test(referenceNotes || ''));
+          if (isScopePoly && !userExplicitlyWantedRational) {
+            if (resolvedTopicTitles.length === 0 || !resolvedTopicTitles.some(t => /\b(đa thức|đơn thức)\b/i.test(t))) {
+              resolvedTopicTitles.unshift('Chương 1: Đa thức nhiều biến & Hằng đẳng thức');
+            }
+            resolvedTopicTitles = resolvedTopicTitles.filter(t => !/\b(phân thức|mẫu thức)\b/i.test(t));
+          }
+
+          const allTargetTopicIds = Array.from(new Set([
+            ...(testData.topicIds || []),
+            ...(newTopicId ? [newTopicId] : [])
+          ]));
+
           const topicLessonsList = lessons
-            .filter(l => l.topicId === newTopicId)
+            .filter(l => allTargetTopicIds.includes(l.topicId))
             .map(l => ({ 
               title: repairVietnameseDocument(convertTcvn3ToUnicode(l.title || '')), 
               knowledge: repairVietnameseDocument(convertTcvn3ToUnicode(l.knowledge || '')) 
             }));
 
           try {
+            const isEssayModeActive = testData.examFormat === 'essay' || (!finalEnableP1 && !finalEnableP2 && !finalEnableP3 && finalEnableEssay) || isExplicitPureEssay;
             const res = await fetch('/api/generate-test', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'x-gemini-api-key': localStorage.getItem('gemini_api_key') || '' },
               body: JSON.stringify({
                 title: repairVietnameseDocument(convertTcvn3ToUnicode(resolvedTitle)),
                 grade: gradeNum,
-                autoGenType: (onlineCreationMode === 'matrix' ? 'matrix' : examFormat),
-                formatType: examFormat,
+                autoGenType: isEssayModeActive ? 'essay' : (onlineCreationMode === 'matrix' ? 'matrix' : examFormat),
+                formatType: isEssayModeActive ? 'essay' : examFormat,
                 matrixConfig: (onlineCreationMode === 'matrix' && matrixSourceType === 'preset' ? matrixConfig : undefined),
-                mcqCount: testData.mcqCount,
-                essayCount: testData.essayCount,
-                part1Count,
-                part2Count,
-                part3Count,
+                matrixText: (onlineCreationMode === 'matrix' && matrixSourceType === 'text') ? matrixText : undefined,
+                mcqCount: isEssayModeActive ? 0 : testData.mcqCount,
+                essayCount: testData.essayCount || (isEssayModeActive ? (sanitizedEssayItems?.length || 4) : 0),
+                part1Count: (!isEssayModeActive && finalEnableP1) ? (part1Count || customPart1Count) : '0',
+                part2Count: (!isEssayModeActive && finalEnableP2) ? (part2Count || customPart2Count) : '0',
+                part3Count: (!isEssayModeActive && finalEnableP3) ? (part3Count || customPart3Count) : '0',
                 customPartsConfig: {
-                  enablePart1: customPart1Enabled,
-                  part1Count: customPart1Count,
-                  enablePart2: customPart2Enabled,
-                  part2Count: customPart2Count,
-                  enablePart3: customPart3Enabled,
-                  part3Count: customPart3Count
+                  enablePart1: !isEssayModeActive && finalEnableP1 && p1 > 0,
+                  part1Count: isEssayModeActive ? '0' : p1.toString(),
+                  enablePart2: !isEssayModeActive && finalEnableP2 && p2 > 0,
+                  part2Count: isEssayModeActive ? '0' : p2.toString(),
+                  enablePart3: !isEssayModeActive && finalEnableP3 && p3 > 0,
+                  part3Count: isEssayModeActive ? '0' : p3.toString()
                 },
+                customEssayEnabled: isEssayModeActive ? true : finalEnableEssay,
+                customEssayItems: sanitizedEssayItems,
                 matrixFileDataUrl,
                 mimeType,
                 referenceFileDataUrl,
                 referenceFileMimeType,
                 referenceFileName: referenceFileName || (referenceFile ? referenceFile.name : undefined),
                 referenceNotes,
-                referenceKnowledge: selectedReference?.knowledge ? repairVietnameseDocument(convertTcvn3ToUnicode(selectedReference.knowledge)) : undefined,
-                topicTitle: currentTopicObj?.title || currentTopicObj?.name || '',
+                referenceKnowledge: referenceKnowledgeContent,
+                topicTitle: resolvedTopicTitles.length > 0 ? resolvedTopicTitles.join('; ') : (currentTopicObj?.title || currentTopicObj?.name || ''),
+                selectedTopicTitles: resolvedTopicTitles,
                 topicLessons: topicLessonsList
               })
             });
@@ -1804,8 +1973,25 @@ export default function ManageTests() {
               })
             });
             if (res.ok) {
-              const rawExtracted = await res.json();
+              const resJson = await res.json();
+              const rawExtracted = Array.isArray(resJson) ? resJson : (resJson.questions || []);
+              const testInfo = (!Array.isArray(resJson) && resJson.testInfo) ? resJson.testInfo : null;
+
               if (Array.isArray(rawExtracted) && rawExtracted.length > 0) {
+                if (testInfo) {
+                  if (testInfo.title && (!newTitle || !newTitle.trim())) {
+                    testData.title = repairVietnameseDocument(convertTcvn3ToUnicode(testInfo.title));
+                  }
+                  if (testInfo.grade) {
+                    testData.grade = Number(testInfo.grade);
+                  }
+                  if (testInfo.durationMinutes) {
+                    testData.durationMinutes = Number(testInfo.durationMinutes);
+                  }
+                  if (testInfo.schoolYear) {
+                    testData.schoolYear = testInfo.schoolYear;
+                  }
+                }
                 const extracted = rawExtracted.map((rawQ: any) => {
                   const healedQ = autoReconcileQuestion(rawQ).question;
                   return {
@@ -1858,9 +2044,11 @@ export default function ManageTests() {
         }
       }
       
+      const savedTopicObj = topics.find(t => t.id === testData.topicId);
+      const savedTopicName = savedTopicObj?.name || 'Chuyên đề chung';
       if (editingTestId) {
         await updateDoc(doc(db, 'tests', editingTestId), testData);
-        setSysMsg('Cập nhật đề thành công!');
+        setSysMsg(`Cập nhật đề thành công! Đã lưu vào Chuyên đề "${savedTopicName}" (Khối ${gradeNum}).`);
       } else {
         if (!testData.questionsData) testData.questionsData = "[]";
         testData.isCustom = true;
@@ -1868,7 +2056,11 @@ export default function ManageTests() {
         testData.createdAt = new Date().toISOString();
         testData.createdBy = user?.displayName || user?.email || 'Giáo viên';
         await addDoc(collection(db, 'tests'), testData);
-        setSysMsg('Tạo đề thành công!');
+        setSysMsg(`🎉 Tạo đề thành công! Đã lưu đề vào Chuyên đề "${savedTopicName}" (Khối ${gradeNum}).`);
+        setSelectedGrade(gradeNum);
+        if (testData.topicId) {
+          setSelectedTopicTab(testData.topicId);
+        }
       }
 
       // Success
@@ -1962,7 +2154,8 @@ export default function ManageTests() {
       });
       
       if (res.ok) {
-        const extracted = await res.json();
+        const resJson = await res.json();
+        const extracted = Array.isArray(resJson) ? resJson : (resJson.questions || []);
         if (Array.isArray(extracted) && extracted.length > 0) {
           const fileUrlToSave = makeOnlineFile.size > 800000 ? makeOnlineTest.fileUrl : fileDataUrl;
           await updateDoc(doc(db, 'tests', makeOnlineTest.id), {
@@ -2458,35 +2651,40 @@ export default function ManageTests() {
             </select>
           </div>
           {(role === 'admin' || role === 'teacher') && (
-            <>
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* 1. TẠO ĐỀ TỰ ĐỘNG */}
               <button 
                 type="button"
                 onClick={() => openCreateModal('auto', 'mcq_3part')}
-                className="flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-700 px-4 py-2.5 rounded-xl font-semibold shadow-sm shadow-blue-200 transition-all text-sm"
-                title="Tạo đề thi tự động bằng AI & Ngân hàng đề: Trắc nghiệm 3 phần, tùy biến, tự luận hoặc tổng hợp"
+                className="flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-700 px-3.5 py-2.5 rounded-xl font-bold shadow-sm shadow-blue-200 transition-all text-xs sm:text-sm cursor-pointer"
+                title="Tạo đề thi tự động bằng AI & Ngân hàng đề: Chuẩn SGK Kết nối tri thức hoặc ma trận năng lực"
               >
-                <Sparkles size={17} />
-                <span>Tạo đề thi tự động</span>
+                <Sparkles size={16} />
+                <span>1. Tạo đề tự động</span>
               </button>
+
+              {/* 2. TẠO ĐỀ TỪ ĐỀ TẢI LÊN */}
               <button 
                 type="button"
                 onClick={() => openCreateModal('upload', 'mcq_3part')}
-                className="flex items-center gap-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-4 py-2.5 rounded-xl font-semibold transition-all text-sm"
-                title="Tạo đề online từ tệp đề tải lên (PDF, Word, Ảnh): AI tự động trích xuất thành đề tương tác"
+                className="flex items-center gap-2 bg-indigo-600 text-white hover:bg-indigo-700 px-3.5 py-2.5 rounded-xl font-bold shadow-sm shadow-indigo-200 transition-all text-xs sm:text-sm cursor-pointer"
+                title="Tạo đề từ đề tải lên: Lấy 100% theo đề gốc, bỏ hết mục tài liệu tham chiếu"
               >
-                <Upload size={17} className="text-indigo-600" />
-                <span>Tạo đề từ đề tải lên</span>
+                <Upload size={16} />
+                <span>2. Tạo đề từ đề tải lên</span>
               </button>
+
+              {/* 3. TẠO ĐỀ THEO MA TRẬN */}
               <button 
                 type="button"
                 onClick={() => openCreateModal('matrix', 'mcq_3part')}
-                className="flex items-center gap-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 px-3.5 py-2.5 rounded-xl font-semibold transition-all text-sm"
-                title="Tạo đề theo ma trận có sẵn: Khung ma trận chuẩn Bộ GD&ĐT hoặc tệp ma trận của trường"
+                className="flex items-center gap-2 bg-purple-600 text-white hover:bg-purple-700 px-3.5 py-2.5 rounded-xl font-bold shadow-sm shadow-purple-200 transition-all text-xs sm:text-sm cursor-pointer"
+                title="Tạo đề theo ma trận: Thiết lập ma trận mức độ nhận thức (NB - TH - VD - VDC) hoặc tải lên tệp ma trận đề thi"
               >
-                <LayoutGrid size={17} className="text-emerald-600" />
-                <span>Tạo đề theo ma trận</span>
+                <LayoutGrid size={16} />
+                <span>3. Tạo đề theo ma trận</span>
               </button>
-            </>
+            </div>
           )}
         </div>
       </div>
@@ -2629,7 +2827,7 @@ export default function ManageTests() {
                 if (topic.id === 'general') {
                   return !t.topicId || !filteredTopics.some(tp => tp.id === t.topicId);
                 }
-                return t.topicId === topic.id;
+                return t.topicId === topic.id || (Array.isArray(t.topicIds) && t.topicIds.includes(topic.id));
               }).sort((a, b) => {
                 const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
                 if (yearDiff !== 0) return yearDiff;
@@ -3050,6 +3248,12 @@ export default function ManageTests() {
         setAutoGenType={setAutoGenType}
         matrixSourceType={matrixSourceType}
         setMatrixSourceType={setMatrixSourceType}
+        matrixText={matrixText}
+        setMatrixText={setMatrixText}
+        uploadSourceType={uploadSourceType}
+        setUploadSourceType={setUploadSourceType}
+        uploadPastedText={uploadPastedText}
+        setUploadPastedText={setUploadPastedText}
         matrixConfig={matrixConfig}
         setMatrixConfig={setMatrixConfig}
         selectedMatrixPreset={selectedMatrixPreset}
@@ -3115,6 +3319,10 @@ export default function ManageTests() {
         setReferenceFile={setReferenceFile}
         referenceNotes={referenceNotes}
         setReferenceNotes={setReferenceNotes}
+        customEssayEnabled={customEssayEnabled}
+        setCustomEssayEnabled={setCustomEssayEnabled}
+        customEssayItems={customEssayItems}
+        setCustomEssayItems={setCustomEssayItems}
         lessons={lessons}
         isSaving={isSaving}
         sysError={sysError}

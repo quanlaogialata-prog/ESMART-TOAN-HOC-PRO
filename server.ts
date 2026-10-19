@@ -8,7 +8,8 @@ import dotenv from "dotenv";
 import mammoth from "mammoth";
 import { repairVietnameseDocument, convertTcvn3ToUnicode, formatMathExpressions, smartFormatLessonLayout, healMathSvg, cleanHtmlAndSvgContainers } from "./src/lib/vietnameseFont";
 import { extractDocxFullContent } from "./src/lib/docxExtractor";
-import { generateCurriculumFallbackQuestions } from "./src/utils/curriculumQuestionBank";
+import { generateCurriculumFallbackQuestions, getGrade8ChapterNumber } from "./src/utils/curriculumQuestionBank";
+import { CURRICULUM_TOPICS_BY_GRADE } from "./src/data/curriculumTopics";
 
 dotenv.config();
 
@@ -716,36 +717,350 @@ Output exactly a JSON object in this format (no markdown code blocks, just raw J
     }
   });
 
+  const enforceTopicAndGradeScope = (
+    questions: any[],
+    grade: number,
+    targetTopics: string[],
+    fallbackGenerator: () => any[]
+  ): any[] => {
+    if (!Array.isArray(questions) || questions.length === 0) return questions;
+
+    const FORBIDDEN_HIGH_SCHOOL = [
+      /\bđạo hàm\b/i,
+      /\btiệm cận\b/i,
+      /\blogarit\b/i,
+      /\btích phân\b/i,
+      /\bnguyên hàm\b/i,
+      /\bcực trị\b/i,
+      /\bkhảo sát hàm số\b/i,
+      /\boxyz\b/i,
+      /\bvectơ trong không gian\b/i,
+      /\bcấp số cộng\b/i,
+      /\bcấp số nhân\b/i,
+      /\bnhị thức newton\b/i,
+      /\bhàm số mũ\b/i,
+      /\bphương trình lượng giác\b/i,
+      /\blượng giác lớp 11\b/i
+    ];
+
+    // Xác định các chương được chọn của lớp 8 (1 đến 10)
+    const selectedChapters8 = grade === 8 && targetTopics.length > 0
+      ? Array.from(new Set(targetTopics.map(t => getGrade8ChapterNumber(t)).filter((n): n is number => n !== null)))
+      : [];
+
+    // Bản đồ kiểm tra vi phạm theo từng chương của Toán 8
+    const GRADE_8_CHAPTER_PATTERNS: Record<number, { name: string; pattern: RegExp }> = {
+      1: { name: "Đa thức nhiều biến", pattern: /\b(đa thức|đơn thức|đơn thức đồng dạng|bậc của đa thức|thu gọn đa thức|bậc của đơn thức)\b/i },
+      2: { name: "Hằng đẳng thức & Phân tích đa thức", pattern: /\b(hằng đẳng thức|phân tích đa thức thành nhân tử|nhân tử chung|hiệu hai bình phương|bình phương một tổng|bình phương một hiệu)\b/i },
+      3: { name: "Tứ giác", pattern: /\b(tứ giác|hình bình hành|hình thoi|hình chữ nhật|hình vuông|hình thang cân|tổng các góc của một tứ giác)\b/i },
+      4: { name: "Định lý Thalès", pattern: /\b(thalès|thales|đường trung bình của tam giác|đoạn thẳng tỉ lệ|tính chất đường phân giác)\b/i },
+      5: { name: "Dữ liệu và biểu đồ", pattern: /\b(biểu đồ hình quạt|biểu đồ đoạn thẳng|dữ liệu định tính|dữ liệu định lượng|thu thập và tổ chức dữ liệu|biểu đồ cột kép)\b/i },
+      6: { name: "Phân thức đại số", pattern: /\b(phân thức|mẫu thức|quy đồng mẫu|mẫu thức chung|rút gọn phân thức|điều kiện xác định của phân thức)\b/i },
+      7: { name: "Phương trình & Hàm số bậc nhất", pattern: /\b(hàm số bậc nhất|hệ số góc|phương trình bậc nhất một ẩn|giải bài toán bằng cách lập phương trình)\b/i },
+      8: { name: "Xác suất của biến cố", pattern: /\b(xác suất|biến cố ngẫu nhiên|biến cố chắc chắn|biến cố không thể|kết quả thuận lợi|không gian mẫu)\b/i },
+      9: { name: "Tam giác đồng dạng", pattern: /\b(tam giác đồng dạng|tỉ số đồng dạng|đồng dạng|pythagore đảo)\b/i },
+      10: { name: "Hình chóp tam giác đều & tứ giác đều", pattern: /\b(hình chóp|chóp tam giác đều|chóp tứ giác đều|trung đoạn|thể tích hình chóp)\b/i }
+    };
+
+    const hasNegativeRational = targetTopics.some(t => /\b(không\s+(?:có\s+|ra\s+)?phân\s*thức|chưa\s*học\s*phân\s*thức|loại\s*bỏ\s*phân\s*thức|chỉ\s*đa\s*thức)\b/i.test(t));
+    const wantsRational = !hasNegativeRational && targetTopics.some(t => {
+      const lt = t.toLowerCase();
+      return /\b(phân thức|mẫu thức)\b/i.test(lt) && !/\b(không|chưa|loại|trừ)\b/i.test(lt);
+    });
+    const wantsPolynomial = (targetTopics.length > 0 && targetTopics.some(t => /\b(đa thức|đơn thức)\b/i.test(t))) && !wantsRational;
+
+    let cachedFallback: any[] | null = null;
+    const getFallbackItem = (type: string, index: number) => {
+      if (!cachedFallback) {
+        cachedFallback = fallbackGenerator();
+      }
+      if (!Array.isArray(cachedFallback) || cachedFallback.length === 0) return null;
+      let pool = cachedFallback.filter((fq: any) => fq.type === type);
+      if (wantsPolynomial && !wantsRational) {
+        const cleanPool = pool.filter((fq: any) => {
+          const t = `${fq.question || ''} ${fq.explanation || ''}`.toLowerCase();
+          return !/\b(phân thức|mẫu thức)\b/i.test(t);
+        });
+        if (cleanPool.length > 0) pool = cleanPool;
+      }
+      if (pool.length > 0) {
+        return pool[index % pool.length];
+      }
+      const genericPool = cachedFallback.filter((fq: any) => {
+        if (wantsPolynomial && !wantsRational) {
+          const t = `${fq.question || ''} ${fq.explanation || ''}`.toLowerCase();
+          if (/\b(phân thức|mẫu thức)\b/i.test(t)) return false;
+        }
+        return true;
+      });
+      return (genericPool.length > 0 ? genericPool : cachedFallback)[index % (genericPool.length || cachedFallback.length)] || null;
+    };
+
+    return questions.map((q, idx) => {
+      const qText = `${q.question || ''} ${q.explanation || ''} ${(q.options || []).join(' ')} ${q.reference?.topic || ''} ${q.reference?.curriculumLesson || ''}`;
+      let isInvalid = false;
+      let reason = '';
+
+      // 1. Kiểm tra kiến thức lớp trên nếu đang là THCS
+      if (grade <= 9) {
+        for (const pat of FORBIDDEN_HIGH_SCHOOL) {
+          if (pat.test(qText)) {
+            isInvalid = true;
+            reason = `Chứa kiến thức cấp THPT (${pat.source})`;
+            break;
+          }
+        }
+      }
+
+      // 2. Kiểm tra xung đột đặc biệt: Giáo viên chỉ chọn ĐA THỨC mà câu hỏi lại có PHÂN THỨC
+      if (!isInvalid && wantsPolynomial && !wantsRational) {
+        if (/\b(phân thức|mẫu thức|quy đồng mẫu|rút gọn phân thức|điều kiện xác định của phân thức)\b/i.test(qText) ||
+            /\\frac\{[^\}]+\}\{[^0-9\\\}\s]*[a-zA-Z][^\}]*\}/.test(qText) ||
+            /(?:\/|\:\s*)\([a-zA-Z\d\s\+\-\*]*[a-zA-Z][a-zA-Z\d\s\+\-\*]*\)/.test(qText)) {
+          isInvalid = true;
+          reason = 'Chứa kiến thức Phân thức đại số (mẫu thức chứa biến) dù giáo viên chỉ chọn Đa thức';
+        }
+      }
+
+      // 3. Kiểm tra xung đột phạm vi chuyên đề đối với Toán 8
+      if (!isInvalid && grade === 8 && selectedChapters8.length > 0) {
+        // Kiểm tra xem câu hỏi có chứa kiến thức của chương BỊ CẤM (chương không được chọn)
+        for (let ch = 1; ch <= 10; ch++) {
+          if (!selectedChapters8.includes(ch)) {
+            const chDef = GRADE_8_CHAPTER_PATTERNS[ch];
+            // Lưu ý loại trừ trường hợp tứ giác vs hình chóp
+            if (ch === 3 && /\bchóp\b/i.test(qText)) continue;
+            if (ch === 4 && /\bđồng dạng\b/i.test(qText)) continue;
+            if (ch === 9 && /\bthalès\b/i.test(qText)) continue;
+
+            if (chDef && chDef.pattern.test(qText)) {
+              isInvalid = true;
+              reason = `Thuộc chuyên đề Chương ${ch} (${chDef.name}) không nằm trong danh sách đã chọn`;
+              break;
+            }
+          }
+        }
+
+        // Kiểm tra tính hợp lệ: Câu hỏi phải thuộc ít nhất một trong các chương đã chọn
+        if (!isInvalid) {
+          const detectedCh = getGrade8ChapterNumber(qText);
+          if (detectedCh !== null && !selectedChapters8.includes(detectedCh)) {
+            isInvalid = true;
+            reason = `Xác định thuộc Chương ${detectedCh} ngoài phạm vi chuyên đề đã chọn`;
+          }
+        }
+      } else if (!isInvalid && targetTopics.length > 0) {
+        // Đối với các khối lớp khác
+        const hasGeometry = targetTopics.some(t => /(?:hình|tứ giác|thalès|thales|tam giác|chóp|lăng trụ|pythagore|đồng dạng|đường tròn)/i.test(t));
+        const isOnlyGeometry = targetTopics.length > 0 && targetTopics.every(t => /(?:hình|tứ giác|thalès|thales|tam giác|chóp|lăng trụ|pythagore|đồng dạng|đường tròn)/i.test(t));
+        const hasAlgebra = targetTopics.some(t => /(?:đại số|đa thức|hằng đẳng thức|phân thức|phương trình|hàm số|biểu thức|căn thức|lượng giác)/i.test(t));
+        const isOnlyAlgebra = targetTopics.length > 0 && targetTopics.every(t => /(?:đại số|đa thức|hằng đẳng thức|phân thức|phương trình|hàm số|biểu thức|căn thức)/i.test(t));
+        const hasStatistics = targetTopics.some(t => /(?:dữ liệu|biểu đồ|thống kê|xác suất|tần số|biến cố)/i.test(t));
+
+        if (!hasGeometry && /\b(tam giác đồng dạng|định lý thalès|hình chóp|hình bình hành|hình thoi|hình chữ nhật|tứ giác)\b/i.test(qText)) {
+          isInvalid = true;
+          reason = 'Chứa hình học dù không chọn chuyên đề hình học';
+        } else if (isOnlyGeometry && /\b(đa thức|hằng đẳng thức|phân thức|nghiệm của phương trình|hàm số bậc nhất)\b/i.test(qText)) {
+          isInvalid = true;
+          reason = 'Chứa đại số dù chỉ chọn chuyên đề hình học';
+        } else if (isOnlyAlgebra && /\b(hình học|tam giác|tứ giác|hình bình hành|hình thoi|hình chóp)\b/i.test(qText)) {
+          isInvalid = true;
+          reason = 'Chứa hình học dù chỉ chọn đại số';
+        } else if (!hasStatistics && /\b(biểu đồ hình quạt|biểu đồ đoạn thẳng|dữ liệu định tính|dữ liệu định lượng|xác suất thực nghiệm)\b/i.test(qText)) {
+          isInvalid = true;
+          reason = 'Chứa thống kê/xác suất dù không chọn';
+        }
+      }
+
+      if (isInvalid) {
+        console.warn(`[Scope-Guard] Câu ${q.id || idx + 1} vi phạm phạm vi (${reason}). Tự động thay thế bằng câu hỏi chuẩn từ chuyên đề.`);
+        const replacement = getFallbackItem(q.type || 'essay', idx);
+        if (replacement) {
+          return {
+            ...replacement,
+            id: q.id || `q_${idx + 1}`,
+            type: q.type || replacement.type,
+            points: q.points || replacement.points
+          };
+        }
+      }
+
+      // Chuẩn hóa reference
+      const normalizedRef = { ...(q.reference || {}) };
+      if (targetTopics.length > 0) {
+        if (grade === 8 && selectedChapters8.length > 0) {
+          const qCh = getGrade8ChapterNumber(qText);
+          const matchedTarget = targetTopics.find(t => getGrade8ChapterNumber(t) === qCh);
+          normalizedRef.topic = matchedTarget || targetTopics[idx % targetTopics.length];
+        } else {
+          const curTopic = (normalizedRef.topic || '').toLowerCase();
+          const matched = targetTopics.find(t => curTopic.includes(t.toLowerCase().substring(0, 10)) || t.toLowerCase().includes(curTopic.substring(0, 10)));
+          normalizedRef.topic = matched || targetTopics[idx % targetTopics.length];
+        }
+      } else {
+        normalizedRef.topic = normalizedRef.topic || `Toán lớp ${grade}`;
+      }
+
+      if (!normalizedRef.curriculumLesson || normalizedRef.curriculumLesson.includes('Toán 12') || normalizedRef.curriculumLesson.includes('Toán 11')) {
+        normalizedRef.curriculumLesson = `SGK Toán ${grade} - Kết nối tri thức`;
+      }
+
+      return {
+        ...q,
+        reference: normalizedRef
+      };
+    });
+  };
+
   app.post("/api/generate-test", async (req, res) => {
+    let targetTopics: string[] = [];
+    let isPureEssayMode = false;
+    let enableP1 = false;
+    let enableP2 = false;
+    let enableP3 = false;
+    let isPolyInScope = false;
+    let isRatInScope = false;
     try {
-      const { 
+      let { 
         title, 
         grade, 
         autoGenType, 
+        formatType,
         mcqCount, 
         essayCount, 
         matrixFileDataUrl, 
+        matrixText,
         mimeType,
         part1Count,
         part2Count,
         part3Count,
         customPartsConfig,
+        customEssayEnabled,
+        customEssayItems,
         referenceFileDataUrl,
         referenceFileMimeType,
         referenceFileName,
         referenceNotes,
         referenceKnowledge,
         topicTitle,
-        topicLessons
+        topicLessons,
+        selectedTopicTitles
       } = req.body;
+
+      // Tự động phân tích và chuẩn hóa khối lớp chính xác từ tham số grade, title, referenceNotes, topicTitle, referenceKnowledge
+      let effectiveGrade = parseInt(grade, 10);
+      const combinedScopeText = `${title || ''} ${referenceNotes || ''} ${referenceKnowledge || ''} ${topicTitle || ''} ${(selectedTopicTitles || []).join(' ')}`;
+      const detectedGradeMatch = combinedScopeText.match(/(?:lớp|khối|toán)\s*([6-9]|1[0-2])\b/i);
+      if (detectedGradeMatch && detectedGradeMatch[1]) {
+        const detected = parseInt(detectedGradeMatch[1], 10);
+        if (effectiveGrade !== detected) {
+          console.log(`[Auto-Reconciliation] Overriding grade from ${effectiveGrade} to detected grade ${detected} based on scope/notes`);
+          effectiveGrade = detected;
+        }
+      }
+      if (!effectiveGrade || isNaN(effectiveGrade) || effectiveGrade < 6 || effectiveGrade > 12) {
+        effectiveGrade = 8;
+      }
+
+      // Trích xuất và chuẩn hóa danh sách các chuyên đề mục tiêu
+      if (Array.isArray(selectedTopicTitles) && selectedTopicTitles.length > 0) {
+        targetTopics = selectedTopicTitles.map(s => String(s).trim()).filter(Boolean);
+      }
+      if (targetTopics.length === 0 && referenceNotes) {
+        const multiMatch = referenceNotes.match(/\[(?:Các chuyên đề(?:\s*\(\d+\))?|Chuyên đề):\s*([^\]]+)\]/i);
+        if (multiMatch && multiMatch[1]) {
+          targetTopics = multiMatch[1].split(/;\s*/).map((s: string) => s.trim()).filter(Boolean);
+        } else {
+          const formTopicMatch = referenceNotes.match(/(?:Chuyên đề trọng tâm|Các chuyên đề|Chuyên đề|Phạm vi kiến thức)[:\s]*([^\n\r<]+)/i);
+          if (formTopicMatch && formTopicMatch[1]) {
+            const raw = formTopicMatch[1].replace(/^[•\-\*\s]+/, '').trim();
+            if (raw && !/^(nhập|chọn|các)\b/i.test(raw)) {
+              targetTopics = raw.split(/[,;]\s*/).map(s => s.trim()).filter(Boolean);
+            }
+          }
+        }
+      }
+      if (targetTopics.length === 0 && topicTitle) {
+        targetTopics = topicTitle.split(/;\s*/).map((s: string) => s.trim()).filter(Boolean);
+      }
+
+      // Nhận diện chính xác chuyên đề và hình thức từ toàn bộ nguồn văn bản phạm vi
+      const hasNegativeRational = /\b(không\s+(?:có\s+|ra\s+)?phân\s*thức|chưa\s*học\s*phân\s*thức|loại\s*bỏ\s*phân\s*thức|chỉ\s*đa\s*thức|không\s*phải\s*phân\s*thức)\b/i.test(combinedScopeText);
+      const userExplicitlySelectedPolynomial = targetTopics.some(t => {
+        const lt = t.toLowerCase();
+        return /\b(đa thức|đơn thức)\b/i.test(lt);
+      }) || /\b(đa thức|đơn thức)\b/i.test(combinedScopeText);
+
+      const userExplicitlySelectedRational = !hasNegativeRational && (targetTopics.some(t => {
+        const lt = t.toLowerCase();
+        return /\b(phân thức|mẫu thức)\b/i.test(lt) && !/\b(không|chưa|loại|trừ)\b/i.test(lt);
+      }) || (/\b(chuyên\s*đề\s*phân\s*thức|chương\s*6\b|kiến\s*thức\s*phân\s*thức)\b/i.test(combinedScopeText) && !userExplicitlySelectedPolynomial));
+
+      isRatInScope = userExplicitlySelectedRational;
+      isPolyInScope = (userExplicitlySelectedPolynomial || hasNegativeRational) && !isRatInScope;
+
+      if (isPolyInScope && !isRatInScope) {
+        // Loại bỏ hoàn toàn các chuyên đề phân thức nếu bị dính
+        targetTopics = targetTopics.filter(t => !/\b(phân thức|mẫu thức)\b/i.test(t));
+        if (targetTopics.length === 0 || !targetTopics.some(t => /\b(đa thức|đơn thức)\b/i.test(t))) {
+          targetTopics.unshift('Chương 1: Đa thức nhiều biến và các phép toán');
+        }
+      }
+
+      // Phân tích cấu trúc đề: Tự luận vs Trắc nghiệm
+      const isPureEssayInNotes = 
+        /(?:cấu\s*trúc|hình\s*thức|kiểu\s*đề|dạng\s*đề|phương\s*thức|hình\s*thức\s*kiểm\s*tra|định\s*dạng)[:\s]*(?:đề\s*)?(?:100%?\s*)?tự\s*luận/i.test(combinedScopeText) ||
+        /(?:cấu\s*trúc\s*tự\s*luận|hình\s*thức\s*tự\s*luận|100%?\s*tự\s*luận|đề\s*(?:thi|kiểm\s*tra)\s*(?:chuyên\s*đề\s*)?tự\s*luận|đề\s*tự\s*luận|bài\s*toán\s*tự\s*luận|toàn\s*bộ\s*tự\s*luận|chỉ\s*tự\s*luận|thi\s*tự\s*luận)/i.test(combinedScopeText) ||
+        /\b(đề\s*thi\s*tự\s*luận|đề\s*tự\s*luận|tự\s*luận\s*toàn\s*bộ|100%\s*tự\s*luận|chỉ\s*có\s*tự\s*luận|không\s*có\s*trắc\s*nghiệm)\b/i.test(combinedScopeText) ||
+        (!/(?:trắc\s*nghiệm\s*4\s*lựa\s*chọn|4\s*lựa\s*chọn|đúng\s*[\/\-]\s*sai|trả\s*lời\s*ngắn|điền\s*số)/i.test(combinedScopeText) && /(?:tự\s*luận|bài\s*toán\s*tự\s*luận)/i.test(combinedScopeText)) ||
+        (!/(?:đúng\s*[\/\-]\s*sai\s*:\s*[1-9]|4\s*lựa\s*chọn\s*:\s*[1-9]|trả\s*lời\s*ngắn\s*:\s*[1-9])/i.test(combinedScopeText) && /(?:tự\s*luận\s*:\s*[1-9]|\b\d+\s*câu\s*tự\s*luận|\b\d+\s*bài\s*tự\s*luận)/i.test(combinedScopeText)) ||
+        autoGenType === 'essay' || formatType === 'essay';
+
+      const hasExplicitTF = /(?:đúng\s*[\/\-]\s*sai|trắc\s*nghiệm\s*đúng\s*sai)/i.test(combinedScopeText) && 
+        !/\b(?:không\s+(?:có\s+|ra\s+)?đúng\s*[\/\-]\s*sai|đúng\s*[\/\-]\s*sai\s*[:=]\s*0\b)/i.test(combinedScopeText) &&
+        !isPureEssayInNotes;
+
+      const p1Req = parseInt(part1Count || customPartsConfig?.part1Count, 10) || 0;
+      enableP1 = isPureEssayInNotes ? false : (customPartsConfig?.enablePart1 === true || (customPartsConfig?.enablePart1 !== false && p1Req > 0));
+
+      const p2Req = parseInt(part2Count || customPartsConfig?.part2Count, 10) || 0;
+      enableP2 = isPureEssayInNotes ? false : (hasExplicitTF && customPartsConfig?.enablePart2 === true && p2Req > 0);
+
+      const p3Req = parseInt(part3Count || customPartsConfig?.part3Count, 10) || 0;
+      enableP3 = isPureEssayInNotes ? false : (customPartsConfig?.enablePart3 === true && p3Req > 0);
+
+      isPureEssayMode = autoGenType === 'essay' || formatType === 'essay' || isPureEssayInNotes || (!enableP1 && !enableP2 && !enableP3);
+
+      if (isPureEssayMode) {
+        enableP1 = false;
+        enableP2 = false;
+        enableP3 = false;
+      }
+
+      // Trích xuất nội dung kiến thức trọng tâm từ form nếu có
+      let formKnowledgeFocus = "";
+      if (referenceNotes) {
+        const focusM = referenceNotes.match(/(?:Nội dung trọng tâm cần kiểm tra|Kiến thức trọng tâm|Yêu cầu cần đạt)[:\s]*([^\n\r<]+)/i);
+        if (focusM && focusM[1]) {
+          const rawF = focusM[1].replace(/^[•\-\*\s]+/, '').trim();
+          if (rawF && !/^(nhập|nội dung)\b/i.test(rawF)) {
+            formKnowledgeFocus = rawF;
+          }
+        }
+      }
+
       const apiKeyHeader = req.headers['x-gemini-api-key'];
       const rawHeaderKey = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
       const validHeader = (rawHeaderKey && typeof rawHeaderKey === 'string' && rawHeaderKey.trim() !== '' && rawHeaderKey !== 'undefined' && rawHeaderKey !== 'null') ? rawHeaderKey.trim() : null;
       const apiKey = validHeader || process.env.GEMINI_API_KEY_CUSTOM || process.env.GEMINI_API_KEY;
 
       if (!apiKey) {
-        console.warn("API key is not set, generating curriculum fallback questions");
-        const fallbackQuestions = generateCurriculumFallbackQuestions(req.body);
+        console.warn("API key is not set, generating curriculum fallback questions for grade:", effectiveGrade);
+        const fallbackQuestions = generateCurriculumFallbackQuestions({ 
+          ...req.body, 
+          grade: effectiveGrade,
+          selectedTopicTitles: targetTopics 
+        });
         return res.json(fallbackQuestions);
       }
 
@@ -754,7 +1069,82 @@ Output exactly a JSON object in this format (no markdown code blocks, just raw J
         httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
       });
       let prompt = `Bạn là chuyên gia giáo dục và biên soạn đề thi môn Toán chất lượng cao theo chuẩn chương trình GDPT mới.
-Hãy tạo một đề kiểm tra / đề thi môn Toán lớp ${grade} với tiêu đề: "${title}".`;
+Hãy tạo một đề kiểm tra / đề thi môn Toán lớp ${effectiveGrade} với tiêu đề: "${title}".
+
+*** BẮT BUỘC TUYỆT ĐỐI VỀ KHỐI LỚP VÀ PHẠM VI CHƯƠNG TRÌNH TOÁN LỚP ${effectiveGrade} (GDPT 2018) ***:
+1. ĐỀ THI NÀY LÀ ĐỀ TOÁN LỚP ${effectiveGrade}. TOÀN BỘ CÂU HỎI TRONG ĐỀ THI BẮT BUỘC 100% PHẢI THUỘC CHƯƠNG TRÌNH SÁCH GIÁO KHOA TOÁN LỚP ${effectiveGrade} (KẾT NỐI TRI THỨC VỚI CUỘC SỐNG).
+2. TUYỆT ĐỐI CẤM KHÔNG ĐƯỢC sinh ra kiến thức hoặc câu hỏi của các khối lớp trên hay cấp học khác!
+${effectiveGrade <= 9 ? `   - Đây là đề thi cấp THCS (Lớp ${effectiveGrade}). TUYỆT ĐỐI KHÔNG ĐƯỢC có kiến thức cấp THPT như: Đạo hàm, Cực trị hàm số, Đường tiệm cận, Khảo sát hàm số, Phương trình lượng giác lớp 11, Cấp số cộng / cấp số nhân, Mũ và logarit, Nguyên hàm, Tích phân, Vectơ và hệ trục tọa độ không gian Oxyz...` : ''}
+`;
+
+      if (targetTopics.length > 0 || (isPolyInScope && !isRatInScope)) {
+        const selectedChapters8 = effectiveGrade === 8
+          ? Array.from(new Set(targetTopics.map(t => getGrade8ChapterNumber(t)).filter((n): n is number => n !== null)))
+          : [];
+        const unselectedChapters8 = effectiveGrade === 8
+          ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].filter(n => !selectedChapters8.includes(n))
+          : [];
+
+        prompt += `
+*** NGUYÊN TẮC BẮT BUỘC BẬC NHẤT: GIỚI HẠN PHẠM VI CHUYÊN ĐỀ ĐÃ CHỌN (STRICT KNOWLEDGE SCOPE - KHÔNG ĐƯỢC PHÉP VI PHẠM) ***:
+Giáo viên đã chỉ định cụ thể ${targetTopics.length} chuyên đề môn Toán lớp ${effectiveGrade} cho đề thi này:
+${targetTopics.map((t, idx) => `   ${idx + 1}. "${t}"`).join('\n')}
+`;
+
+        const wantsRationalPrompt = isRatInScope;
+        const wantsPolynomialPrompt = isPolyInScope && !isRatInScope;
+        if (wantsPolynomialPrompt) {
+          prompt += `
+*** CẢNH BÁO BẮT BUỘC ĐẶC BIỆT: KIẾN THỨC ĐƯỢC CHỌN LÀ "ĐA THỨC" ***:
+- Giáo viên đã chọn chuyên đề/kiến thức: "ĐA THỨC" (Đơn thức, đa thức nhiều biến, thu gọn đa thức, bậc của đa thức, tính giá trị của đa thức, cộng trừ nhân chia đa thức, hằng đẳng thức).
+- TUYỆT ĐỐI CẤM: KHÔNG ĐƯỢC sinh ra bất kỳ câu hỏi nào về "PHÂN THỨC ĐẠI SỐ" (Không có mẫu thức chứa biến như A/B, không rút gọn phân thức hữu tỉ, không tìm điều kiện xác định của phân thức, không có ẩn x, y ở mẫu).
+- Toàn bộ đề thi 100% chỉ kiểm tra ĐA THỨC, TUYỆT ĐỐI KHÔNG CÓ PHÂN THỨC!
+`;
+        }
+
+        if (effectiveGrade === 8 && unselectedChapters8.length > 0) {
+          const grade8Topics = CURRICULUM_TOPICS_BY_GRADE[8] || [];
+          prompt += `
+*** CÁC CHUYÊN ĐỀ LỚP 8 TUYỆT ĐỐI CẤM (GIÁO VIÊN KHÔNG CHỌN - TUYỆT ĐỐI CẤM CÓ BẤT KỲ CÂU HỎI NÀO TRONG ĐỀ THI) ***:
+${unselectedChapters8.map(n => {
+  const top = grade8Topics.find(t => t.chapterNumber === n);
+  return `   - TUYỆT ĐỐI CẤM Chương ${n}: "${top ? top.title : `Chương ${n}`}"`;
+}).join('\n')}
+
+QUY ĐỊNH BẤT DI BẤT DỊCH (TUYỆT ĐỐI CẤM VI PHẠM):
+1. TOÀN BỘ 100% CÁC CÂU HỎI TRONG ĐỀ THI BẮT BUỘC CHỈ ĐƯỢC LẤY TỪ NỘI DUNG VÀ DẠNG BÀI CỦA ${selectedChapters8.length} CHUYÊN ĐỀ ĐÃ CHỌN Ở TRÊN.
+2. TUYỆT ĐỐI CẤM RA BẤT KỲ CÂU HỎI NÀO THUỘC ${unselectedChapters8.length} CHUYÊN ĐỀ BỊ CẤM Ở TRÊN!
+   - Không được lấy bất kỳ câu hỏi nào từ các chương bị cấm, dù cùng là SGK Toán lớp 8.
+   ${unselectedChapters8.includes(6) ? '- TUYỆT ĐỐI CẤM câu hỏi về Phân thức đại số (Chương 6).' : ''}
+   ${unselectedChapters8.includes(7) ? '- TUYỆT ĐỐI CẤM câu hỏi về Phương trình bậc nhất một ẩn và Hàm số bậc nhất (Chương 7).' : ''}
+   ${unselectedChapters8.includes(9) ? '- TUYỆT ĐỐI CẤM câu hỏi về Tam giác đồng dạng (Chương 9).' : ''}
+   ${unselectedChapters8.includes(10) ? '- TUYỆT ĐỐI CẤM câu hỏi về Hình chóp tam giác đều / tứ giác đều (Chương 10).' : ''}
+   ${unselectedChapters8.includes(3) ? '- TUYỆT ĐỐI CẤM câu hỏi về Tứ giác (Chương 3).' : ''}
+   ${unselectedChapters8.includes(4) ? '- TUYỆT ĐỐI CẤM câu hỏi về Định lý Thalès (Chương 4).' : ''}
+   ${unselectedChapters8.includes(5) ? '- TUYỆT ĐỐI CẤM câu hỏi về Dữ liệu và biểu đồ (Chương 5).' : ''}
+   ${unselectedChapters8.includes(8) ? '- TUYỆT ĐỐI CẤM câu hỏi về Xác suất của biến cố (Chương 8).' : ''}
+   ${unselectedChapters8.includes(1) ? '- TUYỆT ĐỐI CẤM câu hỏi về Đa thức nhiều biến (Chương 1).' : ''}
+   ${unselectedChapters8.includes(2) ? '- TUYỆT ĐỐI CẤM câu hỏi về Hằng đẳng thức (Chương 2).' : ''}
+3. PHÂN BỔ ĐỀU CÂU HỎI: Phân bổ đều số lượng câu hỏi cho TẤT CẢ các chuyên đề được chọn ở trên.
+4. Trong trường "reference.topic" của mỗi câu hỏi, BẮT BUỘC PHẢI GHI ĐÚNG TÊN của một trong các chuyên đề được chọn ở trên.
+`;
+        } else {
+          prompt += `
+QUY ĐỊNH BẤT DI BẤT DỊCH (TUYỆT ĐỐI CẤM VI PHẠM):
+1. TOÀN BỘ 100% CÁC CÂU HỎI TRONG ĐỀ THI BẮT BUỘC CHỈ ĐƯỢC LẤY TỪ NỘI DUNG VÀ DẠNG BÀI CỦA CÁC CHUYÊN ĐỀ ĐÃ LIỆT KÊ Ở TRÊN.
+2. TUYỆT ĐỐI CẤM RA BẤT KỲ CÂU HỎI NÀO NGOÀI PHẠM VI CÁC CHUYÊN ĐỀ NÀY.
+3. PHÂN BỔ ĐỀU CÂU HỎI cho tất cả các chuyên đề được chọn.
+4. Trong trường "reference.topic" của mỗi câu hỏi, BẮT BUỘC PHẢI GHI ĐÚNG TÊN của một trong các chuyên đề được chọn ở trên.
+`;
+        }
+      } else {
+        prompt += `
+MỌI câu hỏi phải sử dụng đúng kiến thức Toán THCS lớp ${effectiveGrade}:
+${effectiveGrade === 8 ? `* Đại số 8: ${targetTopics.length > 0 ? targetTopics.join(', ') : 'Đa thức nhiều biến, 7 hằng đẳng thức đáng nhớ, Phân tích đa thức thành nhân tử'}...
+* Hình học 8: Tứ giác, Định lý Thalès trong tam giác, Tam giác đồng dạng, Hình chóp tam giác đều và hình chóp tứ giác đều...
+* Thống kê & Xác suất 8: Thu thập và phân loại dữ liệu, Biểu đồ hình quạt tròn, Xác suất thực nghiệm của biến cố...` : ''}
+`;
+      }
 
       // Xử lý tài liệu tham chiếu: Nếu có tệp bổ sung hoặc tài liệu từ Thư viện học liệu
       let supplementalText = "";
@@ -778,26 +1168,43 @@ Hãy tạo một đề kiểm tra / đề thi môn Toán lớp ${grade} với ti
 Giáo viên đã cung cấp tài liệu tham chiếu làm căn cứ biên soạn đề thi này:
 ${supplementalText ? `NỘI DUNG TÀI LIỆU THAM CHIẾU:\n"""\n${supplementalText.slice(0, 25000)}\n"""\n` : `(Xem tệp đính kèm để trích xuất nội dung tham chiếu)`}
 - BẮT BUỘC: Phân tích kỹ tài liệu tham chiếu này, ưu tiên lựa chọn các chủ đề, dạng bài toán, số liệu, bài tập tương tự hoặc các câu hỏi phát triển trực tiếp từ tài liệu này để biên soạn đề thi.
-- Kết hợp hài hòa giữa tài liệu tham chiếu của giáo viên với chuẩn kiến thức SGK môn Toán lớp ${grade}.
-${referenceNotes ? `- Ghi chú bổ sung từ giáo viên: "${referenceNotes}"` : ''}
-`;
-      } else {
-        prompt += `\n\n*** NGUỒN TÀI LIỆU THAM CHIẾU MẶC ĐỊNH CỦA HỆ THỐNG ***:
-Giáo viên không tải lên tài liệu bổ sung riêng, hệ thống tự động chọn mặc định nguồn tham chiếu chuẩn mực:
-1. SÁCH GIÁO KHOA KẾT NỐI TRI THỨC VỚI CUỘC SỐNG môn Toán lớp ${grade} (Nhà xuất bản Giáo dục Việt Nam, theo chuẩn chương trình GDPT 2018).
-2. TÀI LIỆU VÀ NỘI DUNG TRONG CHỦ ĐỀ: "${topicTitle || title}"
-${Array.isArray(topicLessons) && topicLessons.length > 0 ? `   Danh sách các bài học trong chủ đề:\n` + topicLessons.map((l: any, idx: number) => `   - Bài ${idx + 1}: ${typeof l === 'string' ? l : l.title}${typeof l === 'object' && l.knowledge ? ` (Nội dung cốt lõi: ${l.knowledge.replace(/\n+/g, ' ').slice(0, 180)}...)` : ''}`).join('\n') : ''}
-3. CÁC NGUỒN TÀI LIỆU KHÁC: Ngân hàng câu hỏi chuẩn hóa định dạng mới của Bộ Giáo dục & Đào tạo, các đề thi khảo sát chất lượng định kỳ và tài liệu bồi dưỡng học sinh bám sát chuẩn ma trận năng lực toán học.
-- YÊU CẦU: Mọi thuật ngữ, ký hiệu toán học, dạng bài và phương pháp giải phải chuẩn mực tuyệt đối theo SGK Kết nối tri thức với cuộc sống và các bài học trong chủ đề.
-${referenceNotes ? `- Ghi chú của giáo viên: "${referenceNotes}"` : ''}
+- Kết hợp hài hòa giữa tài liệu tham chiếu của giáo viên với chuẩn kiến thức SGK môn Toán lớp ${effectiveGrade}.
 `;
       }
 
-      const formatType = req.body.formatType || autoGenType;
+      if (referenceNotes) {
+        prompt += `\n*** GHI CHÚ VÀ TRỌNG TÂM KIẾN THỨC THEO CHUYÊN ĐỀ TỪ GIÁO VIÊN ***:\n"""\n${referenceNotes}\n"""\n- YÊU CẦU: Soạn câu hỏi bám sát chuẩn kiến thức và dạng bài được nêu trong ghi chú trọng tâm ở trên.\n`;
+      }
+
+      if (Array.isArray(topicLessons) && topicLessons.length > 0) {
+        prompt += `\nDanh sách các bài học tham chiếu trong chuyên đề:\n` + 
+          topicLessons.map((l: any, idx: number) => `   - Bài ${idx + 1}: ${typeof l === 'string' ? l : l.title}${typeof l === 'object' && l.knowledge ? ` (Nội dung: ${l.knowledge.replace(/\n+/g, ' ').slice(0, 180)}...)` : ''}`).join('\n') + `\n`;
+      }
+
+      if (!formatType) {
+        formatType = autoGenType;
+      }
       const matrixConfig = req.body.matrixConfig;
 
       if (autoGenType === 'matrix') {
-        prompt += `\nĐỀ THI ĐƯỢC THIẾT KẾ THEO MA TRẬN ĐỀ THI:`;
+        prompt += `\n======================================================
+ĐỀ THI ĐƯỢC THIẾT KẾ THEO MA TRẬN ĐỀ THI VÀ BẢN ĐẶC TẢ CHI TIẾT:
+*** NGUYÊN TẮC BẮT BUỘC:
+1. TẤT CẢ NỘI DUNG, PHẠM VI KIẾN THỨC VÀ CẤU TRÚC ĐỀ THI ĐỀU PHẢI TUÂN THỦ THEO MA TRẬN VÀ BẢN ĐẶC TẢ ĐÃ CUNG CẤP.
+2. NỘI DUNG KIẾN THỨC THAM CHIẾU ĐƯỢC LẤY MẶC ĐỊNH THEO THƯ VIỆN TÀI LIỆU THAM CHIẾU CHUẨN TOÁN SGK KẾT NỐI TRI THỨC VÀ CÁC BÀI HỌC CỦA KHỐI LỚP ${effectiveGrade}.
+3. TỪNG CÂU HỎI ĐỀ THI PHẢI BÁM SÁT CÁC YÊU CẦU CẦN ĐẠT VÀ MỨC ĐỘ NHẬN THỨC ĐƯỢC QUY ĐỊNH TRONG BẢN ĐẶC TẢ. ***
+`;
+        if (matrixText && typeof matrixText === 'string' && matrixText.trim().length > 10) {
+          prompt += `
+--- NỘI DUNG MA TRẬN ĐỀ THI & BẢN ĐẶC TẢ DO GIÁO VIÊN NHẬP/DÁN TRỰC TIẾP ---
+"""
+${matrixText.trim()}
+"""
+YÊU CẦU ĐỐI VỚI BẢN ĐẶC TẢ TRÊN:
+- Đọc kỹ bảng ma trận và bản đặc tả ở trên để phân bổ chính xác số câu, dạng thức câu hỏi (nhiều lựa chọn, đúng/sai, trả lời ngắn hoặc tự luận) và mức độ nhận thức (Nhận biết, Thông hiểu, Vận dụng, Vận dụng cao).
+- Biên soạn nội dung câu hỏi bám sát đúng từng mạch kiến thức và yêu cầu cần đạt nêu trong bản đặc tả.
+`;
+        }
         if (matrixConfig) {
           prompt += `
 MA TRẬN NĂNG LỰC & MỨC ĐỘ NHẬN THỨC:
@@ -951,16 +1358,153 @@ CẤU TRÚC ĐỀ THI TỔNG HỢP (KẾT HỢP TRẮC NGHIỆM VÀ TỰ LUẬN)
    - "points": ${(3.0 / eCount).toFixed(1)} điểm / bài (tổng 3.0 điểm).
    - "explanation": Hướng dẫn giải chi tiết từng bước và thang điểm biểu điểm.
 `;
+      } else if (autoGenType === 'description') {
+        const p1 = p1Req;
+        const p2 = p2Req;
+        const p3 = p3Req;
+
+        const wantsRatNotes = isRatInScope;
+        const wantsPolyNotes = isPolyInScope && !isRatInScope;
+
+        let effectiveEssayItems = (customEssayEnabled && Array.isArray(customEssayItems) && customEssayItems.length > 0)
+          ? customEssayItems
+          : undefined;
+
+        if (!effectiveEssayItems && referenceNotes) {
+          const parsedEssays: any[] = [];
+          const essayRegex = /(?:^|\n|<li[^>]*>|<p[^>]*>|[•\-\*])[ \t]*(?:Câu|Bài)\s*(\d+)[\s\(\):.]*([^:\n\r<]+)?[:\-.]\s*([^\n\r<]+)/gi;
+          let m;
+          while ((m = essayRegex.exec(referenceNotes)) !== null) {
+            const num = parseInt(m[1], 10);
+            const rawMeta = m[2] || '';
+            let desc = m[3].replace(/<\/?[^>]+(>|$)/g, '').trim();
+            if (!desc || desc.length < 5) continue;
+            if (wantsPolyNotes && !wantsRatNotes) {
+              desc = desc.replace(/đa thức\/phân thức/gi, 'đa thức').replace(/phân thức/gi, 'đa thức');
+            }
+            const ptMatch = (rawMeta + ' ' + desc).match(/(\d+(?:[.,]\d+)?)\s*(?:điểm|đ\b)/i);
+            const points = ptMatch ? parseFloat(ptMatch[1].replace(',', '.')) : 1.0;
+            let level = 'VD';
+            if (/nhận\s*biết|NB\b/i.test(rawMeta + ' ' + desc)) level = 'NB';
+            else if (/thông\s*hiểu|TH\b/i.test(rawMeta + ' ' + desc)) level = 'TH';
+            else if (/vận\s*dụng\s*cao|VDC\b/i.test(rawMeta + ' ' + desc)) level = 'VDC';
+            parsedEssays.push({
+              title: `Bài ${num}${ptMatch ? ` (${points.toFixed(1)} điểm)` : ''}`,
+              topicScope: targetTopics[0] || (wantsPolyNotes ? 'Đa thức nhiều biến & Hằng đẳng thức' : `Toán lớp ${effectiveGrade}`),
+              description: desc,
+              points: points,
+              level: level
+            });
+          }
+          if (parsedEssays.length > 0) {
+            effectiveEssayItems = parsedEssays;
+          }
+        }
+
+        prompt += `
+*** NGUYÊN TẮC BẮT BUỘC BẬC NHẤT: BẢN ĐẶC TẢ & FORM MÔ TẢ YÊU CẦU ĐỀ THI TỪ GIÁO VIÊN ***
+Giáo viên đã cung cấp Bản đặc tả / Form mô tả yêu cầu đề thi (bao gồm cấu trúc, số lượng câu từng phần, phạm vi chuyên đề, mức độ nhận thức, các câu hỏi tự luận cụ thể và barem điểm).
+BẮT BUỘC TUÂN THỦ CHÍNH XÁC 100% CÁC YÊU CẦU TRONG BẢN ĐẶC TẢ NÀY!
+${referenceNotes ? `\nNỘI DUNG FORM MÔ TẢ YÊU CẦU ĐỀ THI CỦA GIÁO VIÊN:\n"""\n${referenceNotes}\n"""\n` : ''}
+
+QUY ĐỊNH BẮT BUỘC VỀ NỘI DUNG VÀ DẠNG BÀI:
+1. PHẠM VI NỘI DUNG KIẾN THỨC: Toàn bộ câu hỏi trong đề thi BẮT BUỘC 100% chỉ được lấy trong các chuyên đề và nội dung sau:
+   - Các chuyên đề trọng tâm: ${targetTopics.length > 0 ? targetTopics.map(t => `"${t}"`).join(', ') : `Chương trình SGK Toán lớp ${effectiveGrade}`}
+   ${formKnowledgeFocus ? `- Nội dung trọng tâm cần kiểm tra: "${formKnowledgeFocus}"` : ''}
+2. TUYỆT ĐỐI KHÔNG ĐƯỢC ra câu hỏi ngoài phạm vi kiến thức mà giáo viên đã mô tả!
+3. NỘI DUNG TỪNG CÂU TỰ LUẬN: Bắt buộc ra đúng 100% dạng bài và yêu cầu đã được mô tả chi tiết cho từng câu tự luận dưới đây!
+
+`;
+        if (isPureEssayMode) {
+          prompt += `
+CẤU TRÚC ĐỀ THI BẮT BUỘC THEO FORM MÔ TẢ (100% TỰ LUẬN):
+Đề thi này là đề thi TỰ LUẬN HOÀN TOÀN ("type": "essay").
+TUYỆT ĐỐI CẤM KHÔNG ĐƯỢC SINH RA BẤT KỲ CÂU HỎI TRẮC NGHIỆM NÀO:
+- TUYỆT ĐỐI CẤM sinh ra câu hỏi trắc nghiệm Đúng/Sai ("type": "tf").
+- TUYỆT ĐỐI CẤM sinh ra câu hỏi trắc nghiệm 4 lựa chọn ("type": "mcq").
+- TUYỆT ĐỐI CẤM sinh ra câu hỏi trả lời ngắn ("type": "short").
+TẤT CẢ các câu hỏi trong đề thi BẮT BUỘC 100% phải có "type": "essay", "options": [], với lời giải chi tiết và barem điểm từng bước!
+`;
+        } else {
+          prompt += `
+CẤU TRÚC ĐỀ THI BẮT BUỘC THEO FORM MÔ TẢ:
+${!enableP2 ? '*** LƯU Ý BẮT BUỘC: Form mô tả KHÔNG YÊU CẦU Phần II (Đúng/Sai). TUYỆT ĐỐI CẤM sinh ra câu hỏi Đúng/Sai ("type": "tf")! ***\n' : ''}
+${!enableP3 ? '*** LƯU Ý BẮT BUỘC: Form mô tả KHÔNG YÊU CẦU Phần III (Trả lời ngắn). TUYỆT ĐỐI CẤM sinh ra câu hỏi Trả lời ngắn ("type": "short")! ***\n' : ''}
+A. PHẦN TRẮC NGHIỆM:
+`;
+          if (enableP1) {
+            prompt += `1. PHẦN I: TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN
+- Số lượng: Đúng chính xác ${p1} câu.
+- "type": "mcq"
+- 4 phương án A, B, C, D trong "options", 1 đáp án đúng ("correctAnswer": "A"/"B"/"C"/"D").
+- Điểm: 0.25đ/câu.
+`;
+          }
+          if (enableP2) {
+            prompt += `2. PHẦN II: TRẮC NGHIỆM ĐÚNG/SAI
+- Số lượng: Đúng chính xác ${p2} câu.
+- "type": "tf"
+- Mỗi câu gồm 4 ý a, b, c, d trong "options".
+- "correctAnswer": "a-Đ, b-S, c-Đ, d-S".
+- Điểm: 1.0đ/câu.
+`;
+          }
+          if (enableP3) {
+            prompt += `3. PHẦN III: TRẮC NGHIỆM TRẢ LỜI NGẮN
+- Số lượng: Đúng chính xác ${p3} câu.
+- "type": "short"
+- Điền đáp số số học hoặc biểu thức rút gọn ("options": []).
+- Điểm: 0.5đ/câu.
+`;
+          }
+        }
+
+        if (effectiveEssayItems && effectiveEssayItems.length > 0) {
+          prompt += `
+B. PHẦN TỰ LUẬN - MÔ TẢ CẤU TRÚC VÀ PHẠM VI KIẾN THỨC VỚI TỪNG CÂU TỰ LUẬN (BẮT BUỘC TUÂN THỦ 100%):
+Hãy tạo đúng ${effectiveEssayItems.length} bài toán tự luận ("type": "essay") theo đúng từng yêu cầu dưới đây:
+`;
+          effectiveEssayItems.forEach((item: any, idx: number) => {
+            prompt += `
+--- BÀI TỰ LUẬN ${idx + 1} (${item.points || 1.0} điểm) ---
+- Tên bài / Dạng bài: ${item.title || `Bài toán tự luận ${idx + 1}`}
+- Phạm vi kiến thức bắt buộc: ${item.topicScope || 'Kiến thức theo form mô tả'}
+- Mô tả cấu trúc & yêu cầu chi tiết: ${item.description || 'Bài toán tự luận có lời giải chi tiết và barem điểm từng ý'}
+- Mức độ nhận thức: ${item.level || 'Thông hiểu / Vận dụng'}
+- Yêu cầu: "type": "essay", "points": ${Number(item.points) || 1.0}, "options": [], "explanation": lời giải chi tiết từng bước và barem điểm chấm cho từng ý.
+`;
+          });
+        } else if (essayCount && parseInt(essayCount, 10) > 0) {
+          const eCount = parseInt(essayCount, 10);
+          prompt += `
+B. PHẦN TỰ LUẬN (${eCount} bài toán tự luận):
+- Hãy tạo đúng ${eCount} bài toán tự luận ("type": "essay") bám sát tuyệt đối nội dung mô tả phần tự luận trong form mô tả của giáo viên ở trên.
+- Có lời giải chi tiết từng bước và barem điểm chuẩn xác.
+`;
+        }
       }
 
-      prompt += `\nCRITICAL REQUIREMENT - CẤU TRÚC VÀ QUY CHUẨN ĐẦU RA BẮT BUỘC:
-*** YÊU CẦU BẮT BUỘC VỀ SỐ LƯỢNG VÀ ĐẦY ĐỦ 100% CÁC PHẦN (TUYỆT ĐỐI KHÔNG ĐƯỢC THIẾU CÂU HOẶC THIẾU PHẦN) ***
-1. BẮT BUỘC PHẢI TẠO ĐỦ 100% TẤT CẢ CÁC PHẦN ĐÃ YÊU CẦU Ở TRÊN. Tuyệt đối không được bỏ dở hay dừng giữa chừng.
-   - Nếu là đề trắc nghiệm 3 phần (hoặc đề tùy biến), mảng JSON PHẢI CHỨA ĐẦY ĐỦ TỪNG PHẦN THEO THỨ TỰ:
-     * Toàn bộ câu của PHẦN I ("type": "mcq", đủ 4 options A, B, C, D)
-     * Toàn bộ câu của PHẦN II ("type": "tf", đủ 4 ý a, b, c, d)
-     * Toàn bộ câu của PHẦN III ("type": "short", điền đáp số số học/ngắn)
-   - TUYỆT ĐỐI KHÔNG ĐƯỢC chỉ sinh Phần I mà bỏ quên Phần II hoặc Phần III!
+      if (isPureEssayMode) {
+        prompt += `\nCRITICAL REQUIREMENT - CẤU TRÚC VÀ QUY CHUẨN ĐẦU RA BẮT BUỘC (100% TỰ LUẬN):
+*** YÊU CẦU BẮT BUỘC: ĐÂY LÀ ĐỀ THI TỰ LUẬN TOÀN BỘ ("type": "essay") ***
+1. TẤT CẢ các câu hỏi trong mảng JSON BẮT BUỘC 100% PHẢI LÀ CÂU HỎI TỰ LUẬN ("type": "essay", "options": []).
+2. TUYỆT ĐỐI CẤM sinh ra câu hỏi trắc nghiệm Đúng/Sai ("type": "tf")!
+3. TUYỆT ĐỐI CẤM sinh ra câu hỏi trắc nghiệm 4 lựa chọn ("type": "mcq")!
+4. TUYỆT ĐỐI CẤM sinh ra câu hỏi trả lời ngắn ("type": "short")!
+5. Mỗi bài toán tự luận có đề bài rõ ràng, mạch lạc, kèm lời giải chi tiết từng bước ("explanation") và barem chấm điểm từng ý.
+`;
+      } else {
+        prompt += `\nCRITICAL REQUIREMENT - CẤU TRÚC VÀ QUY CHUẨN ĐẦU RA BẮT BUỘC:
+*** YÊU CẦU BẮT BUỘC VỀ SỐ LƯỢNG VÀ ĐẦY ĐỦ 100% CÁC PHẦN ĐÃ YÊU CẦU Ở TRÊN ***
+1. BẮT BUỘC PHẢI TẠO ĐỦ 100% TẤT CẢ CÁC PHẦN ĐÃ YÊU CẦU Ở TRÊN:
+${enableP1 ? `   - PHẦN I: Trắc nghiệm 4 lựa chọn ("type": "mcq", đủ 4 options A, B, C, D)\n` : ''}
+${enableP2 ? `   - PHẦN II: Trắc nghiệm Đúng/Sai ("type": "tf", đủ 4 ý a, b, c, d)\n` : `   - TUYỆT ĐỐI CẤM Phần II Đúng/Sai ("type": "tf") vì không được yêu cầu trong cấu trúc đề!\n`}
+${enableP3 ? `   - PHẦN III: Trả lời ngắn ("type": "short", điền đáp số)\n` : `   - TUYỆT ĐỐI CẤM Phần III Trả lời ngắn ("type": "short") vì không được yêu cầu!\n`}
+${(customEssayItems?.length || essayCount) ? `   - PHẦN TỰ LUẬN: Các bài toán tự luận ("type": "essay", "options": [], lời giải chi tiết và barem điểm)\n` : ''}
+`;
+      }
+
+      prompt += `
 2. Để đảm bảo mô hình tạo trọn vẹn toàn bộ các câu hỏi mà không bị ngắt quãng dung lượng:
    - "explanation": Viết lời giải chi tiết chuẩn xác nhưng súc tích, đi thẳng vào các bước giải cốt lõi, công thức và đáp số. Tránh diễn giải lan man dài dòng.
    - "reference": Viết tóm tắt ngắn gọn 1-2 dòng cho mỗi trường.
@@ -979,52 +1523,28 @@ For each question, output an object in a JSON array with the following fields:
    - Tuyệt đối không để xảy ra việc lời giải chi tiết giải ra một kết quả (ví dụ: "Như vậy có đúng 4 nghiệm", "Vậy có 12 giá trị nguyên", "Chọn C") nhưng "correctAnswer" lại ghi số khác (ví dụ: "3" hoặc "8" hoặc "A").
    - Khi giải bài toán, hãy kiểm tra kỹ số nghiệm trên khoảng/đoạn cho trước (chú ý xét đủ các đầu mút như 0 và 2π). Kết quả ở câu kết luận của "explanation" phải được điền chính xác vào "correctAnswer".
 
-*** NGUYÊN TẮC BẮT BUỘC VỀ HÌNH VẼ & BẢNG BIỂU MINH HỌA (QUAN TRỌNG NHẤT) ***
+*** NGUYÊN TẮC BẮT BUỘC VỀ HÌNH VẼ & BẢNG BIỂU MINH HỌA ***
 1. CHỈ CÂU HỎI NÀO TRONG ĐỀ BÀI CÓ CHO BẢNG HOẶC CHO HÌNH VẼ TRONG GIẢ THIẾT thì mới cung cấp hình vẽ hoặc bảng biểu minh họa ("figureType": "svg" hoặc "table"):
    - Ví dụ các câu CẦN hình/bảng:
-     * "Cho hàm số $y=f(x)$ có bảng biến thiên như hình sau..." -> Cần bảng biến thiên ("figureType": "table")
-     * "Đường cong trong hình vẽ bên là đồ thị của hàm số nào dưới đây?" -> Cần đồ thị Oxy vector SVG ("figureType": "svg")
-     * "Cho bảng tần số ghép nhóm sau..." -> Cần bảng dữ liệu ("figureType": "table")
-     * "Cho hình chóp / hình lăng trụ ... có các kích thước như hình vẽ bên..." -> Cần hình vẽ vector SVG ("figureType": "svg")
-2. CÂU HỎI NÀO KHÔNG CHO DỮ LIỆU BẢNG HOẶC HÌNH VẼ TRONG ĐỀ BÀI (tức là đề bài thuần câu chữ, công thức, học sinh phải tự nháp, tự tư duy vẽ hình hoặc tính toán) THÌ TUYỆT ĐỐI KHÔNG ĐƯỢC VẼ SẴN:
-   - Ví dụ các câu KHÔNG ĐƯỢC VẼ SẴN:
-     * "Cho hình chóp $S.ABCD$ có đáy $ABCD$ là hình bình hành, $SA \perp (ABCD)$... Tính khoảng cách..." -> Đây là bài tập học sinh tự vẽ hình, đề bài KHÔNG nói "như hình vẽ bên" -> BẮT BUỘC đặt: "figureType": "none", "figureSvg": "", "figureTable": "", "figureDescription": "".
-     * Các bài tìm cực trị, tính nguyên hàm, tích phân, giải phương trình, phương trình mặt phẳng trong không gian Oxyz, xác suất... mà đề bài không đề cập hình vẽ/bảng -> BẮT BUỘC đặt: "figureType": "none".
+     * "Cho bảng số liệu sau..." -> Cần bảng dữ liệu ("figureType": "table")
+     * "Hình vẽ bên dưới mô tả hình hình học..." -> Cần hình vẽ vector SVG ("figureType": "svg")
+2. CÂU HỎI NÀO KHÔNG CHO DỮ LIỆU BẢNG HOẶC HÌNH VẼ TRONG ĐỀ BÀI (tức là đề bài thuần câu chữ, công thức, học sinh phải tự nháp, tự tư duy tính toán) THÌ TUYỆT ĐỐI KHÔNG ĐƯỢC VẼ SẴN:
+   - Đặt: "figureType": "none", "figureSvg": "", "figureTable": "", "figureDescription": "".
 
 Cấu hình trường hình vẽ / bảng:
-- "figureType": "none" (mặc định nếu đề không cho hình/bảng), "svg" (nếu đề bài cho đồ thị hoặc hình vẽ), "table" (nếu đề bài cho bảng biến thiên hoặc bảng số liệu)
-- "figureSvg": (Chỉ khi figureType === "svg") Chuỗi mã SVG vector hoàn chỉnh, hợp lệ, tự chứa, viewBox="0 0 380 260", nét vẽ rõ ràng (#0f172a, stroke-width="2"), nét khuất đứt đoạn (stroke-dasharray="5,4"), nhãn chữ cái (A, B, C, S, O, x, y...) bằng thẻ <text> THUẦN TÚY (TUYỆT ĐỐI KHÔNG DÙNG DẤU $ TRONG THẺ <text> CỦA SVG, TUYỆT ĐỐI KHÔNG BỌC SVG TRONG THẺ HTML NHƯ <div>).
-  *** QUY TẮC BẮT BUỘC ĐỂ ĐỒ THỊ OXY CHUẨN XÁC 100% VỀ TỌA ĐỘ VÀ ĐIỂM (KHÔNG ĐƯỢC LỆCH VỊ TRÍ): ***
-  1. ĐỌC KỸ TỌA ĐỘ TỪ HÌNH GỐC / ĐỀ BÀI: Tọa độ điểm cực đại, cực tiểu, đỉnh Parabol, giao điểm Oy (0, y0), giao điểm Ox (x0, 0), tiệm cận đứng, tiệm cận ngang.
-  2. CÔNG THỨC QUY ĐỔI SANG PIXEL SVG (BẮT BUỘC TUÂN THỦ ĐỂ TRỤC Y KHÔNG BỊ NGƯỢC VÀ ĐIỂM KHÔNG BỊ LỆCH):
-     - Gốc tọa độ O:
-       * Nếu đồ thị nằm chủ yếu phía trên trục Ox (ví dụ Parabol đỉnh y = 4, giao điểm Oy tại y = 3, giao điểm Ox tại x = -1 và x = 3): Đặt gốc O tại (X_O = 180, Y_O = 190), scale S = 30px (khi đó y = 3 -> Y = 100, đỉnh (1; 4) -> (210, 70), x = -1 -> (150, 190), x = 3 -> (270, 190) nằm trọn vẹn và đẹp mắt).
-       * Nếu đồ thị cân xứng 2 phía (bậc 3, trùng phương): Đặt gốc O tại (X_O = 190, Y_O = 130), scale S = 30px hoặc 35px.
-     - Tọa độ toán học (x, y) chuyển sang pixel SVG:
-       * X = X_O + (x * S)
-       * Y = Y_O - (y * S)  <-- Chú ý dấu TRỪ: y dương thì Y nhỏ hơn Y_O (ở phía trên trục Ox), y âm thì Y lớn hơn Y_O (ở phía dưới trục Ox).
-  3. ĐỒNG BỘ 100% GIỮA ĐIỂM, ĐƯỜNG GIÓNG VÀ NHÃN TRỤC:
-     - Giao điểm Oy tại y=y0: <circle cx="X_O" cy="Y_O - y0*S" r="3.5" fill="#2563eb" /> và ghi số tại <text x="X_O - 7" y="Y_O - y0*S + 4" text-anchor="end" font-size="12" fill="#334155">\${y0}</text>
-     - Giao điểm Ox tại x=x0: <circle cx="X_O + x0*S" cy="Y_O" r="3.5" fill="#2563eb" /> và ghi số tại <text x="X_O + x0*S" y="Y_O + 14" text-anchor="middle" font-size="12" fill="#334155">\${x0}</text>
-     - Đỉnh/Cực trị (x_v, y_v): <circle cx="X_O + x_v*S" cy="Y_O - y_v*S" r="3.5" fill="#2563eb" />, đường gióng dọc <line x1="X_O + x_v*S" y1="Y_O - y_v*S" x2="X_O + x_v*S" y2="Y_O" stroke="#64748b" stroke-dasharray="3,3" /> và gióng ngang <line x1="X_O + x_v*S" y1="Y_O - y_v*S" x2="X_O" y2="Y_O - y_v*S" stroke="#64748b" stroke-dasharray="3,3" />
-  4. ĐƯỜNG CONG ĐỒ THỊ (<path>): BẮT BUỘC ĐI XUYÊN QUA ĐÚNG TÂM CÁC ĐIỂM CIRCLE (X, Y) NÀY, không được lệch dù chỉ 1 pixel. Tại cực trị, tiếp tuyến phải nằm ngang (tiếp xúc đỉnh).
-- "figureTable": (Chỉ khi figureType === "table") Bảng Markdown thể hiện Bảng biến thiên hàm số hoặc Bảng tần số ghép nhóm.
-  * Với BẢNG BIẾN THIÊN:
-    - Hàng 1 là $x$, Hàng 2 là $y'$ hoặc $f'(x)$, Hàng 3 là $y$ hoặc $f(x)$.
-    - MỌI ký hiệu toán học trong bảng (như $-\\infty$, $+\\infty$, $\\nearrow$, $\\searrow$, $+$, $-$, $0$) BẮT BUỘC PHẢI BỌC TRONG DẤU $ (ví dụ: "$-\\infty$", "$+\\infty$", "$\\nearrow$", "$\\searrow$", "$+$", "$-$", "$0$").
-    - Nếu hàm số không xác định / tiệm cận đứng tại điểm nào thì dùng "$||$" để thể hiện 2 gạch không xác định.
-    - Tuyệt đối KHÔNG viết '\\nearrow' thô mà không bọc trong $.
-  * Với BẢNG SỐ LIỆU / TẦN SỐ GHÉP NHÓM: Dòng tiêu đề và các ô có công thức hoặc khoảng giá trị toán học bọc trong dấu $.
-- "figureDescription": Chú thích ngắn gọn (Ví dụ: "Đồ thị hàm số $y=f(x)$", "Bảng biến thiên của hàm số $y=f(x)$").
+- "figureType": "none" (mặc định nếu đề không cho hình/bảng), "svg" (nếu đề bài cho hình học/đồ thị), "table" (nếu đề bài cho bảng số liệu)
+- "figureSvg": (Chỉ khi figureType === "svg") Chuỗi mã SVG vector hoàn chỉnh, hợp lệ, tự chứa, viewBox="0 0 380 260", nét vẽ rõ ràng (#0f172a, stroke-width="2"), nét khuất đứt đoạn (stroke-dasharray="5,4"), nhãn chữ cái (A, B, C, D, x, y...) bằng thẻ <text> THUẦN TÚY (TUYỆT ĐỐI KHÔNG DÙNG DẤU $ TRONG THẺ <text> CỦA SVG, TUYỆT ĐỐI KHÔNG BỌC SVG TRONG THẺ HTML NHƯ <div>).
+- "figureTable": (Chỉ khi figureType === "table") Bảng Markdown thể hiện bảng số liệu. Mọi ký hiệu toán học bọc trong dấu $.
+- "figureDescription": Chú thích ngắn gọn (Ví dụ: "Hình vẽ minh họa", "Bảng số liệu thống kê").
 
 *** BẮT BUỘC VỀ NỘI DUNG THAM CHIẾU ĐỂ GIÁO VIÊN SỬA ĐỀ (PEDAGOGICAL REFERENCE) ***
 Mỗi câu hỏi PHẢI CÓ trường "reference" là một object chứa thông tin tham chiếu chuẩn chương trình GDPT giúp giáo viên hiểu rõ và sửa đề dễ dàng:
 - "reference": {
-    "topic": "Chủ đề kiến thức tham chiếu (Ví dụ: Ứng dụng đạo hàm để khảo sát hàm số)",
-    "curriculumLesson": "Bài học SGK tham chiếu (Ví dụ: SGK Toán 12 - Chương 1: Bài 1 - Tính đơn điệu của hàm số)",
+    "topic": "Chủ đề kiến thức tham chiếu (Bắt buộc ghi chính xác 1 trong các chuyên đề đã chọn: ${targetTopics.length > 0 ? targetTopics.map(t => `"${t}"`).join(', ') : `"Toán lớp ${effectiveGrade}"`})",
+    "curriculumLesson": "Bài học SGK Toán lớp ${effectiveGrade} - Kết nối tri thức",
     "cognitiveLevel": "Nhận biết" | "Thông hiểu" | "Vận dụng" | "Vận dụng cao",
     "competency": "Năng lực toán học mục tiêu (Tư duy và lập luận toán học / Giải quyết vấn đề toán học)",
-    "coreKnowledge": "Công thức cốt lõi, định lý trọng tâm",
+    "coreKnowledge": "Công thức cốt lõi, định lý trọng tâm theo đúng chuyên đề đã chọn",
     "variationGuide": "Hướng dẫn ngắn gọn cho giáo viên cách đổi số liệu tương đương"
   }
 
@@ -1053,6 +1573,16 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
       }
 
       if (autoGenType === 'matrix' && matrixFileDataUrl) {
+        try {
+          const extractedDoc = await extractTextFromAttachment(matrixFileDataUrl, "matrix_file", mimeType);
+          if (extractedDoc && extractedDoc.text && extractedDoc.text.trim().length > 15) {
+            userParts.push({
+              text: `NỘI DUNG MA TRẬN & BẢN ĐẶC TẢ TRÍCH XUẤT TỪ TỆP ĐÍNH KÈM:\n"""\n${repairVietnameseDocument(convertTcvn3ToUnicode(extractedDoc.text))}\n"""\nBiên soạn đề thi bám sát 100% theo bản đặc tả này.`
+            });
+          }
+        } catch (e) {
+          console.warn("Could not extract text from matrix attachment", e);
+        }
         const base64Data = matrixFileDataUrl.split(',')[1];
         if (base64Data) {
           userParts.push({
@@ -1085,7 +1615,18 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
       let sanitized = sanitizeQuestionFigures(parsed);
       let reconciled = reconcileAnswersWithExplanations(sanitized);
 
-      const cleaned = (reconciled || []).map((q: any) => ({
+      const scoped = enforceTopicAndGradeScope(
+        reconciled,
+        effectiveGrade,
+        targetTopics,
+        () => generateCurriculumFallbackQuestions({
+          ...req.body,
+          grade: effectiveGrade,
+          selectedTopicTitles: targetTopics
+        })
+      );
+
+      const cleaned = (scoped || []).map((q: any) => ({
         ...q,
         question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
         options: Array.isArray(q.options)
@@ -1094,20 +1635,166 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
         explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
         correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
       }));
-      res.json(cleaned);
+
+      // BẢO VỆ CHẶT CHẼ ĐỊNH DẠNG (TYPE-GUARD):
+      const typeGuarded = cleaned.map((q: any) => {
+        if (isPureEssayMode) {
+          return {
+            ...q,
+            type: 'essay',
+            options: [],
+            points: q.points || 2.0
+          };
+        }
+        // Nếu Phần II (Đúng/Sai) không được bật trong cấu trúc đề, TUYỆT ĐỐI không để câu hỏi nào có type 'tf'
+        if (!enableP2 && q.type === 'tf') {
+          return {
+            ...q,
+            type: 'essay',
+            options: [],
+            points: q.points || 1.0
+          };
+        }
+        // Nếu Phần III không được bật
+        if (!enableP3 && q.type === 'short') {
+          return {
+            ...q,
+            type: 'essay',
+            options: [],
+            points: q.points || 1.0
+          };
+        }
+        return q;
+      });
+
+      const standardPolyEssayBank = [
+        {
+          question: "Cho hai đa thức: $A = 3x^2y - 2xy + 5x - 1$ và $B = -2x^2y + 4xy - 5x + 7$.\na) Tính tổng $C = A + B$.\nb) Tính giá trị của đa thức $C$ tại $x = 1, y = 2$.",
+          options: [],
+          type: "essay",
+          points: 2.5,
+          explanation: "a) $C = A + B = (3x^2y - 2xy + 5x - 1) + (-2x^2y + 4xy - 5x + 7) = (3 - 2)x^2y + (-2 + 4)xy + (5 - 5)x + (-1 + 7) = x^2y + 2xy + 6$.\nb) Thay $x = 1, y = 2$ vào $C$: $C = (1)^2(2) + 2(1)(2) + 6 = 2 + 4 + 6 = 12$.\nKết luận: $C = 12$.",
+          correctAnswer: "a) C = x^2y + 2xy + 6; b) C = 12",
+          reference: {
+            topic: "Chương 1: Đa thức nhiều biến và các phép toán",
+            curriculumLesson: "Toán 8 - Cộng trừ đa thức nhiều biến",
+            cognitiveLevel: "Thông hiểu",
+            competency: "Tư duy và lập luận toán học",
+            coreKnowledge: "Cộng trừ đơn thức đồng dạng",
+            variationGuide: "Đổi hệ số của đa thức"
+          }
+        },
+        {
+          question: "Thực hiện phép tính:\na) $2x^2(3x^3 - 5x + 1)$\nb) $(2x - 3)(x^2 + 4x - 5)$",
+          options: [],
+          type: "essay",
+          points: 2.5,
+          explanation: "a) $2x^2(3x^3 - 5x + 1) = 6x^5 - 10x^3 + 2x^2$.\nb) $(2x - 3)(x^2 + 4x - 5) = 2x(x^2 + 4x - 5) - 3(x^2 + 4x - 5) = 2x^3 + 8x^2 - 10x - 3x^2 - 12x + 15 = 2x^3 + 5x^2 - 22x + 15$.",
+          correctAnswer: "a) 6x^5 - 10x^3 + 2x^2; b) 2x^3 + 5x^2 - 22x + 15",
+          reference: {
+            topic: "Chương 1: Đa thức nhiều biến và các phép toán",
+            curriculumLesson: "Toán 8 - Nhân đa thức với đa thức",
+            cognitiveLevel: "Thông hiểu",
+            competency: "Giải quyết vấn đề toán học",
+            coreKnowledge: "Quy tắc nhân đơn thức với đa thức, nhân đa thức với đa thức",
+            variationGuide: "Đổi dấu và bậc của biến"
+          }
+        },
+        {
+          question: "Phân tích các đa thức sau thành nhân tử:\na) $5x^2y - 10xy^2$\nb) $x^2 - 6x + 9 - y^2$",
+          options: [],
+          type: "essay",
+          points: 2.5,
+          explanation: "a) Đặt nhân tử chung $5xy$: $5x^2y - 10xy^2 = 5xy(x - 2y)$.\nb) Nhóm 3 hạng tử đầu thành hằng đẳng thức: $(x^2 - 6x + 9) - y^2 = (x - 3)^2 - y^2 = (x - 3 - y)(x - 3 + y)$.",
+          correctAnswer: "a) 5xy(x - 2y); b) (x - y - 3)(x + y - 3)",
+          reference: {
+            topic: "Chương 2: Hằng đẳng thức đáng nhớ & Phân tích đa thức thành nhân tử",
+            curriculumLesson: "Toán 8 - Phân tích đa thức thành nhân tử bằng phương pháp phối hợp",
+            cognitiveLevel: "Vận dụng",
+            competency: "Tư duy và lập luận toán học",
+            coreKnowledge: "Phương pháp đặt nhân tử chung và dùng hằng đẳng thức",
+            variationGuide: "Đổi số 6 và 9 thành 8 và 16"
+          }
+        },
+        {
+          question: "Chứng minh rằng giá trị của biểu thức sau không phụ thuộc vào giá trị của biến $x$:\n$M = (x - 3)(x + 3) - x(x - 4) - 4x + 10$.",
+          options: [],
+          type: "essay",
+          points: 2.5,
+          explanation: "Khai triển biểu thức:\n$(x - 3)(x + 3) = x^2 - 9$.\n$x(x - 4) = x^2 - 4x$.\nDo đó:\n$M = (x^2 - 9) - (x^2 - 4x) - 4x + 10 = x^2 - 9 - x^2 + 4x - 4x + 10 = (-9 + 10) = 1$.\nVì $M = 1$ với mọi số thực $x$, nên giá trị của biểu thức không phụ thuộc vào giá trị của biến $x$.",
+          correctAnswer: "M = 1 (không phụ thuộc vào x)",
+          reference: {
+            topic: "Chương 2: Hằng đẳng thức đáng nhớ",
+            curriculumLesson: "Toán 8 - Hiệu hai bình phương",
+            cognitiveLevel: "Vận dụng",
+            competency: "Tư duy và lập luận toán học",
+            coreKnowledge: "(A - B)(A + B) = A^2 - B^2",
+            variationGuide: "Đổi hằng số 3 thành 5"
+          }
+        }
+      ];
+
+      const finalCleaned = typeGuarded.map((q: any, idx: number) => {
+        if (isPolyInScope && !isRatInScope) {
+          const qText = `${q.question || ''} ${q.explanation || ''} ${(q.options || []).join(' ')}`;
+          if (/\b(phân thức|mẫu thức|quy đồng mẫu|rút gọn phân thức|điều kiện xác định của phân thức)\b/i.test(qText) ||
+              /\\frac\{[^\}]+\}\{[^0-9\\\}\s]*[a-zA-Z][^\}]*\}/.test(qText) ||
+              /(?:\/|\:\s*)\([a-zA-Z\d\s\+\-\*]*[a-zA-Z][a-zA-Z\d\s\+\-\*]*\)/.test(qText)) {
+            const fallbackFb = generateCurriculumFallbackQuestions({
+              ...req.body,
+              grade: effectiveGrade,
+              selectedTopicTitles: targetTopics
+            });
+            const purePoly = fallbackFb.find((fb: any) => fb.type === (isPureEssayMode ? 'essay' : q.type) && !/\b(phân thức|mẫu thức)\b/i.test(`${fb.question} ${fb.explanation}`)) ||
+              standardPolyEssayBank[idx % standardPolyEssayBank.length];
+            if (purePoly) {
+              return {
+                ...purePoly,
+                id: q.id || `q_${idx + 1}`,
+                type: isPureEssayMode ? 'essay' : purePoly.type,
+                options: isPureEssayMode ? [] : (purePoly.options || []),
+                points: q.points || purePoly.points
+              };
+            }
+          }
+        }
+        return q;
+      });
+
+      res.json(finalCleaned);
     } catch (error: any) {
       console.warn("AI generation failed or rate limited, gracefully returning curriculum standard questions:", error?.message || error);
       try {
-        const fallbackQuestions = generateCurriculumFallbackQuestions(req.body);
-        const cleaned = (fallbackQuestions || []).map((q: any) => ({
-          ...q,
-          question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
-          options: Array.isArray(q.options)
-            ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || '')))
-            : [],
-          explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
-          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
-        }));
+        const fbGrade = Number(req.body.grade) || (() => {
+          const t = `${req.body.title || ''} ${req.body.referenceNotes || ''} ${req.body.topicTitle || ''}`;
+          const m = t.match(/(?:lớp|khối|toán)\s*([6-9]|1[0-2])\b/i);
+          return m ? parseInt(m[1], 10) : 8;
+        })();
+        const fallbackQuestions = generateCurriculumFallbackQuestions({ 
+          ...req.body, 
+          grade: fbGrade,
+          selectedTopicTitles: targetTopics 
+        });
+
+        const cleaned = (fallbackQuestions || []).map((q: any) => {
+          let item = {
+            ...q,
+            question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+            options: Array.isArray(q.options)
+              ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || '')))
+              : [],
+            explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+            correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+          };
+          if (isPureEssayMode) {
+            item.type = 'essay';
+            item.options = [];
+          } else if (!enableP2 && item.type === 'tf') {
+            item.type = 'essay';
+            item.options = [];
+          }
+          return item;
+        });
         return res.json(cleaned);
       } catch (fbErr: any) {
         console.error("Critical fallback error:", fbErr);
@@ -1386,6 +2073,7 @@ TRẢ VỀ DUY NHẤT MỘT JSON OBJECT HỢP LỆ:
               const detectedTitle = parsed?.title || autoDetectLessonTitle(formatted, title, fileName);
               return res.json({
                 title: detectedTitle,
+                text: formatted,
                 content: formatted,
                 knowledge: formatted,
                 pages: [],
@@ -1445,6 +2133,7 @@ TRẢ VỀ DUY NHẤT MỘT JSON:
       const detectedTitle = autoDetectLessonTitle(formattedText, title, fileName);
       return res.json({
         title: detectedTitle,
+        text: formattedText,
         content: formattedText,
         knowledge: formattedText,
         pages: extracted.pages,
@@ -1460,6 +2149,193 @@ TRẢ VỀ DUY NHẤT MỘT JSON:
 
   app.post("/api/extract-document", express.json({ limit: '50mb' }), handleDocumentExtraction);
   app.post("/api/extract-document-fast", express.json({ limit: '50mb' }), handleDocumentExtraction);
+
+  // Helper: Extract complete test metadata (title, grade, subject, duration, school year, format) from text
+  function extractTestMetadataFromText(
+    rawText: string, 
+    fileName?: string, 
+    questions: any[] = []
+  ): {
+    title: string;
+    grade: number;
+    subject: string;
+    durationMinutes: number;
+    schoolYear: string;
+    schoolOrOrg: string;
+    examFormat: 'mcq_3part' | 'mcq_custom' | 'essay' | 'mixed';
+    suggestedTopic?: string;
+  } {
+    const text = (rawText || '').trim();
+    const cleanDoc = repairVietnameseDocument(convertTcvn3ToUnicode(text));
+    const lines = cleanDoc.split('\n').map(l => l.trim()).filter(Boolean);
+    const headerLines = lines.slice(0, 30);
+    const headerText = headerLines.join('\n');
+
+    // 1. Tên đề thi (title)
+    let detectedTitle = '';
+    for (const line of headerLines) {
+      if (/^(?:ĐỀ\s+(?:KIỂM\s+TRA|THI|KHẢO\s+SÁT|ÔN\s+TẬP)|BÀI\s+KIỂM\s+TRA|KỲ\s+THI|ĐỀ\s+CHÍNH\s+THỨC|ĐỀ\s+THAM\s+KHẢO)/i.test(line)) {
+        let t = line.replace(/\s*\(?(?:Đề\s+thi\s+có\s+\d+\s+trang|Mã\s+đề\s+thi\s*:\s*\w+)\)?/i, '').trim();
+        if (t.length > 5) {
+          detectedTitle = t;
+          break;
+        }
+      }
+    }
+
+    if (!detectedTitle) {
+      for (const line of headerLines) {
+        if (/(?:ĐỀ\s+KIỂM\s+TRA|ĐỀ\s+THI\s+THỬ|ĐỀ\s+THI\s+TỐT\s+NGHIỆP|ĐỀ\s+KHẢO\s+SÁT)/i.test(line)) {
+          detectedTitle = line.trim();
+          break;
+        }
+      }
+    }
+
+    if (!detectedTitle && fileName) {
+      let clean = fileName.replace(/\.[^/.]+$/, "");
+      clean = clean.replace(/[-_]+/g, ' ');
+      detectedTitle = repairVietnameseDocument(convertTcvn3ToUnicode(clean));
+    }
+
+    if (!detectedTitle) {
+      detectedTitle = 'Đề kiểm tra môn Toán';
+    }
+
+    // 2. Khối lớp (grade: 6..12)
+    let detectedGrade = 12;
+    const gradeRegex = /(?:Lớp|Khối|K|Grade)\s*([6-9]|1[0-2])\b/i;
+    const gradeMatch = headerText.match(gradeRegex) || (fileName ? fileName.match(gradeRegex) : null);
+    if (gradeMatch && gradeMatch[1]) {
+      detectedGrade = parseInt(gradeMatch[1], 10);
+    } else {
+      const subjectGradeMatch = headerText.match(/(?:TOÁN|MÔN\s+TOÁN)\s*([6-9]|1[0-2])\b/i) 
+        || (fileName ? fileName.match(/(?:toan|toán)[\s_-]*([6-9]|1[0-2])\b/i) : null);
+      if (subjectGradeMatch && subjectGradeMatch[1]) {
+        detectedGrade = parseInt(subjectGradeMatch[1], 10);
+      } else {
+        const fullLower = text.toLowerCase();
+        if (fullLower.includes('nguyên hàm') || fullLower.includes('tích phân') || fullLower.includes('tiệm cận') || fullLower.includes('số phức') || fullLower.includes('oxyz') || fullLower.includes('khối đa diện')) {
+          detectedGrade = 12;
+        } else if (fullLower.includes('cấp số cộng') || fullLower.includes('cấp số nhân') || fullLower.includes('lượng giác') || fullLower.includes('giới hạn') || fullLower.includes('đạo hàm')) {
+          detectedGrade = 11;
+        } else if (fullLower.includes('mệnh đề') || fullLower.includes('tập hợp') || fullLower.includes('vectơ') || fullLower.includes('bất phương trình bậc hai')) {
+          detectedGrade = 10;
+        } else if (fullLower.includes('căn bậc hai') || fullLower.includes('hệ thức lượng') || fullLower.includes('đường tròn')) {
+          detectedGrade = 9;
+        }
+      }
+    }
+
+    if (!/(?:lớp|khối)\s*\d+/i.test(detectedTitle) && !/toán\s*\d+/i.test(detectedTitle)) {
+      if (detectedTitle.length < 25) {
+        detectedTitle = `${detectedTitle} - Toán ${detectedGrade}`;
+      }
+    }
+
+    // 3. Thời gian làm bài (durationMinutes: số phút)
+    let detectedDuration = 45;
+    const durationMatch = text.match(/(?:Thời\s*gian(?:\s*làm\s*bài)?|Thời\s*lượng)[:\.\s]*(\d{1,3})\s*(?:phút|p|min)/i);
+    if (durationMatch && durationMatch[1]) {
+      const d = parseInt(durationMatch[1], 10);
+      if (d >= 10 && d <= 180) {
+        detectedDuration = d;
+      }
+    } else {
+      const qCount = questions.length;
+      if (headerText.toLowerCase().includes('15 phút') || headerText.toLowerCase().includes('15p')) {
+        detectedDuration = 15;
+      } else if (headerText.toLowerCase().includes('giữa kỳ') || headerText.toLowerCase().includes('giữa học kỳ') || headerText.toLowerCase().includes('học kỳ') || headerText.toLowerCase().includes('cuối kỳ') || headerText.toLowerCase().includes('tốt nghiệp') || headerText.toLowerCase().includes('thử')) {
+        detectedDuration = 90;
+      } else if (qCount >= 35) {
+        detectedDuration = 90;
+      } else if (qCount >= 20) {
+        detectedDuration = 50;
+      } else {
+        detectedDuration = 45;
+      }
+    }
+
+    // 4. Năm học (schoolYear)
+    let detectedSchoolYear = '2024-2025';
+    const yearMatch = text.match(/(?:Năm\s*học|Khóa\s*thi|Năm)\s*[:\s]*(\d{4})\s*[-–/]\s*(\d{4})/i);
+    if (yearMatch && yearMatch[1] && yearMatch[2]) {
+      detectedSchoolYear = `${yearMatch[1]}-${yearMatch[2]}`;
+    } else {
+      const singleYear = text.match(/(?:Năm\s*học|Năm)\s*[:\s]*(\d{4})\b/i);
+      if (singleYear && singleYear[1]) {
+        const y = parseInt(singleYear[1], 10);
+        detectedSchoolYear = `${y}-${y + 1}`;
+      }
+    }
+
+    // 5. Trường / Đơn vị tổ chức (schoolOrOrg)
+    let detectedOrg = '';
+    const orgMatch = text.match(/(?:SỞ\s*GD(?:&|VÀ)ĐT[^\n]*|TRƯỜNG\s*THPT[^\n]*|TRƯỜNG\s*THCS[^\n]*|TRƯỜNG\s*ĐẠI\s*HỌC[^\n]*)/i);
+    if (orgMatch) {
+      detectedOrg = orgMatch[0].trim();
+    }
+
+    // 6. Cấu trúc đề (examFormat)
+    let detectedFormat: 'mcq_3part' | 'mcq_custom' | 'essay' | 'mixed' = 'mcq_3part';
+    const hasMcq = questions.some(q => q.type === 'mcq');
+    const hasTf = questions.some(q => q.type === 'tf');
+    const hasShort = questions.some(q => q.type === 'short');
+    const hasEssay = questions.some(q => q.type === 'essay');
+
+    if (hasEssay && (hasMcq || hasTf || hasShort)) {
+      detectedFormat = 'mixed';
+    } else if (hasEssay && !hasMcq && !hasTf && !hasShort) {
+      detectedFormat = 'essay';
+    } else if ((hasTf || hasShort) && hasMcq) {
+      detectedFormat = 'mcq_3part';
+    } else if (hasMcq && !hasTf && !hasShort) {
+      detectedFormat = 'mcq_3part';
+    }
+
+    // 7. Gợi ý chủ đề kiến thức (suggestedTopic)
+    let suggestedTopic = '';
+    const topicKeywords: Record<string, string> = {
+      'đạo hàm': 'Ứng dụng đạo hàm để khảo sát hàm số',
+      'khảo sát': 'Khảo sát và vẽ đồ thị hàm số',
+      'mũ': 'Hàm số lũy thừa, mũ và logarit',
+      'logarit': 'Hàm số lũy thừa, mũ và logarit',
+      'nguyên hàm': 'Nguyên hàm, tích phân và ứng dụng',
+      'tích phân': 'Nguyên hàm, tích phân và ứng dụng',
+      'oxyz': 'Phương pháp toạ độ trong không gian',
+      'tọa độ không gian': 'Phương pháp toạ độ trong không gian',
+      'khối đa diện': 'Khối đa diện và thể tích',
+      'nón trụ cầu': 'Mặt nón, mặt trụ, mặt cầu',
+      'xác suất': 'Xác suất và biến cố',
+      'thống kê': 'Các số đặc trưng đo xu thế trung tâm và mức độ phân tán',
+      'lượng giác': 'Hàm số lượng giác và phương trình lượng giác',
+      'dãy số': 'Dãy số, cấp số cộng và cấp số nhân',
+      'giới hạn': 'Giới hạn và hàm số liên tục',
+      'hình học không gian': 'Quan hệ vuông góc và song song trong không gian',
+      'vectơ': 'Vectơ và các phép toán',
+      'tập hợp': 'Mệnh đề và tập hợp',
+      'bất phương trình': 'Bất phương trình và hệ bất phương trình bậc nhất hai ẩn'
+    };
+
+    const textSample = (headerText + ' ' + questions.slice(0, 5).map(q => q.question).join(' ')).toLowerCase();
+    for (const [kw, topicName] of Object.entries(topicKeywords)) {
+      if (textSample.includes(kw)) {
+        suggestedTopic = topicName;
+        break;
+      }
+    }
+
+    return {
+      title: detectedTitle,
+      grade: detectedGrade,
+      subject: 'Toán',
+      durationMinutes: detectedDuration,
+      schoolYear: detectedSchoolYear,
+      schoolOrOrg: detectedOrg,
+      examFormat: detectedFormat,
+      suggestedTopic
+    };
+  }
 
   app.post("/api/extract-questions", async (req, res) => {
     try {
@@ -1501,19 +2377,43 @@ TRẢ VỀ DUY NHẤT MỘT JSON:
           });
           
           const prompt = `You are an expert Vietnamese exam document parser and educator.
-Extract EVERY SINGLE question present in this exam document.
-Follow the standard Vietnamese exam structure:
-- PHẦN I: Trắc nghiệm nhiều phương án lựa chọn (A, B, C, D) -> "type": "mcq"
-- PHẦN II: Trắc nghiệm đúng sai (với các ý a, b, c, d) -> "type": "tf"
-- PHẦN III: Trắc nghiệm trả lời ngắn (điền kết quả/đáp số số học) -> "type": "short"
-- PHẦN TỰ LUẬN: Các bài toán tự luận trình bày lời giải -> "type": "essay"
+Extract the COMPLETE exam information/metadata AND EVERY SINGLE question present in this exam document.
 
-*** QUY TẮC ĐỐI SOÁT BẮT BUỘC: ĐÁP ÁN ĐÚNG PHẢI TRÙNG KHỚP TUYỆT ĐỐI VỚI LỜI GIẢI CHI TIẾT ***
-Trường "correctAnswer" BẮT BUỘC PHẢI KHỚP 100% VỚI ĐÁP SỐ CUỐI CÙNG TRONG "explanation". Tuyệt đối không để xảy ra tình trạng lời giải chi tiết giải ra một kết quả (ví dụ: "Vậy có 12 giá trị nguyên") nhưng "correctAnswer" lại ghi lệch thành số khác (ví dụ: "8").
+*** YÊU CẦU CỐT LÕI VÀ TỐI QUAN TRỌNG: TRÍCH XUẤT ĐẦY ĐỦ NGUYÊN BẢN 100% TẤT CẢ CÁC CÂU HỎI TỪ ĐỀ GỐC - TUYỆT ĐỐI KHÔNG THÊM BỚT ***
+1. TRÍCH XUẤT ĐẦY ĐỦ 100%: Bạn BẮT BUỘC phải trích xuất TOÀN BỘ tất cả các câu hỏi có trong tài liệu đề thi gốc, từ câu số 1 cho tới câu hỏi cuối cùng của đề. TUYỆT ĐỐI KHÔNG ĐƯỢC BỎ SÓT bất kỳ câu hỏi nào (dù đề thi có 10, 20, 40 hay 50 câu).
+2. TUYỆT ĐỐI KHÔNG THÊM: KHÔNG tự ý sáng tác, bịa đặt hoặc thêm bất kỳ câu hỏi nào ngoài đề thi gốc.
+3. TUYỆT ĐỐI KHÔNG BỚT / KHÔNG CẮT XÉN: Giữ nguyên vẹn 100% nội dung câu hỏi, dữ kiện bài toán, các biến số, công thức toán LaTeX gốc. Không tóm tắt, không lược bớt đề bài. Giữ nguyên toàn bộ 4 phương án A, B, C, D (đối với trắc nghiệm) hoặc 4 ý a), b), c), d) (đối với đúng/sai).
 
-For each question, output an object in a JSON array with the following fields:
+*** QUY TẮC TỰ THIẾT LẬP BIỂU ĐIỂM (POINTS) VÀ ĐÁP ÁN (CORRECTANSWER) PHÙ HỢP: ***
+1. TỰ THIẾT LẬP BIỂU ĐIỂM HỢP LÝ (Thang điểm chuẩn 10.0 điểm):
+- Tự động phân bổ điểm số "points" cho từng câu phù hợp với cấu trúc đề:
+  * Đề chuẩn 3 phần Bộ GD&ĐT 2025: Phần I (12 câu TN nhiều lựa chọn): 0.25đ/câu (Tổng 3.0đ); Phần II (4 câu Đúng/Sai): 1.0đ/câu (Tổng 4.0đ); Phần III (6 câu Trả lời ngắn): 0.5đ/câu (Tổng 3.0đ). Tổng cộng đúng 10.0 điểm!
+  * Đề trắc nghiệm 50 câu: mỗi câu 0.2 điểm (Tổng 10.0 điểm).
+  * Đề trắc nghiệm 40 câu: mỗi câu 0.25 điểm (Tổng 10.0 điểm).
+  * Đề có Tự luận hoặc số lượng câu khác: tự phân bổ hợp lý sao cho tổng điểm toàn bài tròn 10.0 điểm (hoặc theo điểm số ghi sẵn trong đề gốc nếu có).
+2. TỰ THIẾT LẬP ĐÁP ÁN VÀ LỜI GIẢI CHI TIẾT:
+- Tự giải và xác định đáp án đúng chính xác tuyệt đối cho từng câu ("correctAnswer") và lời giải chi tiết từng bước ("explanation") với công thức toán LaTeX chuẩn.
+- ĐÁP ÁN ĐÚNG "correctAnswer" BẮT BUỘC PHẢI KHỚP 100% VỚI KẾT QUẢ TRONG LỜI GIẢI CHI TIẾT "explanation".
+
+Output a single JSON object with TWO main properties:
+1. "testInfo": {
+   "title": "Tên đề kiểm tra đầy đủ, trang trọng (ví dụ: ĐỀ KIỂM TRA GIỮA HỌC KỲ I - MÔN TOÁN 12)",
+   "grade": 12, // Số nguyên 6, 7, 8, 9, 10, 11, hoặc 12 (nhận diện từ tài liệu)
+   "subject": "Toán",
+   "durationMinutes": 90, // Số phút làm bài (ví dụ: 90, 60, 50, 45, 120; nhận diện từ 'Thời gian: 90 phút')
+   "schoolYear": "2024-2025", // Năm học (ví dụ: '2024-2025' từ 'Năm học 2024 - 2025')
+   "schoolOrOrg": "Tên đơn vị, Sở GD&ĐT hoặc Trường nếu có trên đề",
+   "examFormat": "mcq_3part" | "mcq_custom" | "essay" | "mixed",
+   "suggestedTopic": "Chủ đề kiến thức chính nếu nhận diện được"
+}
+2. "questions": Array of question objects:
 - "id": Unique ID (e.g., "q1", "q2")
 - "type": "mcq" | "tf" | "short" | "essay"
+  *** QUY TẮC BẮT BUỘC ĐỂ PHÂN BIỆT BÀI TOÁN TỰ LUẬN VÀ TRẮC NGHIỆM ĐÚNG/SAI: ***
+  * BÀI TOÁN TỰ LUẬN ("type": "essay", "options": []): Các câu bắt đầu bằng "Bài 1", "Bài 2"..., hoặc có điểm "(1.5 điểm)", "(2.0 điểm)", hoặc nằm trong phần "TỰ LUẬN". Các bài này thường có nhiều ý nhỏ a), b), c), d)... (ví dụ: a) Thu gọn đa thức; b) Tính giá trị; c) Tìm x...). ĐÂY LÀ BÀI TOÁN TỰ LUẬN! BẮT BUỘC đặt "type": "essay", "options": [], giữ nguyên TOÀN BỘ các ý a), b), c) vào trong trường "question" (ngăn cách bằng xuống dòng), và "explanation" là lời giải chi tiết từng bước cho tất cả các ý a), b), c). TUYỆT ĐỐI KHÔNG ĐƯỢC CHUYỂN THÀNH "tf" (ĐÚNG/SAI)!
+  *** QUY TẮC BẮT BUỘC LOẠI TRỪ TIÊU ĐỀ PHẦN VÀ TÓM TẮT LÝ THUYẾT (KHÔNG BIẾN THÀNH CÂU HỎI): ***
+  * TUYỆT ĐỐI KHÔNG biến phần "TÓM TẮT LÝ THUYẾT / TÓM TẮT LÍ THUYẾT / KIẾN THỨC TRỌNG TÂM / KIẾN THỨC CẦN NHỚ" thành câu hỏi bài tập!
+  * TUYỆT ĐỐI KHÔNG biến các dòng tiêu đề phân đoạn như "PHẦN I: TRẮC NGHIỆM KHÁCH QUAN", "TRẮC NGHIỆM KHÁCH QUAN", "BÀI TẬP TRẮC NGHIỆM KHÁCH QUAN", "PHẦN II: TỰ LUẬN", "DẠNG 1: ...", "Chủ đề 1: ..." thành câu hỏi! Đây là tiêu đề phân đoạn, KHÔNG PHẢI là câu hỏi bài tập.
 - "question": Full question stem in Vietnamese. Wrap all math formulas, variables, and vectors in LaTeX $...$ or $$...$$
 - "options": 
   * For "mcq": Array of 4 choices ["A. ...", "B. ...", "C. ...", "D. ..."] (with LaTeX math wrapped in $)
@@ -1524,26 +2424,17 @@ For each question, output an object in a JSON array with the following fields:
   * For "tf": Format like "a-Đ, b-S, c-Đ, d-S" or "Đ, S, Đ, S"
   * For "short": Numerical value or short expression (e.g. "12", "-3/4", "2.5") (phải khớp đáp số cuối cùng trong explanation)
   * For "essay": Key final answer or scoring guide summary
-- "points": Number of points (default: 0.25 for mcq, 1.0 for tf, 0.5 for short, 1.0 to 2.0 for essay)
+- "points": Number of points (tự động thiết lập biểu điểm chuẩn phù hợp tổng 10.0 điểm)
 - "explanation": Detailed step-by-step solution in Vietnamese with LaTeX math wrapped in $
 - "figureType": "svg" | "table" | "none" (nếu câu hỏi có đồ thị hoặc hình vẽ trong tài liệu gốc -> "svg"; nếu có bảng biến thiên -> "table"; nếu đề thuần chữ -> "none")
 - "figureSvg": (Chỉ khi figureType === "svg") Chuỗi mã SVG vector hoàn chỉnh tự chứa, viewBox="0 0 380 260".
-  *** QUY TẮC BẮT BUỘC ĐỐI VỚI HÌNH VẼ ĐỒ THỊ OXY THEO HÌNH GỐC (CHÍNH XÁC 100%, TUYỆT ĐỐI KHÔNG LỆCH ĐIỂM, LỆCH TỌA ĐỘ): ***
-  1. Đọc chính xác các điểm đặc biệt từ hình gốc: Tọa độ điểm cực đại, cực tiểu, đỉnh Parabol, giao điểm Oy (0, y0), giao điểm Ox (x0, 0), tiệm cận đứng, tiệm cận ngang.
-  2. Quy đổi tọa độ toán học (x, y) sang pixel SVG:
-     - Gốc O: Đặt tại (X_O = 180, Y_O = 190) nếu đồ thị có đỉnh y > 0 (như đỉnh y = 4, giao điểm Oy y = 3, giao Ox tại x = -1 và 3); hoặc đặt tại (190, 130) nếu cân đối.
-     - Scale S = 30px hoặc 35px.
-     - X = X_O + (x * S)
-     - Y = Y_O - (y * S)  (trục Y hướng lên trên, y dương thì Y < Y_O, y âm thì Y > Y_O).
-  3. ĐỒNG BỘ TUYỆT ĐỐI 100%: Điểm <circle cx="X" cy="Y" r="3.5" fill="#2563eb" />, đường gióng nét đứt, nhãn số và đường cong <path> PHẢI TRÙNG NHAU HOÀN TOÀN, không lệch 1 pixel. Đường cong BẮT BUỘC đi xuyên qua đúng tâm các điểm circle tại giao điểm Ox, giao điểm Oy và các cực trị.
 - "figureTable": (Chỉ khi figureType === "table") Bảng Markdown bảng biến thiên hoặc bảng số liệu.
 - "figureDescription": Mô tả ngắn gọn hình vẽ (Ví dụ: "Đồ thị hàm số $y=f(x)$").
 
-Output valid JSON array only, without markdown fences. Escaping backslashes for LaTeX (\\\\frac, \\\\sqrt, \\\\vec).`;
+Output valid JSON only, without markdown fences. Escaping backslashes for LaTeX (\\\\frac, \\\\sqrt, \\\\vec).`;
 
           let userContents: any[] = [];
           if (textToExtract && textToExtract.length > 25) {
-            // Text extraction preserves 100% formatting, KaTeX, and fixes legacy fonts
             userContents = [{ role: "user", parts: [{ text: `NỘI DUNG TÀI LIỆU ĐỀ THI:\n"""\n${textToExtract.slice(0, 120000)}\n"""\n\n${prompt}` }] }];
           } else if (canSendInlineToGemini && base64Data) {
             userContents = [{ role: "user", parts: [{ inlineData: { mimeType: resolvedMime, data: base64Data } }, { text: prompt }] }];
@@ -1555,21 +2446,63 @@ Output valid JSON array only, without markdown fences. Escaping backslashes for 
               contents: userContents
             });
 
-            let responseText = response.text || "[]";
-            let parsed = safeParseJsonArray(responseText);
-            let sanitized = sanitizeQuestionFigures(parsed);
+            let responseText = response.text || "{}";
+            let parsedObj = safeParseJsonObject(responseText);
+            let parsedArr: any[] = [];
+            if (!parsedObj) {
+              parsedArr = safeParseJsonArray(responseText);
+            }
+
+            let rawQuestions = (parsedObj && Array.isArray(parsedObj.questions))
+              ? parsedObj.questions
+              : (Array.isArray(parsedArr) && parsedArr.length > 0 ? parsedArr : []);
+
+            let aiTestInfo = (parsedObj && parsedObj.testInfo && typeof parsedObj.testInfo === 'object')
+              ? parsedObj.testInfo
+              : null;
+
+            let sanitized = sanitizeQuestionFigures(rawQuestions);
             let reconciled = reconcileAnswersWithExplanations(sanitized);
             if (Array.isArray(reconciled) && reconciled.length > 0) {
-              const cleaned = reconciled.map((q: any) => ({
-                ...q,
-                question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
-                options: Array.isArray(q.options) 
-                  ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
-                  : [],
-                explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
-                correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
-              }));
-              return res.json(cleaned);
+              const cleaned = reconciled
+                .filter((q: any) => {
+                  const stem = (q.question || '').trim();
+                  // Kiểm tra tiêu đề phần / tiêu đề trắc nghiệm khách quan
+                  const isHeader = /^(?:(?:PHẦN|Phần|CHƯƠNG|Chương|MỤC|Mục|CHỦ\s*ĐỀ|Chủ\s*đề)\s*[IVX\d]+[\.:\s\-–—]*)?(?:[A-D|IVX\d]+[\.:\)\s\-–—]+)?\s*(?:TRẮC\s*NGHIỆM\s*(?:KHÁCH\s*QUAN)?|CÂU\s*HỎI\s*TRẮC\s*NGHIỆM|BÀI\s*TẬP\s*TRẮC\s*NGHIỆM|CÂU\s*TRẮC\s*NGHIỆM|BÀI\s*TẬP\s*TỰ\s*LUẬN|TỰ\s*LUẬN|HỆ\s*THỐNG\s*CÂU\s*HỎI|HỆ\s*THỐNG\s*BÀI\s*TẬP|BÀI\s*TẬP\s*ÔN\s*LUYỆN)\s*(?:\([^)]*\))?$/i.test(stem) ||
+                    /^(?:DẠNG|Dạng|Chủ\s*đề)\s*[\dIVX]+[:\.\-–—\s][^\n]{0,80}$/i.test(stem);
+                  if (isHeader) return false;
+                  // Kiểm tra khối lý thuyết độc lập
+                  const isTheory = /^(?:(?:[I|1|A-D]\.\s*|PHẦN\s*[I|1|A-D][\.:\s]*)?(?:TÓM\s*TẮT\s*(?:KIẾN\s*THỨC|L[ÝÍ]\s*THUYẾT|NỘI\s*DUNG)?|L[ÝÍ]\s*THUYẾT|KIẾN\s*THỨC\s*(?:TRỌNG\s*TÂM|CẦN\s*NHỚ)|NỘI\s*DUNG\s*L[ÝÍ]\s*THUYẾT))/i.test(stem);
+                  if (isTheory && (!Array.isArray(q.options) || q.options.length === 0)) return false;
+                  return true;
+                })
+                .map((q: any) => ({
+                  ...q,
+                  question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+                  options: Array.isArray(q.options) 
+                    ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+                    : [],
+                  explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+                  correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+                }));
+
+              const rubricCleaned = autoEstablishScoringRubric(cleaned);
+              const regexMetadata = extractTestMetadataFromText(textToExtract, fileName, rubricCleaned);
+              const finalTestInfo = {
+                title: repairVietnameseDocument(convertTcvn3ToUnicode(aiTestInfo?.title || regexMetadata.title)),
+                grade: (aiTestInfo?.grade && Number(aiTestInfo.grade) >= 6 && Number(aiTestInfo.grade) <= 12) ? Number(aiTestInfo.grade) : regexMetadata.grade,
+                subject: aiTestInfo?.subject || regexMetadata.subject || 'Toán',
+                durationMinutes: (aiTestInfo?.durationMinutes && Number(aiTestInfo.durationMinutes) >= 5) ? Number(aiTestInfo.durationMinutes) : regexMetadata.durationMinutes,
+                schoolYear: aiTestInfo?.schoolYear || regexMetadata.schoolYear || '2024-2025',
+                schoolOrOrg: aiTestInfo?.schoolOrOrg || regexMetadata.schoolOrOrg || '',
+                examFormat: aiTestInfo?.examFormat || regexMetadata.examFormat || 'mcq_3part',
+                suggestedTopic: aiTestInfo?.suggestedTopic || regexMetadata.suggestedTopic || ''
+              };
+
+              return res.json({
+                testInfo: finalTestInfo,
+                questions: rubricCleaned
+              });
             }
           }
         } catch (aiError) {
@@ -1588,12 +2521,107 @@ Output valid JSON array only, without markdown fences. Escaping backslashes for 
         explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
         correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
       }));
-      return res.json(cleanedFallback);
+
+      const rubricFallback = autoEstablishScoringRubric(cleanedFallback);
+      const fallbackMetadata = extractTestMetadataFromText(textToExtract, fileName, rubricFallback);
+
+      return res.json({
+        testInfo: fallbackMetadata,
+        questions: rubricFallback
+      });
     } catch (error: any) {
       console.error("Extract API Error:", error);
       res.status(500).json({ error: "Failed to extract questions", details: formatError(error) });
     }
   });
+
+  // Helper: Automatically establish and balance scoring rubric to standard 10.0 points
+  function autoEstablishScoringRubric(questions: any[]): any[] {
+    if (!Array.isArray(questions) || questions.length === 0) return [];
+
+    const totalCount = questions.length;
+    const mcqQuestions = questions.filter(q => q.type === 'mcq' || (!q.type && Array.isArray(q.options) && q.options.length >= 2));
+    const tfQuestions = questions.filter(q => q.type === 'tf');
+    const shortQuestions = questions.filter(q => q.type === 'short');
+    const essayQuestions = questions.filter(q => q.type === 'essay');
+
+    const explicitPointsSum = questions.reduce((sum, q) => sum + (typeof q.points === 'number' && !isNaN(q.points) ? q.points : 0), 0);
+    if (explicitPointsSum >= 9.8 && explicitPointsSum <= 10.2 && questions.every(q => typeof q.points === 'number' && q.points > 0)) {
+      return questions.map(q => ({
+        ...q,
+        points: Math.round(q.points * 100) / 100
+      }));
+    }
+
+    if (tfQuestions.length > 0 || shortQuestions.length > 0) {
+      const hasEssay = essayQuestions.length > 0;
+      const targetMcqTotal = hasEssay ? 2.5 : 3.0;
+      const targetTfTotal = hasEssay ? 3.0 : 4.0;
+      const targetShortTotal = hasEssay ? 2.5 : 3.0;
+      const targetEssayTotal = hasEssay ? 2.0 : 0.0;
+
+      const mcqPts = mcqQuestions.length > 0 ? Math.round((targetMcqTotal / mcqQuestions.length) * 100) / 100 : 0.25;
+      const tfPts = tfQuestions.length > 0 ? Math.round((targetTfTotal / tfQuestions.length) * 100) / 100 : 1.0;
+      const shortPts = shortQuestions.length > 0 ? Math.round((targetShortTotal / shortQuestions.length) * 100) / 100 : 0.5;
+      const essayPts = essayQuestions.length > 0 ? Math.round((targetEssayTotal / essayQuestions.length) * 10) / 10 : 1.0;
+
+      return questions.map(q => {
+        let p = mcqPts;
+        if (q.type === 'tf') p = tfPts;
+        else if (q.type === 'short') p = shortPts;
+        else if (q.type === 'essay') p = essayPts;
+        return { ...q, points: p };
+      });
+    }
+
+    if (mcqQuestions.length === totalCount) {
+      let perQuestion = 0.25;
+      if (totalCount === 50) perQuestion = 0.2;
+      else if (totalCount === 40) perQuestion = 0.25;
+      else if (totalCount === 25) perQuestion = 0.4;
+      else if (totalCount === 20) perQuestion = 0.5;
+      else if (totalCount === 10) perQuestion = 1.0;
+      else {
+        perQuestion = Math.round((10.0 / totalCount) * 100) / 100;
+      }
+
+      return questions.map((q, idx) => {
+        let p = perQuestion;
+        if (idx === totalCount - 1) {
+          const sumPrevious = perQuestion * (totalCount - 1);
+          const remainder = Math.round((10.0 - sumPrevious) * 100) / 100;
+          if (remainder > 0 && Math.abs(remainder - perQuestion) <= 0.25) {
+            p = remainder;
+          }
+        }
+        return { ...q, points: p };
+      });
+    }
+
+    if (essayQuestions.length > 0 && mcqQuestions.length > 0) {
+      const mcqTarget = 7.0;
+      const essayTarget = 3.0;
+      const perMcq = Math.round((mcqTarget / mcqQuestions.length) * 100) / 100;
+      const perEssay = Math.round((essayTarget / essayQuestions.length) * 10) / 10;
+      return questions.map(q => ({
+        ...q,
+        points: q.type === 'essay' ? perEssay : perMcq
+      }));
+    }
+
+    const perItem = Math.round((10.0 / totalCount) * 100) / 100;
+    return questions.map((q, idx) => {
+      let p = perItem;
+      if (idx === totalCount - 1) {
+        const sumPrevious = perItem * (totalCount - 1);
+        const remainder = Math.round((10.0 - sumPrevious) * 100) / 100;
+        if (remainder > 0 && Math.abs(remainder - perItem) <= 0.5) {
+          p = remainder;
+        }
+      }
+      return { ...q, points: p };
+    });
+  }
 
   // Helper: Parse questions from raw document text when AI is unavailable or fails
   function parseQuestionsFromDocumentText(rawText: string): any[] {
@@ -1602,15 +2630,45 @@ Output valid JSON array only, without markdown fences. Escaping backslashes for 
     const lines = repairedText.split('\n');
     const questions: any[] = [];
     let currentQ: any = null;
+    let isCurrentSectionEssay = false;
+    let isCurrentSectionTf = false;
 
     const pushCurrent = () => {
       if (currentQ && currentQ.question && currentQ.question.trim().length > 0) {
-        if (!currentQ.options || currentQ.options.length === 0) {
+        const isEssayStem = isCurrentSectionEssay || /^bài\s+\d+/i.test(currentQ.question.trim()) || /(?:tự\s*luận|\d+\s*(?:điểm|đ\b))/i.test(currentQ.question);
+        if (isEssayStem) {
           currentQ.type = 'essay';
-          currentQ.points = 1.0;
+          if (currentQ.options && currentQ.options.length > 0) {
+            currentQ.question = currentQ.question + '\n' + currentQ.options.join('\n');
+            currentQ.options = [];
+          }
+          currentQ.points = currentQ.points || 2.0;
+        } else if (!currentQ.options || currentQ.options.length === 0) {
+          if (currentQ.type !== 'short') {
+            currentQ.type = 'essay';
+            currentQ.points = currentQ.points || 1.0;
+          }
         } else {
-          currentQ.type = 'mcq';
-          currentQ.points = 0.25;
+          // Kiểm tra xem đây có phải bài toán tự luận có các ý a), b), c) hay không
+          const isActionSubItems = currentQ.options.some((o: string) => /^[a-d][\.\:\)]\s*(?:rút\s*gọn|thu\s*gọn|tính|chứng\s*minh|tìm|giải|phân\s*tích|xác\s*định|vẽ|cho|hãy|biết|đặt|chứng\s*tỏ)/i.test(o.trim()));
+          if (isActionSubItems) {
+            currentQ.type = 'essay';
+            currentQ.question = currentQ.question + '\n' + currentQ.options.join('\n');
+            currentQ.options = [];
+            currentQ.points = currentQ.points || 2.0;
+          } else if (isCurrentSectionTf) {
+            currentQ.type = 'tf';
+            currentQ.points = 1.0;
+          } else {
+            const isTf = currentQ.type === 'tf';
+            if (isTf) {
+              currentQ.type = 'tf';
+              currentQ.points = 1.0;
+            } else {
+              currentQ.type = 'mcq';
+              currentQ.points = 0.25;
+            }
+          }
         }
         questions.push({
           ...currentQ,
@@ -1621,9 +2679,10 @@ Output valid JSON array only, without markdown fences. Escaping backslashes for 
       }
     };
 
-    const qRegex = /^(Câu\s+\d+|Bài\s+\d+|Question\s+\d+)[:\.\s]/i;
-    const optRegex = /^([A-D])[\.\:\)]\s+(.*)/i;
-    const tfOptRegex = /^([a-d])[\.\:\)]\s+(.*)/i;
+    const sectionRegex = /^(?:PHẦN|Phần|CHƯƠNG|Chương|BÀI|Bài)\s+[IVXLCDM\d]+/i;
+    const qRegex = /(?:^|[\.\:\)]\s*|\b)(Câu\s+\d+|Bài\s+\d+|Question\s+\d+)[:\.\s]/i;
+    const optRegex = /^([A-D])[\.\:\)]\s+(.*)/;
+    const tfOptRegex = /^([a-d])[\.\:\)]\s+(.*)/;
     const expRegex = /^(?:\*?\s*)?(?:Lời\s*giải|Hướng\s*dẫn\s*giải|Bài\s*giải|Giải)[:\.\s]*/i;
     const ansRegex = /^(?:Đáp\s*án|Chọn)[:\.\s]*([A-D])\b/i;
 
@@ -1632,17 +2691,29 @@ Output valid JSON array only, without markdown fences. Escaping backslashes for 
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      if (qRegex.test(trimmed)) {
+      if (sectionRegex.test(trimmed)) {
+        pushCurrent();
+        currentQ = null;
+        inExplanation = false;
+        isCurrentSectionEssay = /tự\s*luận/i.test(trimmed);
+        isCurrentSectionTf = /đúng\s*[\/\-]\s*sai/i.test(trimmed);
+        continue;
+      }
+      const qMatch = trimmed.match(qRegex);
+      if (qMatch && qMatch[1]) {
         pushCurrent();
         inExplanation = false;
+        const qStart = trimmed.indexOf(qMatch[1]);
+        const cleanStem = qStart >= 0 ? trimmed.slice(qStart).trim() : trimmed;
+        const isEssayStem = isCurrentSectionEssay || /^bài\s+\d+/i.test(cleanStem) || /(?:\d+(?:[.,]\d+)?\s*(?:điểm|đ\b)|tự\s*luận)/i.test(cleanStem);
         currentQ = {
           id: `q_${questions.length + 1}_${Date.now()}`,
-          type: 'mcq',
-          question: trimmed,
+          type: isEssayStem ? 'essay' : 'mcq',
+          question: cleanStem,
           options: [],
           correctAnswer: 'A',
           explanation: '',
-          points: 0.25
+          points: isEssayStem ? 1.0 : 0.25
         };
         continue;
       }
@@ -1675,9 +2746,16 @@ Output valid JSON array only, without markdown fences. Escaping backslashes for 
 
         const tfMatch = trimmed.match(tfOptRegex);
         if (tfMatch) {
-          currentQ.options.push(trimmed);
-          currentQ.type = 'tf';
-          currentQ.points = 1.0;
+          if (isCurrentSectionEssay || currentQ.type === 'essay' || /^bài\s+\d+/i.test(currentQ.question) || /(?:tự\s*luận|\d+\s*(?:điểm|đ\b))/i.test(currentQ.question)) {
+            // Đây là ý nhỏ của bài toán tự luận
+            currentQ.type = 'essay';
+            currentQ.question = (currentQ.question ? currentQ.question + '\n' : '') + trimmed;
+            currentQ.points = currentQ.points || 2.0;
+          } else {
+            currentQ.options.push(trimmed);
+            currentQ.type = 'tf';
+            currentQ.points = 1.0;
+          }
           continue;
         }
 

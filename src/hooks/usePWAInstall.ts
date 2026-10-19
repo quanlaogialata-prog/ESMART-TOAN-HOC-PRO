@@ -23,7 +23,11 @@ export function usePWAInstall() {
     const isIOSDevice = /iphone|ipad|ipod/.test(userAgent);
     setIsIOS(isIOSDevice);
     
-    setInIframe(window !== window.parent);
+    try {
+      setInIframe(window.self !== window.top);
+    } catch (e) {
+      setInIframe(true);
+    }
 
     
     if ((window as any).deferredPWAInstallPrompt) {

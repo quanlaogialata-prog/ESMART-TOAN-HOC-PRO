@@ -18,14 +18,15 @@ import {
   Layers,
   ChevronRight,
   Info,
-  Activity
+  Activity,
+  Scale
 } from 'lucide-react';
 import MathText from '../MathText';
 import QuestionVisualRenderer from '../common/QuestionVisualRenderer';
 import MathRadicalInput from '../common/MathRadicalInput';
 import { QuestionItem, QuestionType, QuestionReference } from '../../types/test';
 import { MATH_FIGURE_TEMPLATES, MathFigureTemplate } from '../../utils/mathFigureTemplates';
-import { stripOptionPrefix } from '../../utils/gradeEngine';
+import { stripOptionPrefix, autoEstablishScoringRubric } from '../../utils/gradeEngine';
 import DocumentReferenceSelectorModal from './DocumentReferenceSelectorModal';
 import MathGraphTunerModal from './MathGraphTunerModal';
 import { repairVietnameseDocument } from '../../lib/vietnameseFont';
@@ -204,7 +205,25 @@ export default function EditQuestionsModal({
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+              <Scale size={14} className="text-indigo-600" />
+              <span>Biểu điểm:</span>
+              <span className={Math.abs(questions.reduce((sum, q) => sum + (typeof q.points === 'number' && !isNaN(q.points) ? q.points : 0), 0) - 10.0) < 0.05 ? "text-emerald-700 font-extrabold" : "text-amber-700 font-extrabold"}>
+                {questions.reduce((sum, q) => sum + (typeof q.points === 'number' && !isNaN(q.points) ? q.points : 0), 0).toFixed(2)}/10.0đ
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setQuestions(autoEstablishScoringRubric(questions))}
+              className="px-3 py-1.5 rounded-xl font-bold text-xs text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 shadow-2xs transition-all flex items-center gap-1 cursor-pointer"
+              title="Tự động phân bổ lại biểu điểm của các câu sao cho tổng tròn 10.0 điểm chuẩn"
+            >
+              <Scale size={13} className="text-amber-700" />
+              <span>⚡ Cân bằng 10.0đ</span>
+            </button>
+
             <button
               type="button"
               onClick={() => onSave(questions.map(sanitizeQ))}
