@@ -29,8 +29,10 @@ import {
   splitMcqOptions, 
   healQuestionOptions,
   stripQuestionPrefix,
+  stripLeadingSectionHeader,
   formatPracticeQuestionsAndSections,
   isPureSectionHeader,
+  isInstructionOrRangeOnly,
   extractTheoryAndQuestionsText,
   isTheoryQuestion
 } from '../../utils/practiceFormatter';
@@ -250,13 +252,75 @@ export default function CreateTopicPracticeModal({
 
       // 3. Fallback & đối chiếu với Client-Side Parser
       const localParsed = parseQuestionsLocally(textForQuestions || rawPastedText);
-      
+
+      // Helper: Kế thừa tiêu đề phần từ các dòng tiêu đề đứng riêng trước khi lọc bỏ
+      const propagateAndCleanQuestions = (list: QuestionItem[]): QuestionItem[] => {
+        let activeHeader = '';
+        const out: QuestionItem[] = [];
+        for (const item of list) {
+          const rawStem = (item.question || '').trim();
+          const { cleanedText, strippedHeader } = stripLeadingSectionHeader(rawStem);
+          if (strippedHeader && !isInstructionOrRangeOnly(strippedHeader)) {
+            activeHeader = strippedHeader;
+          }
+          const stem = cleanedText || rawStem;
+          if (!stem || isPureSectionHeader(stem) || isInstructionOrRangeOnly(stem)) {
+            if (stem && !isInstructionOrRangeOnly(stem)) {
+              activeHeader = stem;
+            }
+            continue;
+          }
+          if (isTheoryQuestion({ ...item, question: stem })) {
+            continue;
+          }
+          const explicitHeader = (item.sectionHeader || '').trim();
+          if (explicitHeader && !isInstructionOrRangeOnly(explicitHeader)) {
+            activeHeader = explicitHeader;
+          }
+          const healed = healQuestionOptions({
+            ...item,
+            question: stem,
+            ...(activeHeader ? { sectionHeader: activeHeader } : {})
+          });
+          if (!isPureSectionHeader(healed.question) && !isInstructionOrRangeOnly(healed.question)) {
+            out.push(healed);
+          }
+        }
+        return out;
+      };
+
+      const cleanedApiQuestions = propagateAndCleanQuestions(parsedQuestions);
+      const cleanedLocalQuestions = propagateAndCleanQuestions(localParsed);
+
       // Nếu API trả về ít câu hơn parser cục bộ (bị sót câu) hoặc API lỗi: Dùng parser cục bộ để đảm bảo 100% không thiếu
-      if (parsedQuestions.length === 0 || (localParsed.length > parsedQuestions.length && localParsed.length > 0)) {
-        parsedQuestions = localParsed;
+      let finalQuestions = cleanedApiQuestions;
+      if (finalQuestions.length === 0 || (cleanedLocalQuestions.length > finalQuestions.length && cleanedLocalQuestions.length > 0)) {
+        finalQuestions = cleanedLocalQuestions;
+      } else if (cleanedLocalQuestions.length > 0) {
+        // Đồng bộ tiêu đề phần (sectionHeader) nguyên bản từ parser cục bộ sang kết quả API để giữ đúng 100% tiêu đề gốc
+        const normalizeForMatch = (s: string) =>
+          (s || '')
+            .replace(/^(?:Câu|Bài|Ví\s*dụ|Question)\s*\d+[\.:\)\s]*/i, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+
+        finalQuestions = finalQuestions.map((apiQ, idx) => {
+          const apiNorm = normalizeForMatch(apiQ.question);
+          const matchedLocal =
+            (cleanedLocalQuestions.length === finalQuestions.length ? cleanedLocalQuestions[idx] : undefined) ||
+            cleanedLocalQuestions.find(lq => {
+              const lNorm = normalizeForMatch(lq.question);
+              return lNorm.length > 8 && apiNorm.length > 8 && (lNorm.includes(apiNorm.slice(0, 25)) || apiNorm.includes(lNorm.slice(0, 25)));
+            });
+          if (matchedLocal && matchedLocal.sectionHeader) {
+            return { ...apiQ, sectionHeader: matchedLocal.sectionHeader };
+          }
+          return apiQ;
+        });
       }
 
-      if (parsedQuestions.length === 0) {
+      if (finalQuestions.length === 0) {
         throw new Error('Chưa nhận diện được câu hỏi nào từ văn bản đã dán. Vui lòng kiểm tra lại nội dung bài ôn tập.');
       }
 
@@ -271,7 +335,7 @@ export default function CreateTopicPracticeModal({
         setTheorySummary(extractedTheory);
       }
       // QUY TẮC CỐT LÕI: GIỮ NGUYÊN 100% THỨ TỰ VÀ CẤU TRÚC DẠNG BÀI - KHÔNG TỰ Ý SẮP XẾP LẠI
-      setConvertedQuestions(parsedQuestions.map(healQuestionOptions));
+      setConvertedQuestions(finalQuestions.map(healQuestionOptions));
       setIsConverted(true);
       setActiveStep('preview');
     } catch (err: any) {
@@ -289,8 +353,8 @@ export default function CreateTopicPracticeModal({
     if (!text || !text.trim()) return [];
 
     // Tách văn bản theo các khối câu hỏi, phần hoặc dạng bài:
-    // Hỗ trợ: PHẦN I, TRẮC NGHIỆM KHÁCH QUAN, Dạng 1, Câu 1, Bài 1, Ví dụ 1, Bài tập 1, 1. (đầu dòng)
-    const blockSplitRegex = /(?:^|\n)(?=(?:(?:PHẦN|Phần|CHỦ\s*ĐỀ|Chủ\s*đề|DẠNG|Dạng|MỤC|Mục)\s*[IVX\d|A-Z]+|(?:TRẮC\s*NGHIỆM\s*(?:KHÁCH\s*QUAN)?|TỰ\s*LUẬN|BÀI\s*TẬP\s*TRẮC\s*NGHIỆM|CÂU\s*HỎI\s*TRẮC\s*NGHIỆM|BÀI\s*TẬP\s*TỰ\s*LUẬN)|(?:[IVX\d]+|[A-D])[\.:\)]\s+(?:TRẮC\s*NGHIỆM|TỰ\s*LUẬN|BÀI\s*TẬP|TÓM\s*TẮT|L[ÝÍ]\s*THUYẾT|DẠNG|Chủ\s*đề)|(?:Câu|Bài|Ví\s*dụ|Bài\s*tập|Câu\s*hỏi|Question)\s*\d+|(?:Câu|Bài)\s*[IVX]+|(?<!\w)\d+[\.:\)]\s+(?=[A-ZÀ-Ỹ\$\(])))(?!\s*[a-d]\))/i;
+    // Hỗ trợ: PHẦN I, TRẮC NGHIỆM KHÁCH QUAN, Dạng 1, Chủ đề 1, Chuyên đề 1, Dạng bài trả lời ngắn, Câu 1, Bài 1, Ví dụ 1, Bài tập 1, 1. (đầu dòng)
+    const blockSplitRegex = /(?:^|\n)(?=(?:(?:PHẦN|Phần|CHỦ\s*ĐỀ|Chủ\s*đề|DẠNG\s*(?:BÀI|TOÁN|CÂU\s*HỎI)?|Dạng|CHUYÊN\s*ĐỀ|Chuyên\s*đề|VẤN\s*ĐỀ|MỤC|Mục)\s*[IVX\d|A-Z]*|(?:TRẮC\s*NGHIỆM\s*(?:KHÁCH\s*QUAN)?|TỰ\s*LUẬN|TRẢ\s*LỜI\s*NGẮN|CÂU\s*HỎI\s*TRẢ\s*LỜI\s*NGẮN|BÀI\s*TẬP\s*TRẢ\s*LỜI\s*NGẮN|BÀI\s*TẬP\s*TRẮC\s*NGHIỆM|CÂU\s*HỎI\s*TRẮC\s*NGHIỆM|BÀI\s*TẬP\s*TỰ\s*LUẬN|BÀI\s*TẬP\s*(?:TỰ\s*LUYỆN|RÈN\s*LUYỆN|VẬN\s*DỤNG|VỀ\s*NHÀ|ÔN\s*TẬP))|(?:[IVX\d]+|[A-D])[\.:\)]\s+(?:TRẮC\s*NGHIỆM|TỰ\s*LUẬN|TRẢ\s*LỜI\s*NGẮN|BÀI\s*TẬP|TÓM\s*TẮT|L[ÝÍ]\s*THUYẾT|DẠNG|CHỦ\s*ĐỀ|CHUYÊN\s*ĐỀ)|(?:Câu|Bài|Ví\s*dụ|Bài\s*tập|Câu\s*hỏi|Question)\s*\d+|(?:Câu|Bài)\s*[IVX]+|(?<!\w)\d+[\.:\)]\s+(?=[A-ZÀ-Ỹ\$\(])))(?!\s*[a-d]\))/i;
     const rawBlocks = text.split(blockSplitRegex).map(b => b.trim()).filter(Boolean);
 
     let currentSectionHeader = '';
@@ -299,33 +363,31 @@ export default function CreateTopicPracticeModal({
       let workingBlock = block.trim();
       if (!workingBlock) return;
 
-      // 1. Kiểm tra nếu toàn bộ khối này là tiêu đề Phần / tiêu đề Trắc nghiệm khách quan đứng riêng
-      if (isPureSectionHeader(workingBlock)) {
-        currentSectionHeader = workingBlock;
+      // 1. Bóc tách tiêu đề phân đoạn và dòng chỉ dẫn ở đầu khối nếu bị dính liền
+      const { cleanedText, strippedHeader } = stripLeadingSectionHeader(workingBlock);
+      if (strippedHeader) {
+        currentSectionHeader = strippedHeader;
+      }
+      workingBlock = cleanedText;
+
+      // Kiểm tra nếu khối này là tiêu đề Phần / tiêu đề Trắc nghiệm / dòng chỉ dẫn làm bài
+      if (!workingBlock || isPureSectionHeader(workingBlock) || isInstructionOrRangeOnly(workingBlock)) {
+        if (workingBlock && !isInstructionOrRangeOnly(workingBlock)) {
+          currentSectionHeader = workingBlock;
+        }
         return; // TUYỆT ĐỐI KHÔNG thêm khối tiêu đề vào danh sách câu hỏi!
       }
 
-      // 2. Nếu dòng đầu tiên của khối là tiêu đề Phần / Dạng bài, tách dòng đó ra thành currentSectionHeader
-      const firstLineEnd = workingBlock.indexOf('\n');
-      const firstLine = firstLineEnd > 0 ? workingBlock.slice(0, firstLineEnd).trim() : workingBlock;
-      if (isPureSectionHeader(firstLine)) {
-        currentSectionHeader = firstLine;
-        if (firstLineEnd > 0) {
-          workingBlock = workingBlock.slice(firstLineEnd).trim();
-          if (!workingBlock) return;
-        } else {
+      // Kiểm tra nhãn dạng bài ở đầu khối
+      const dangMatch = workingBlock.match(/^(?:DẠNG\s*(?:BÀI|TOÁN|CÂU\s*HỎI)?|CHỦ\s*ĐỀ|CHUYÊN\s*ĐỀ|VẤN\s*ĐỀ|PHẦN|Phần|CHƯƠNG|MỤC)\s*[\dIVX|A-Z]*[:\.\-–—\s][^\n]*/i);
+      if (dangMatch) {
+        currentSectionHeader = dangMatch[0].trim();
+        const restOfBlock = workingBlock.slice(dangMatch[0].length).trim();
+        const { cleanedText: restCleaned } = stripLeadingSectionHeader(restOfBlock);
+        if (!restCleaned || isPureSectionHeader(restCleaned) || isInstructionOrRangeOnly(restCleaned)) {
           return;
         }
-      } else {
-        const dangMatch = workingBlock.match(/^(?:DẠNG|Dạng|Chủ\s*đề|PHẦN|Phần)\s*[\dIVX|A-Z]+[:\.\-–—\s][^\n]*/i);
-        if (dangMatch) {
-          currentSectionHeader = dangMatch[0].trim();
-          const restOfBlock = workingBlock.slice(dangMatch[0].length).trim();
-          if (restOfBlock.length === 0) {
-            return;
-          }
-          workingBlock = restOfBlock;
-        }
+        workingBlock = restCleaned;
       }
       let questionDạng = currentSectionHeader;
 
@@ -366,22 +428,18 @@ export default function CreateTopicPracticeModal({
       let qStem = '';
       let detectedType: QuestionType = 'essay';
 
-      // Thử tìm vị trí phương án A (phải có phương án B phía sau)
-      const aPattern = /(?:(?:\n|\s{2,}|\t)(?:\[A\]|\(A\)|A[\.:\)])\s+)/i;
-      const aMatch = aPattern.exec(workingBlock);
-
-      if (aMatch && typeof aMatch.index === 'number') {
-        const afterA = workingBlock.substring(aMatch.index);
-        const hasB = /(?:(?:\n|\s{2,}|\t)(?:\[B\]|\(B\)|B[\.:\)])\s+)/i.test(afterA);
-        if (hasB) {
-          const stemCandidate = workingBlock.substring(0, aMatch.index).trim();
-          const splitted = splitMcqOptions(afterA);
-          if (splitted.length >= 2) {
-            options = splitted;
-            qStem = stemCandidate;
-            detectedType = 'mcq';
-          }
+      // ƯU TIÊN SỐ 1: Dùng splitMcqOptions bóc tách toàn bộ phương án trắc nghiệm A, B, C, D
+      // Tuyệt đối không để câu trắc nghiệm bị nhận nhầm thành tự luận!
+      const splittedOpts = splitMcqOptions(workingBlock);
+      if (splittedOpts.length >= 2) {
+        const firstAIndex = workingBlock.search(/(?:^|\n|\s+)(?:\[A\]|\(A\)|A[\.:\)])\s+/);
+        if (firstAIndex >= 0) {
+          qStem = workingBlock.substring(0, firstAIndex).trim();
+        } else {
+          qStem = workingBlock.replace(/(?:^|\n|\s+)(?:\[A\]|\(A\)|A[\.:\)])\s+[\s\S]*$/, '').trim();
         }
+        options = splittedOpts;
+        detectedType = 'mcq';
       }
 
       // B. Trắc nghiệm Đúng / Sai (TF):
@@ -411,8 +469,8 @@ export default function CreateTopicPracticeModal({
 
         // Kiểm tra xem có phải câu hỏi trả lời ngắn thuần túy không (không có ý nhỏ a, b, không phải bài tự luận)
         const hasSubItems = /(?:^|\n)\s*[a-d]\)/i.test(workingBlock);
-        const isShortAnswer = !hasSubItems && (
-          workingBlock.toLowerCase().includes('trả lời ngắn') || 
+        const isShortAnswer = !hasSubItems && !isPureSectionHeader(workingBlock) && (
+          (workingBlock.toLowerCase().includes('trả lời ngắn') && workingBlock.length > 35) || 
           (ansText && ansText.length < 20 && !ansText.includes('\n') && !workingBlock.toLowerCase().includes('chứng minh') && !workingBlock.toLowerCase().includes('rút gọn'))
         );
 
@@ -429,12 +487,14 @@ export default function CreateTopicPracticeModal({
 
       const cleanStem = stripQuestionPrefix(qStem || `Bài tập ${idx + 1}`, questionDạng);
 
-      // Tuyệt đối không thêm nếu cleanStem là tiêu đề phần hoặc tóm tắt lý thuyết
-      if (isPureSectionHeader(cleanStem)) {
-        currentSectionHeader = cleanStem;
+      // Tuyệt đối không thêm nếu cleanStem hoặc workingBlock là tiêu đề phần hoặc tóm tắt lý thuyết hoặc dòng chỉ dẫn
+      if (isPureSectionHeader(cleanStem) || isPureSectionHeader(workingBlock) || isPureSectionHeader(qStem) || isInstructionOrRangeOnly(cleanStem) || isInstructionOrRangeOnly(workingBlock)) {
+        if (!isInstructionOrRangeOnly(cleanStem)) {
+          currentSectionHeader = cleanStem || workingBlock;
+        }
         return;
       }
-      if (isTheoryQuestion({ question: cleanStem })) {
+      if (isTheoryQuestion({ question: cleanStem }) || isTheoryQuestion({ question: workingBlock })) {
         setTheorySummary(prev => (prev ? prev + '\n\n' + cleanStem : cleanStem));
         return;
       }
@@ -454,15 +514,17 @@ export default function CreateTopicPracticeModal({
     });
 
     // Lọc lại lần cuối để đảm bảo 100% không sót bất kỳ tiêu đề hoặc khối lý thuyết nào bị lọt vào danh sách câu hỏi
-    return questions.filter(q => {
-      const text = (q.question || '').trim();
-      if (isPureSectionHeader(text)) return false;
-      if (isTheoryQuestion(q)) {
-        setTheorySummary(prev => prev || text);
-        return false;
-      }
-      return true;
-    });
+    return questions
+      .filter(q => {
+        const text = (q.question || '').trim();
+        if (isPureSectionHeader(text)) return false;
+        if (isTheoryQuestion(q)) {
+          setTheorySummary(prev => prev || text);
+          return false;
+        }
+        return true;
+      })
+      .map(healQuestionOptions);
   };
 
   // Submit and save
@@ -809,16 +871,18 @@ export default function CreateTopicPracticeModal({
 
                       return (
                         <div key={secIdx} className="space-y-2">
-                          {/* Tiêu đề Dạng bài - Chỉ hiển thị DUY NHẤT 1 LẦN ở phần đầu */}
-                          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl px-3.5 py-2 flex items-center justify-between">
-                            <div className="font-bold text-blue-950 text-xs uppercase flex items-center gap-1.5">
-                              <span>📂</span>
-                              <span>{secHeading}</span>
+                          {/* Tiêu đề Dạng bài / Phần từ tài liệu gốc - Chỉ hiển thị khi có tiêu đề */}
+                          {secHeading && (
+                            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl px-3.5 py-2 flex items-center justify-between">
+                              <div className="font-bold text-blue-950 text-xs flex items-center gap-1.5">
+                                <span>📂</span>
+                                <span>{secHeading}</span>
+                              </div>
+                              <span className="text-[11px] font-semibold text-blue-700 bg-white px-2 py-0.5 rounded-md border border-blue-100 shadow-2xs">
+                                {sec.questions.length} câu
+                              </span>
                             </div>
-                            <span className="text-[11px] font-semibold text-blue-700 bg-white px-2 py-0.5 rounded-md border border-blue-100 shadow-2xs">
-                              {sec.questions.length} câu
-                            </span>
-                          </div>
+                          )}
 
                           {/* Danh sách các câu hỏi thuộc Dạng bài này bố trí lần lượt */}
                           <div className="space-y-2 pl-1">

@@ -3,6 +3,7 @@ import {
   collection, 
   getDocs, 
   addDoc, 
+  setDoc,
   deleteDoc, 
   doc, 
   updateDoc 
@@ -206,22 +207,55 @@ export default function ManageTopicPractices() {
   const [deleteConfirmPractice, setDeleteConfirmPractice] = useState<{ id: string; title: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
+  const getDeletedPracticeIds = (): Set<string> => {
+    try {
+      const raw = localStorage.getItem('esmart_topic_practices_deleted_ids');
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      return new Set(Array.isArray(arr) ? arr.filter(Boolean) : []);
+    } catch {
+      return new Set();
+    }
+  };
+
+  const addDeletedPracticeIds = (ids: (string | undefined)[]) => {
+    try {
+      const current = getDeletedPracticeIds();
+      ids.forEach(x => {
+        if (x && typeof x === 'string') current.add(x);
+      });
+      localStorage.setItem('esmart_topic_practices_deleted_ids', JSON.stringify(Array.from(current)));
+    } catch {
+      // ignore storage errors
+    }
+  };
+
   const loadPractices = async () => {
     setLoading(true);
+    const deletedIds = getDeletedPracticeIds();
+    const sanitizePractice = (p: TopicPractice): TopicPractice => ({
+      ...p,
+      title: normalizePhieuText(p.title || ''),
+      lessonTitle: normalizePhieuText(p.lessonTitle || ''),
+      topicName: normalizePhieuText(p.topicName || ''),
+      questions: (p.questions || []).map(healQuestionOptions)
+    });
+
     try {
       const snap = await getDocs(collection(db, 'topic_practices'));
-      const sanitizePractice = (p: TopicPractice): TopicPractice => ({
-        ...p,
-        title: normalizePhieuText(p.title || ''),
-        lessonTitle: normalizePhieuText(p.lessonTitle || ''),
-        topicName: normalizePhieuText(p.topicName || ''),
-        questions: (p.questions || []).map(healQuestionOptions)
-      });
 
       if (!snap.empty) {
         const loaded: TopicPractice[] = [];
         snap.forEach(d => {
-          loaded.push(sanitizePractice({ id: d.id, ...d.data() } as TopicPractice));
+          const rawData = d.data() as any;
+          const legacyId = rawData?.id;
+          // Nếu bài này đã nằm trong danh sách đã xóa -> bỏ qua và dọn dẹp trên Firestore
+          if (deletedIds.has(d.id) || (legacyId && deletedIds.has(legacyId))) {
+            deleteDoc(doc(db, 'topic_practices', d.id)).catch(() => {});
+            return;
+          }
+          // Đặt id: d.id SAU ...rawData để đảm bảo luôn dùng đúng Document ID của Firestore
+          loaded.push(sanitizePractice({ ...rawData, id: d.id, _legacyId: legacyId } as TopicPractice));
         });
         setPractices(loaded);
         localStorage.setItem('esmart_topic_practices_cache', JSON.stringify(loaded));
@@ -232,13 +266,18 @@ export default function ManageTopicPractices() {
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
-            setPractices(Array.isArray(parsed) ? parsed.map(sanitizePractice) : []);
+            const validCached = (Array.isArray(parsed) ? parsed : [])
+              .filter((p: any) => p && !deletedIds.has(p.id) && !(p._legacyId && deletedIds.has(p._legacyId)))
+              .map(sanitizePractice);
+            setPractices(validCached);
           } catch (e) {
-            setPractices(isInit ? [] : DEFAULT_INITIAL_PRACTICES);
+            const defaults = isInit ? [] : DEFAULT_INITIAL_PRACTICES.filter(p => !deletedIds.has(p.id));
+            setPractices(defaults);
           }
         } else if (!isInit) {
-          setPractices(DEFAULT_INITIAL_PRACTICES);
-          localStorage.setItem('esmart_topic_practices_cache', JSON.stringify(DEFAULT_INITIAL_PRACTICES));
+          const defaults = DEFAULT_INITIAL_PRACTICES.filter(p => !deletedIds.has(p.id));
+          setPractices(defaults);
+          localStorage.setItem('esmart_topic_practices_cache', JSON.stringify(defaults));
           localStorage.setItem('esmart_topic_practices_initialized', 'true');
         } else {
           setPractices([]);
@@ -248,22 +287,18 @@ export default function ManageTopicPractices() {
       console.warn('Firestore load topic_practices failed, using cache:', err);
       const isInit = localStorage.getItem('esmart_topic_practices_initialized');
       const cached = localStorage.getItem('esmart_topic_practices_cache');
-      const sanitizePractice = (p: TopicPractice): TopicPractice => ({
-        ...p,
-        title: normalizePhieuText(p.title || ''),
-        lessonTitle: normalizePhieuText(p.lessonTitle || ''),
-        topicName: normalizePhieuText(p.topicName || ''),
-        questions: (p.questions || []).map(healQuestionOptions)
-      });
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
-          setPractices(Array.isArray(parsed) ? parsed.map(sanitizePractice) : []);
+          const validCached = (Array.isArray(parsed) ? parsed : [])
+            .filter((p: any) => p && !deletedIds.has(p.id) && !(p._legacyId && deletedIds.has(p._legacyId)))
+            .map(sanitizePractice);
+          setPractices(validCached);
         } catch (e) {
-          setPractices(isInit ? [] : DEFAULT_INITIAL_PRACTICES);
+          setPractices(isInit ? [] : DEFAULT_INITIAL_PRACTICES.filter(p => !deletedIds.has(p.id)));
         }
       } else if (!isInit) {
-        setPractices(DEFAULT_INITIAL_PRACTICES);
+        setPractices(DEFAULT_INITIAL_PRACTICES.filter(p => !deletedIds.has(p.id)));
       } else {
         setPractices([]);
       }
@@ -274,24 +309,27 @@ export default function ManageTopicPractices() {
 
   // Save new practice
   const handleSavePractice = async (practiceData: Omit<TopicPractice, 'id' | 'createdAt' | 'createdBy'>) => {
+    const newId = `tp-${Date.now()}`;
     const newPractice: TopicPractice = {
       ...practiceData,
-      id: `tp-${Date.now()}`,
+      id: newId,
       createdAt: new Date().toISOString(),
       createdBy: user?.uid || 'teacher',
-      authorEmail: user?.email || undefined
+      ...(user?.email ? { authorEmail: user.email } : {})
     };
 
     try {
-      const docRef = await addDoc(collection(db, 'topic_practices'), newPractice);
-      newPractice.id = docRef.id;
+      // Loại bỏ hoàn toàn các trường undefined trước khi lưu lên Firestore và đồng bộ Document ID = newId
+      const cleanPayload = JSON.parse(JSON.stringify(newPractice));
+      await setDoc(doc(db, 'topic_practices', newId), cleanPayload);
     } catch (e) {
-      console.warn('Firestore addDoc fallback:', e);
+      console.warn('Firestore setDoc fallback:', e);
     }
 
     setPractices(prev => {
       const updated = [newPractice, ...prev];
       localStorage.setItem('esmart_topic_practices_cache', JSON.stringify(updated));
+      localStorage.setItem('esmart_topic_practices_initialized', 'true');
       return updated;
     });
 
@@ -314,20 +352,36 @@ export default function ManageTopicPractices() {
     setIsDeleting(true);
 
     try {
+      const targetItem = practices.find(p => p.id === id) as any;
+      const legacyId = targetItem?._legacyId;
+      addDeletedPracticeIds([id, legacyId]);
+
       try {
         await deleteDoc(doc(db, 'topic_practices', id));
+        // Xóa triệt để cả các bản ghi cũ trên Firestore có trường data().id trùng với id hoặc legacyId
+        const snap = await getDocs(collection(db, 'topic_practices'));
+        const deletePromises: Promise<void>[] = [];
+        snap.forEach(d => {
+          const dData = d.data() as any;
+          if (d.id === id || d.id === legacyId || dData?.id === id || (legacyId && dData?.id === legacyId)) {
+            deletePromises.push(deleteDoc(doc(db, 'topic_practices', d.id)));
+          }
+        });
+        if (deletePromises.length > 0) {
+          await Promise.allSettled(deletePromises);
+        }
       } catch (e) {
         console.warn('Firestore delete error (local/offline fallback):', e);
       }
 
       setPractices(prev => {
-        const updated = prev.filter(p => p.id !== id);
+        const updated = prev.filter(p => p.id !== id && (p as any)._legacyId !== id);
         localStorage.setItem('esmart_topic_practices_cache', JSON.stringify(updated));
         localStorage.setItem('esmart_topic_practices_initialized', 'true');
         return updated;
       });
 
-      if (previewPractice && previewPractice.id === id) {
+      if (previewPractice && (previewPractice.id === id || (previewPractice as any)._legacyId === id)) {
         setPreviewPractice(null);
       }
 
@@ -345,8 +399,9 @@ export default function ManageTopicPractices() {
 
   // Duplicate practice
   const handleDuplicatePractice = async (p: TopicPractice) => {
+    const { id: _ignoreId, createdAt: _ignoreCreated, createdBy: _ignoreBy, ...rest } = p as any;
     const duplicated: Omit<TopicPractice, 'id' | 'createdAt' | 'createdBy'> = {
-      ...p,
+      ...rest,
       title: `${p.title} (Bản sao)`,
       lessonTitle: `${p.lessonTitle} (Bản sao)`
     };
@@ -366,8 +421,9 @@ export default function ManageTopicPractices() {
 
     // Cập nhật Firebase Firestore nếu có ID
     try {
+      const cleanQuestions = JSON.parse(JSON.stringify(sortedQuestions));
       await updateDoc(doc(db, 'topic_practices', updated.id), {
-        questions: sortedQuestions
+        questions: cleanQuestions
       });
     } catch (e) {
       console.warn('Firestore updateDoc fallback:', e);

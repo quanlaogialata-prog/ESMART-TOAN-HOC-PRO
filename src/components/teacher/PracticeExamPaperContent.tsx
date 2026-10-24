@@ -9,7 +9,9 @@ import {
   stripQuestionPrefix,
   splitMcqOptions,
   isTheoryQuestion,
-  isPureSectionHeader
+  isPureSectionHeader,
+  isInstructionOrRangeOnly,
+  calculateEssayAnswerLineCount
 } from '../../utils/practiceFormatter';
 import { detectQuestionType } from '../../utils/variantGenerator';
 
@@ -143,17 +145,19 @@ export default function PracticeExamPaperContent({
 
           return (
             <div key={sIdx} className="space-y-3">
-              {/* Tiêu đề dạng bài hoặc Phần - CHỈ XUẤT HIỆN 1 LẦN Ở ĐẦU DẠNG */}
-              <div className="export-avoid-break pt-2.5 pb-1 border-b-2 border-gray-900">
-                <div className="font-bold uppercase text-[12px] sm:text-[13px] tracking-normal text-gray-900">
-                  {sectionHeading}
-                </div>
-                {section.instruction && section.instruction.trim() !== sectionHeading && (
-                  <div className="text-[11.5px] italic text-gray-700 mt-0.5">
-                    ({section.instruction})
+              {/* Tiêu đề dạng bài hoặc Phần từ tài liệu gốc - chỉ hiển thị khi có tiêu đề */}
+              {sectionHeading && (
+                <div className="export-avoid-break pt-2.5 pb-1 border-b-2 border-gray-900">
+                  <div className="font-bold text-[12px] sm:text-[13px] tracking-normal text-gray-900">
+                    {sectionHeading}
                   </div>
-                )}
-              </div>
+                  {section.instruction && section.instruction.trim() !== sectionHeading && (
+                    <div className="text-[11.5px] italic text-gray-700 mt-0.5">
+                      ({section.instruction})
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Danh sách câu hỏi trong phần: bố trí lần lượt và KHÔNG lặp lại tiêu đề dạng */}
               <div className="space-y-3.5">
@@ -167,9 +171,23 @@ export default function PracticeExamPaperContent({
                   // Chuẩn hóa nội dung câu hỏi: loại bỏ tiêu đề dạng bài và "Câu 1:" bị lặp lại ở đầu chuỗi
                   const cleanQuestionText = stripQuestionPrefix(q.question || '', sectionHeading);
 
-                  // Nếu mục này là tiêu đề phần hoặc tiêu đề trắc nghiệm khách quan đứng riêng -> không hiển thị thành câu hỏi
-                  if (isPureSectionHeader(cleanQuestionText)) {
+                  // Nếu mục này là tiêu đề phần hoặc tiêu đề trắc nghiệm khách quan đứng riêng hoặc dòng chỉ dẫn -> không hiển thị thành câu hỏi
+                  if (isPureSectionHeader(cleanQuestionText) || isInstructionOrRangeOnly(cleanQuestionText)) {
                     return null;
+                  }
+
+                  // Tự động kiểm tra và bóc tách phương án trắc nghiệm A, B, C, D nếu còn bị dính trong thân câu hỏi
+                  let effectiveOpts = opts;
+                  let effectiveStem = cleanQuestionText;
+                  if (effectiveOpts.length < 2) {
+                    const splitted = splitMcqOptions(cleanQuestionText);
+                    if (splitted.length >= 2) {
+                      effectiveOpts = splitted;
+                      const firstA = cleanQuestionText.search(/(?:^|\n|\s+)(?:\[A\]|\(A\)|A[\.:\)])\s+/);
+                      if (firstA >= 0) {
+                        effectiveStem = cleanQuestionText.substring(0, firstA).trim();
+                      }
+                    }
                   }
 
                   return (
@@ -180,10 +198,22 @@ export default function PracticeExamPaperContent({
                     >
                       {/* Xác định dạng câu hỏi thực tế */}
                       {(() => {
+                        // 0. Nếu mục này là tiêu đề phân đoạn hoặc chỉ dẫn làm bài: TUYỆT ĐỐI KHÔNG HIỂN THỊ "Bài X" hay ô "Bài làm"
+                        if (isPureSectionHeader(effectiveStem) || isInstructionOrRangeOnly(effectiveStem)) {
+                          if (isInstructionOrRangeOnly(effectiveStem)) {
+                            return null;
+                          }
+                          return (
+                            <div className="py-2 my-1.5 border-b-2 border-gray-800 text-center font-bold text-gray-900 uppercase tracking-wide text-xs sm:text-sm font-sans bg-gray-50/80 rounded px-2">
+                              <MathText content={effectiveStem} />
+                            </div>
+                          );
+                        }
+
                         // 1. Kiểm tra xem có phải nội dung Tóm tắt lý thuyết không: BỎ HOÀN TOÀN KHUNG BÀI LÀM
                         const rawText = (q.question || '').toLowerCase();
                         const isTheory = isTheoryQuestion(q) || (
-                          opts.length === 0 && (
+                          effectiveOpts.length === 0 && (
                             rawText.includes('tóm tắt kiến thức') ||
                             rawText.includes('tóm tắt lý thuyết') ||
                             rawText.includes('tóm tắt lí thuyết') ||
@@ -205,17 +235,21 @@ export default function PracticeExamPaperContent({
                                 <span>📌 TÓM TẮT KIẾN THỨC TRỌNG TÂM</span>
                               </div>
                               <div className="whitespace-pre-line">
-                                <MathText content={cleanQuestionText} />
+                                <MathText content={effectiveStem} />
                               </div>
                             </div>
                           );
                         }
 
                         // 2. Trắc nghiệm 4 lựa chọn (A, B, C, D) - KHÔNG CÓ BÀI LÀM
+                        const hasCapitalMcqOpts = effectiveOpts.length >= 2 && (
+                          effectiveOpts.some((o: string) => /^(?:\[?[A-D]\]?|[A-D][\.\:\)])\s+/i.test((o || '').trim())) ||
+                          (effectiveOpts.length === 4 && !effectiveOpts.some((o: string) => /^[a-d][\.\:\)]/i.test((o || '').trim())))
+                        );
                         const isMcq = !isTheory && (
-                          opts.length >= 2 || 
+                          hasCapitalMcqOpts || 
                           q.type === 'mcq' || 
-                          detectQuestionType(q) === 'mcq'
+                          detectQuestionType({ ...q, options: effectiveOpts, question: effectiveStem }) === 'mcq'
                         );
 
                         // 3. Trắc nghiệm Đúng / Sai - KHÔNG CÓ BÀI LÀM
@@ -223,8 +257,8 @@ export default function PracticeExamPaperContent({
                           q.type === 'tf' || 
                           section.type === 'tf' || 
                           detectQuestionType(q) === 'tf' ||
-                          opts.some((o: string) => /^[a-d]\)/i.test(o || ''))
-                        ) && opts.length > 0;
+                          effectiveOpts.some((o: string) => /^[a-d]\)/i.test(o || ''))
+                        ) && effectiveOpts.length > 0;
 
                         // 4. Trả lời ngắn - KHÔNG CÓ BÀI LÀM (chỉ có ô điền đáp số ngắn)
                         const isShort = !isTheory && !isMcq && !isTf && (
@@ -233,7 +267,7 @@ export default function PracticeExamPaperContent({
                           detectQuestionType(q) === 'short'
                         );
 
-                        // 5. Tự luận: CHỈ CÓ BÀI LÀM ĐỐI VỚI CÂU Ở PHẦN TỰ LUẬN
+                        // 5. Tự luận: CHỈ CÓ BÀI LÀM ĐỐI VỚI CÂU Ở PHẦN TỰ LUẬN (Tuyệt đối không áp dụng cho trắc nghiệm)
                         const isEssay = !isTheory && !isMcq && !isTf && !isShort && (
                           section.type === 'essay' || 
                           q.type === 'essay' || 
@@ -251,7 +285,7 @@ export default function PracticeExamPaperContent({
                                 : `Câu ${qNumber}:`}
                             </span>
                             <div className="flex-1 font-normal whitespace-pre-line leading-relaxed">
-                              <MathText content={cleanQuestionText} />
+                              <MathText content={effectiveStem} />
                             </div>
                           </div>
 
@@ -264,13 +298,13 @@ export default function PracticeExamPaperContent({
                           {/* Dạng 1: Trắc nghiệm 4 lựa chọn (A, B, C, D) - Giữ nguyên cấu trúc, KHÔNG có phần bài làm */}
                           {isMcq && (
                             <div className={`grid gap-y-2 mt-2 pl-3 text-xs sm:text-[13px] ${
-                              opts.every((o: string) => (o || '').length < 28)
+                              effectiveOpts.every((o: string) => (o || '').length < 28)
                                 ? 'grid-cols-2 sm:grid-cols-4 print:grid-cols-4 gap-x-6 sm:gap-x-10 print:gap-x-8'
-                                : opts.every((o: string) => (o || '').length < 60)
+                                : effectiveOpts.every((o: string) => (o || '').length < 60)
                                 ? 'grid-cols-1 sm:grid-cols-2 print:grid-cols-2 gap-x-8 sm:gap-x-12 print:gap-x-12'
                                 : 'grid-cols-1 gap-y-2'
                             }`}>
-                              {opts.map((opt: string, oIdx: number) => {
+                              {effectiveOpts.map((opt: string, oIdx: number) => {
                                 const letter = String.fromCharCode(65 + oIdx);
                                 const cleanText = stripOptionPrefix(opt || '');
                                 return (
@@ -325,18 +359,21 @@ export default function PracticeExamPaperContent({
                           )}
 
                           {/* Dạng 4: Tự luận - CHỈ CÓ BÀI LÀM ĐỐI VỚI CÂU Ở PHẦN TỰ LUẬN */}
-                          {isEssay && (
-                            <div className="mt-3 pl-3 font-sans text-xs text-gray-600">
-                              <div className="font-semibold text-gray-700 italic mb-1.5">Bài làm:</div>
-                              <div className="space-y-3.5">
-                                <div className="border-b border-dotted border-gray-400 h-5"></div>
-                                <div className="border-b border-dotted border-gray-400 h-5"></div>
-                                <div className="border-b border-dotted border-gray-400 h-5"></div>
-                                <div className="border-b border-dotted border-gray-400 h-5"></div>
-                                <div className="border-b border-dotted border-gray-400 h-5"></div>
+                          {isEssay && (() => {
+                            const lineCount = calculateEssayAnswerLineCount(q.question || '', rawOpts);
+                            return (
+                              <div className="mt-3 pl-3 font-sans text-xs text-gray-600">
+                                <div className="font-semibold text-gray-700 italic mb-1.5">
+                                  Bài làm: <span className="text-[11px] font-normal text-gray-400">({lineCount} dòng)</span>
+                                </div>
+                                <div className="space-y-3.5">
+                                  {Array.from({ length: lineCount }).map((_, lIdx) => (
+                                    <div key={lIdx} className="border-b border-dotted border-gray-400 h-5"></div>
+                                  ))}
+                                </div>
                               </div>
-                            </div>
-                          )}
+                            );
+                          })()}
 
                           {/* Hiển thị đáp án ngay dưới câu nếu đang ở chế độ xem có lời giải */}
                           {showAnswers && (q.correctAnswer || q.explanation) && (

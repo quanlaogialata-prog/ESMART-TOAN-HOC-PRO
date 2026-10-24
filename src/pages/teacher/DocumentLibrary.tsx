@@ -9,16 +9,11 @@ import {
   FileCheck, EyeOff, Calendar
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import MathText from '../../components/MathText';
 import { 
   convertTcvn3ToUnicode, 
-  formatMathExpressions, 
-  repairVietnameseDocument,
-  smartFormatLessonLayout,
-  autoDetectLessonTitle 
+  repairVietnameseDocument
 } from '../../lib/vietnameseFont';
-import { extractTextFromPdfInBrowser, cleanPdfWhiteSpaces } from '../../lib/pdfProcessingEngine';
-import { saveFileToIDB, getFileFromIDB } from '../../lib/idbStorage';
+import { saveFileToIDB } from '../../lib/idbStorage';
 import { ensureAttachmentDataUrl } from '../../lib/fileUtils';
 import { 
   getCurrentSchoolYear, 
@@ -27,8 +22,6 @@ import {
   matchesSchoolYear, 
   compareSchoolYears 
 } from '../../utils/schoolYear';
-// @ts-ignore
-import html2pdf from 'html2pdf.js';
 
 interface LessonAttachment {
   name: string;
@@ -59,7 +52,14 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
   const [docFormSchoolYear, setDocFormSchoolYear] = useState<string>(getCurrentSchoolYear());
 
   const [grade, setGrade] = useState<number>(9);
-  const [topics, setTopics] = useState<any[]>([]);
+  const [topics, setTopics] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_doclib_topics_9');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [lessons, setLessons] = useState<any[]>([]);
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
   const [selectedLesson, setSelectedLesson] = useState<any | null>(null);
@@ -115,18 +115,44 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
   const modalBodyScrollRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
+    // Hiển thị tức thì từ bộ nhớ đệm nếu có trong lúc đồng bộ Firestore
+    try {
+      const cachedTopicsStr = localStorage.getItem(`esmart_doclib_topics_${grade}`);
+      if (cachedTopicsStr) {
+        const cachedTopics = JSON.parse(cachedTopicsStr).filter((t: any) =>
+          matchesSchoolYear(t.schoolYear, selectedSchoolYear)
+        );
+        setTopics(cachedTopics);
+        if (cachedTopics.length > 0) {
+          const firstId = cachedTopics[0].id;
+          setSelectedTopicId(firstId);
+          const cachedLessonsStr = localStorage.getItem(`esmart_doclib_lessons_${firstId}`);
+          if (cachedLessonsStr) {
+            const cachedLessons = JSON.parse(cachedLessonsStr).filter((l: any) =>
+              matchesSchoolYear(l.schoolYear, selectedSchoolYear)
+            );
+            setLessons(cachedLessons);
+            setSelectedLesson(cachedLessons[0] || null);
+          }
+        }
+      } else {
+        setSelectedTopicId(null);
+        setSelectedLesson(null);
+        setLessons([]);
+      }
+    } catch {}
     loadTopics();
-    setSelectedTopicId(null);
-    setSelectedLesson(null);
-    setLessons([]);
   }, [grade, selectedSchoolYear]);
 
   const loadTopics = async () => {
     try {
       const q = query(collection(db, 'topics'), where('grade', '==', grade));
       const snap = await getDocs(q);
-      let data = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-      data = data.filter(t => matchesSchoolYear(t.schoolYear, selectedSchoolYear));
+      const rawAll = snap.docs.map(d => ({ ...d.data(), id: d.id } as any));
+      try {
+        localStorage.setItem(`esmart_doclib_topics_${grade}`, JSON.stringify(rawAll));
+      } catch {}
+      let data = rawAll.filter(t => matchesSchoolYear(t.schoolYear, selectedSchoolYear));
       data.sort((a, b) => {
         const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
         if (yearDiff !== 0) return yearDiff;
@@ -150,10 +176,28 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
   const loadLessons = async (topicId: string) => {
     try {
       setSelectedTopicId(topicId);
+      try {
+        const cachedLessonsStr = localStorage.getItem(`esmart_doclib_lessons_${topicId}`);
+        if (cachedLessonsStr) {
+          const cachedLessons = JSON.parse(cachedLessonsStr).filter((l: any) =>
+            matchesSchoolYear(l.schoolYear, selectedSchoolYear)
+          );
+          setLessons(cachedLessons);
+          setSelectedLesson(cachedLessons[0] || null);
+        }
+      } catch {}
       const q = query(collection(db, 'lessons'), where('topicId', '==', topicId));
       const snap = await getDocs(q);
-      let lessonData = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-      lessonData = lessonData.filter(l => matchesSchoolYear(l.schoolYear, selectedSchoolYear));
+      const rawLessons = snap.docs.map(d => ({ ...d.data(), id: d.id } as any));
+      try {
+        // Lưu bản tóm tắt nhẹ vào localStorage (loại bỏ dataUrl lớn để không vượt bộ nhớ đệm)
+        const lightLessons = rawLessons.map(l => ({
+          ...l,
+          attachment: l.attachment ? { ...l.attachment, dataUrl: undefined } : null
+        }));
+        localStorage.setItem(`esmart_doclib_lessons_${topicId}`, JSON.stringify(lightLessons));
+      } catch {}
+      let lessonData = rawLessons.filter(l => matchesSchoolYear(l.schoolYear, selectedSchoolYear));
       lessonData.sort((a, b) => {
         const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
         if (yearDiff !== 0) return yearDiff;

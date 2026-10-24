@@ -12,6 +12,7 @@ import EditQuestionsModal from '../../components/teacher/EditQuestionsModal';
 import CancelAssignmentModal from '../../components/teacher/CancelAssignmentModal';
 import { QuestionItem } from '../../types/test';
 import { stripOptionPrefix, checkMcqAnswer, detectAnswerDiscrepancy, autoReconcileQuestion } from '../../utils/gradeEngine';
+import { isPureSectionHeader, isTheoryQuestion, healQuestionOptions } from '../../utils/practiceFormatter';
 import { exportGradebookPdf, exportGradebookExcel } from '../../utils/gradebookExport';
 import { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
 import { dataUrlToFile, ensureAttachmentDataUrl } from '../../lib/fileUtils';
@@ -1992,18 +1993,20 @@ export default function ManageTests() {
                     testData.schoolYear = testInfo.schoolYear;
                   }
                 }
-                const extracted = rawExtracted.map((rawQ: any) => {
-                  const healedQ = autoReconcileQuestion(rawQ).question;
-                  return {
-                    ...healedQ,
-                    question: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.question || '')),
-                    options: Array.isArray(healedQ.options) 
-                      ? healedQ.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
-                      : [],
-                    explanation: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.explanation || '')),
-                    correctAnswer: typeof healedQ.correctAnswer === 'string' ? repairVietnameseDocument(healedQ.correctAnswer) : healedQ.correctAnswer
-                  };
-                });
+                const extracted = rawExtracted
+                  .filter((rawQ: any) => !isPureSectionHeader(rawQ.question || '') && !isTheoryQuestion(rawQ))
+                  .map((rawQ: any) => {
+                    const healedQ = healQuestionOptions(autoReconcileQuestion(rawQ).question);
+                    return {
+                      ...healedQ,
+                      question: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.question || '')),
+                      options: Array.isArray(healedQ.options) 
+                        ? healedQ.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+                        : [],
+                      explanation: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.explanation || '')),
+                      correctAnswer: typeof healedQ.correctAnswer === 'string' ? repairVietnameseDocument(healedQ.correctAnswer) : healedQ.correctAnswer
+                    };
+                  });
                 testData.questionsData = JSON.stringify(extracted);
                 const mcqC = extracted.filter((q: any) => q.type === 'mcq').length;
                 const tfC = extracted.filter((q: any) => q.type === 'tf').length;
@@ -2155,7 +2158,10 @@ export default function ManageTests() {
       
       if (res.ok) {
         const resJson = await res.json();
-        const extracted = Array.isArray(resJson) ? resJson : (resJson.questions || []);
+        const rawExtracted = Array.isArray(resJson) ? resJson : (resJson.questions || []);
+        const extracted = rawExtracted
+          .filter((rawQ: any) => !isPureSectionHeader(rawQ.question || '') && !isTheoryQuestion(rawQ))
+          .map(healQuestionOptions);
         if (Array.isArray(extracted) && extracted.length > 0) {
           const fileUrlToSave = makeOnlineFile.size > 800000 ? makeOnlineTest.fileUrl : fileDataUrl;
           await updateDoc(doc(db, 'tests', makeOnlineTest.id), {

@@ -2337,6 +2337,265 @@ TRẢ VỀ DUY NHẤT MỘT JSON:
     };
   }
 
+  // Helper: Bóc tách các phương án trắc nghiệm A, B, C, D từ chuỗi văn bản
+  function splitMcqOptionsInServer(raw: string): string[] {
+    if (!raw || typeof raw !== 'string') return [];
+    const text = raw.trim();
+    const pattern = /(?:^|\s+)(?:\[([A-D])\]|\(([A-D])\)|([A-D])[\.:\)])\s+/g;
+    const matches: Array<{ letter: string; index: number; len: number }> = [];
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(text)) !== null) {
+      const letter = (m[1] || m[2] || m[3]).toUpperCase();
+      matches.push({ letter, index: m.index, len: m[0].length });
+    }
+
+    if (matches.length >= 2 && matches.some(x => x.letter === 'A') && matches.some(x => x.letter === 'B')) {
+      const results: string[] = [];
+      for (let i = 0; i < matches.length; i++) {
+        const cur = matches[i];
+        const next = matches[i + 1];
+        const start = cur.index + cur.len;
+        const end = next ? next.index : text.length;
+        let optText = text.substring(start, end).trim();
+        if (i === matches.length - 1) {
+          optText = optText.replace(/(?:^|\n|\s{2,})(?:Đáp\s*án|ĐÁP\s*ÁN|Key|Lời\s*giải|Hướng\s*dẫn)[\s\S]*$/i, '').trim();
+        }
+        results.push(`${cur.letter}. ${optText}`);
+      }
+      return results;
+    }
+    return [];
+  }
+
+  // Helper: Kiểm tra dòng chỉ dẫn làm bài hoặc chỉ ghi khoảng câu hỏi
+  function isInstructionOrRangeOnlyInServer(text: string): boolean {
+    if (!text) return false;
+    const clean = text.trim();
+    if (clean.length === 0 || clean.length > 350) return false;
+
+    // Nếu câu có chứa phương án trắc nghiệm A, B, C, D rõ ràng -> Là câu hỏi toán học thật
+    if (/(?:^|\s+)[A-D][\.:\)]\s+/i.test(clean) && /(?:^|\s+)[B-D][\.:\)]\s+/i.test(clean)) {
+      return false;
+    }
+
+    // 1. Khoảng câu hỏi: "Câu 1: đến câu 12...", "Câu 1 đến câu 12...", "đến câu 12...", "từ câu 1 đến câu 12..."
+    if (/^(?:câu|bài)?\s*\d+[:\.\s\-–—]*(?:đến\s+câu|đến\s+bài)\s*\d+/i.test(clean)) return true;
+    if (/^đến\s+(?:câu|bài)\s*\d+/i.test(clean)) return true;
+    if (/(?:từ\s+câu\s*\d+\s+đến\s+câu\s*\d+|từ\s+bài\s*\d+\s+đến\s+bài\s*\d+)/i.test(clean)) return true;
+    if (/^(?:câu|bài)\s*\d+\s*(?:đến|-|–|—)\s*(?:câu|bài)?\s*\d+/i.test(clean) && !clean.includes('?')) return true;
+
+    // 2. Chỉ dẫn làm bài trắc nghiệm / điền đáp số:
+    if (/(?:mỗi\s*câu\s*(?:hỏi)?\s*(?:thí\s*sinh\s*)?chỉ\s*chọn|chỉ\s*chọn\s*một\s*phương\s*án|chọn\s*một\s*phương\s*án\s*đúng)/i.test(clean)) return true;
+    if (/(?:thí\s*sinh\s*điền\s*kết\s*quả|điền\s*đáp\s*số|vào\s*ô\s*trống\s*tương\s*ứng|vào\s*ô\s*tương\s*ứng|điền\s*kết\s*quả)/i.test(clean)) return true;
+    if (/(?:trong\s*mỗi\s*ý\s*[a-d]\s*ở\s*mỗi\s*câu|chọn\s*đúng\s*[\/\-]\s*sai|chọn\s*đúng\s*\(đ\)\s*hoặc\s*sai\s*\(s\)|chọn\s*đúng\s*hoặc\s*sai)/i.test(clean)) return true;
+    if (/^\(?\s*(?:thí\s*sinh|học\s*sinh)\s*(?:trả\s*lời|làm\s*bài|chọn|điền|ghi|không\s*được)/i.test(clean)) return true;
+    if (/^\([^\)]*(?:phương\s*án|đáp\s*số|kết\s*quả|đúng|sai|điểm|câu\s*\d+)[^\)]*\)$/i.test(clean)) return true;
+
+    // 3. Câu cụt sau khi bóc tách nhầm: ví dụ "... đến câu 12. Mỗi câu hỏi chỉ chọn một phương án)"
+    if (/đến\s+câu\s*\d+[\s\S]*chỉ\s*chọn/i.test(clean)) return true;
+    if (/chỉ\s*chọn\s*một\s*phương\s*án\)?$/i.test(clean)) return true;
+
+    return false;
+  }
+
+  // Helper: Bóc tách tiêu đề phân đoạn và dòng chỉ dẫn ở đầu câu hỏi nếu bị dính liền
+  function stripLeadingSectionHeaderInServer(text: string): { cleanedText: string; strippedHeader?: string } {
+    if (!text) return { cleanedText: '' };
+    let trimmed = text.trim();
+    let firstHeader: string | undefined;
+
+    while (true) {
+      const newlineIdx = trimmed.indexOf('\n');
+      const currentLine = newlineIdx >= 0 ? trimmed.substring(0, newlineIdx).trim() : trimmed;
+      if ((isServerSectionHeader(currentLine) || isInstructionOrRangeOnlyInServer(currentLine)) && (newlineIdx >= 0 || trimmed === currentLine)) {
+        if (!isInstructionOrRangeOnlyInServer(currentLine)) {
+          firstHeader = currentLine;
+        }
+        if (newlineIdx >= 0) {
+          trimmed = trimmed.substring(newlineIdx + 1).trim();
+        } else {
+          return { cleanedText: '', strippedHeader: firstHeader };
+        }
+      } else {
+        break;
+      }
+    }
+    return { cleanedText: trimmed, strippedHeader: firstHeader };
+  }
+
+  // Helper: Kiểm tra tiêu đề phân đoạn, tiêu đề phần, tiêu đề dạng bài (TUYỆT ĐỐI KHÔNG BIẾN THÀNH CÂU HỎI)
+  function isServerSectionHeader(text: string): boolean {
+    if (!text) return false;
+    const clean = text.trim();
+    if (clean.length === 0 || clean.length > 350) return false;
+
+    // 1. Nếu câu có chứa phương án trắc nghiệm A, B, C, D rõ ràng -> ĐÂY LÀ CÂU HỎI, KHÔNG PHẢI TIÊU ĐỀ
+    if (/(?:^|\s+)[A-D][\.:\)]\s+/i.test(clean) && /(?:^|\s+)[B-D][\.:\)]\s+/i.test(clean)) {
+      return false;
+    }
+
+    // Nếu là dòng chỉ dẫn làm bài hoặc chỉ ghi khoảng câu hỏi -> ĐÂY LÀ TIÊU ĐỀ/CHỈ DẪN
+    if (isInstructionOrRangeOnlyInServer(clean)) {
+      return true;
+    }
+
+    // 2. Nếu câu hỏi có chứa động từ bài toán cụ thể và dấu hỏi chấm -> KHÔNG PHẢI TIÊU ĐỀ
+    const hasProblemVerb = /^(?:Cho|Tính|Tìm|Giải|Chứng\s*minh|Rút\s*gọn|Xác\s*định|Biết\b|Trong\s*mặt\s*phẳng|Trong\s*không\s*gian|Hàm\s*số\s*nào|Đồ\s*thị\s*hàm\s*số|Phương\s*trình\s*nào|Có\s*bao\s*nhiêu|Một\s*người|Một\s*vật|Hình\s*chóp|Tam\s*giác)\b/i.test(clean);
+    if (hasProblemVerb && (clean.includes('?') || clean.length > 40)) {
+      return false;
+    }
+
+    // 3. Tiêu đề Đề thi, Đề kiểm tra, Kỳ thi, Bài thi, Khảo sát chất lượng, Phiếu bài tập, Đề cương
+    if (/^(?:ĐỀ\s+(?:KIỂM\s+TRA|THI|KHẢO\s+SÁT|ÔN\s+TẬP|CƯƠNG|THAM\s+KHẢO|CHÍNH\s+THỨC|SỐ\s*\d+)|BÀI\s+(?:KIỂM\s+TRA|THI|TẬP\s+ÔN\s+TẬP)|KỲ\s+THI|PHIẾU\s+(?:BÀI\s+TẬP|HỌC\s+TẬP|ÔN\s+TẬP))\b/i.test(clean)) {
+      return true;
+    }
+
+    // 4. Cơ quan giáo dục, Sở/Phòng GD&ĐT, Trường học, Trung tâm
+    if (/^(?:SỞ|PHÒNG|BỘ)\s+(?:GD|GIÁO\s*DỤC)\b/i.test(clean)) return true;
+    if (/^(?:TRƯỜNG|TRƯỜNG\s+THPT|TRƯỜNG\s+THCS|TRƯỜNG\s+TIỂU\s*HỌC|ĐẠI\s*HỌC|TRUNG\s*TÂM)\b/i.test(clean)) return true;
+
+    // 5. Tiêu đề Dạng toán / Dạng bài / Chủ đề / Chuyên đề / Vấn đề / Chương / Mục
+    if (/^(?:\[|\()?\s*(?:DẠNG\s*(?:BÀI|TOÁN|CÂU\s*HỎI)?|CHỦ\s*ĐỀ|CHUYÊN\s*ĐỀ|VẤN\s*ĐỀ|CHƯƠNG|MỤC)\s*[\dIVX|A-Z]*[:\.\-–—\s]/i.test(clean)) {
+      return true;
+    }
+    if (/^(?:DẠNG\s*(?:BÀI|TOÁN|CÂU\s*HỎI)?|CHỦ\s*ĐỀ|CHUYÊN\s*ĐỀ|VẤN\s*ĐỀ|BÀI\s*HỌC)[:\.\-–—\s]/i.test(clean)) {
+      return true;
+    }
+
+    // 6. Tiêu đề Phần (PHẦN I, PHẦN II, PHẦN III, Phần 1, Phần A, Phần trắc nghiệm, Phần tự luận, Phần trả lời ngắn...)
+    if (/^(?:PHẦN|Phần)\s*(?:[IVX\d|A-D]+[\.:\s\-–—]*|(?:TRẮC\s*NGHIỆM|TỰ\s*LUẬN|TRẢ\s*LỜI\s*NGẮN|ĐÚNG\s*SAI))/i.test(clean)) {
+      return true;
+    }
+
+    // 7. Tiêu đề La Mã hoặc Chữ cái mở đầu: "I. TRẮC NGHIỆM", "II. TỰ LUẬN", "III. TRẢ LỜI NGẮN", "A. TRẮC NGHIỆM", "B. TỰ LUẬN", "C. TRẢ LỜI NGẮN", "1. TRẮC NGHIỆM", "2. TỰ LUẬN", "3. TRẢ LỜI NGẮN"
+    if (/^(?:[IVX\d]+|[A-D])[\.:\)]\s*(?:PHẦN\s*)?(?:CÂU\s*(?:HỎI|TRẮC\s*NGHIỆM)?\s*)?(?:TRẮC\s*NGHIỆM|TỰ\s*LUẬN|TRẢ\s*LỜI\s*NGẮN|ĐÚNG\s*SAI|BÀI\s*TẬP|L[ÝÍ]\s*THUYẾT|KIẾN\s*THỨC|DẠNG|CHỦ\s*ĐỀ|CHUYÊN\s*ĐỀ)/i.test(clean)) {
+      return true;
+    }
+
+    // 8. Tiêu đề Dạng bài Trả lời ngắn / Tự luận / Trắc nghiệm đứng một mình hoặc có kèm điểm số (Ví dụ: "DẠNG BÀI TRẢ LỜI NGẮN", "TRẢ LỜI NGẮN", "TRẢ LỜI NGẮN (2.0 ĐIỂM)", "TỰ LUẬN (3,0 ĐIỂM)"):
+    if (/^(?:PHẦN\s*(?:[IVX\d|A-D]+[\.:\s\-–—]*)?)?(?:DẠNG\s*(?:BÀI|TOÁN|CÂU\s*HỎI)?\s*[\dIVX|A-Z]*[:\.\s\-–—]*)?(?:CÂU\s*(?:HỎI|TRẮC\s*NGHIỆM)?\s*)?(?:TỰ\s*LUẬN|TRẮC\s*NGHIỆM|TRẢ\s*LỜI\s*NGẮN|ĐIỀN\s*KHUYẾT)(?:\s*(?:KHÁCH\s*QUAN|ĐÚNG\s*SAI|TRẢ\s*LỜI\s*NGẮN))?(?:\s*\([^\)]*\))?[:\.\s\-–—]*$/i.test(clean)) {
+      return true;
+    }
+    if (/^(?:DẠNG\s*(?:BÀI|TOÁN|CÂU\s*HỎI)?\s*)?(?:CÂU\s*(?:HỎI|TRẮC\s*NGHIỆM)?\s*)?(?:TỰ\s*LUẬN|TRẮC\s*NGHIỆM\s*(?:KHÁCH\s*QUAN)?|TRẢ\s*LỜI\s*NGẮN|ĐIỀN\s*KHUYẾT)\s*(?:\([^\)]*điểm\)|[:\.\-–—])/i.test(clean)) {
+      return true;
+    }
+    if (/^(?:DẠNG\s*(?:BÀI|TOÁN|CÂU\s*HỎI)?\s*)(?:TRẢ\s*LỜI\s*NGẮN|ĐIỀN\s*KHUYẾT|TỰ\s*LUẬN|TRẮC\s*NGHIỆM|ĐÚNG\s*SAI)\b/i.test(clean)) {
+      return true;
+    }
+
+    // 9. Các cụm từ tiêu đề phân loại bài tập đứng riêng (kể cả có ghi điểm như "(3,0 điểm)", "(7.0 điểm)", "(35 câu)"):
+    if (/^(?:TRẮC\s*NGHIỆM\s*(?:KHÁCH\s*QUAN)?|CÂU\s*HỎI\s*TRẮC\s*NGHIỆM|BÀI\s*TẬP\s*TRẮC\s*NGHIỆM|CÂU\s*TRẮC\s*NGHIỆM\s*(?:NHIỀU\s*PHƯƠNG\s*ÁN|ĐÚNG\s*SAI|TRẢ\s*LỜI\s*NGẮN)?|BÀI\s*TẬP\s*(?:TỰ\s*LUẬN|TRẢ\s*LỜI\s*NGẮN)|CÂU\s*(?:HỎI\s*)?TRẢ\s*LỜI\s*NGẮN|CÂU\s*HỎI\s*TỰ\s*LUẬN|PHẦN\s*(?:TỰ\s*LUẬN|TRẮC\s*NGHIỆM|TRẢ\s*LỜI\s*NGẮN)|HỆ\s*THỐNG\s*CÂU\s*HỎI|HỆ\s*THỐNG\s*BÀI\s*TẬP|BÀI\s*TẬP\s*(?:ÔN\s*LUYỆN|TỰ\s*LUYỆN|RÈN\s*LUYỆN|VẬN\s*DỤNG|VỀ\s*NHÀ|ÁP\s*DỤNG|CƠ\s*BẢN|NÂNG\s*CAO)|BÀI\s*TẬP\s*CUỐI\s*CHƯƠNG|LUYỆN\s*TẬP\s*CHUNG|ÔN\s*TẬP\s*CHƯƠNG|BẢNG\s*ĐÁP\s*ÁN|HƯỚNG\s*DẪN\s*GIẢI|LỜI\s*GIẢI\s*CHI\s*TIẾT|ĐÁP\s*ÁN\s*VÀ\s*THANG\s*ĐIỂM)\b/i.test(clean)) {
+      return true;
+    }
+
+    // 10. Bất kỳ tiêu đề chứa "trả lời ngắn" không chứa dữ kiện câu hỏi toán học:
+    if (/trả\s*lời\s*ngắn/i.test(clean) && !clean.includes('?') && !hasProblemVerb && clean.length < 180) {
+      return true;
+    }
+
+    // 10. Tóm tắt lý thuyết độc lập
+    if (/^(?:(?:[I|1|A-D]\.\s*|PHẦN\s*[I|1|A-D][\.:\s]*)?(?:TÓM\s*TẮT\s*(?:KIẾN\s*THỨC|L[ÝÍ]\s*THUYẾT|NỘI\s*DUNG)?|L[ÝÍ]\s*THUYẾT|KIẾN\s*THỨC\s*(?:TRỌNG\s*TÂM|CẦN\s*NHỚ)|NỘI\s*DUNG\s*L[ÝÍ]\s*THUYẾT))/i.test(clean)) {
+      return true;
+    }
+
+    // 11. Tên bài học SGK: "Bài 1: Mệnh đề", "Bài 2. Tập hợp" (không phải đề bài toán)
+    if (/^bài\s+\d+[:\.\s\-–—]+[^?\n]{3,80}$/i.test(clean) && !clean.includes('?') && !/(?:tính|tìm|giải|chứng\s*minh|rút\s*gọn|cho\s*hàm|phương\s*trình)/i.test(clean)) {
+      return true;
+    }
+
+    // 12. Chỉ có nhãn câu không kèm nội dung (Ví dụ: "Bài 1. (2.0 điểm)", "Câu 1:")
+    if (/^(?:Câu|Bài|Ví\s*dụ)\s*\d+[\.:\s]*(?:\([^\)]*điểm\))?$/i.test(clean)) {
+      return true;
+    }
+
+    // 13. Dòng chỉ dẫn làm bài hoặc thông tin đề thi
+    if (/^(?:Thí\s*sinh|Học\s*sinh)\s*(?:chọn|trả\s*lời|làm\s*bài|ghi\s*đáp\s*án|trình\s*bày|không\s*được)/i.test(clean)) {
+      return true;
+    }
+    if (/^(?:Trong\s*mỗi\s*ý\s*[a-d]\s*ở\s*mỗi\s*câu|Mỗi\s*câu\s*hỏi\s*thí\s*sinh\s*chỉ\s*chọn|Thí\s*sinh\s*trả\s*lời\s*từ\s*câu)/i.test(clean)) {
+      return true;
+    }
+    if (/^(?:Thời\s*gian\s*làm\s*bài|Mã\s*đề\s*thi|Mã\s*đề\s*gốc|Đề\s*thi\s*gồm|Họ\s*và\s*tên\s*:|Số\s*báo\s*danh\s*:|Trang\s+\d+)/i.test(clean)) {
+      return true;
+    }
+
+    // 14. Dấu kết thúc đề thi
+    if (/^(?:-+\s*HẾT\s*-+|={2,}\s*HẾT\s*={2,}|HẾT\b|Cán\s*bộ\s*coi\s*thi\s*không\s*giải\s*thích)/i.test(clean)) return true;
+
+    return false;
+  }
+
+  // Helper: Cứu câu hỏi trắc nghiệm nếu bị gán nhầm thành tự luận hoặc có options bị dính trong thân câu hỏi
+  function rescueAndReconcileQuestionInServer(q: any): any {
+    if (!q) return q;
+    let item = { ...q };
+    let stem = (item.question || '').trim();
+    let opts: string[] = Array.isArray(item.options) ? [...item.options] : [];
+
+    // Bóc tách tiêu đề phân đoạn ở đầu câu hỏi nếu bị dính liền vào thân câu
+    const { cleanedText, strippedHeader } = stripLeadingSectionHeaderInServer(stem);
+    if (strippedHeader && !isInstructionOrRangeOnlyInServer(strippedHeader) && !item.sectionHeader) {
+      item.sectionHeader = strippedHeader;
+    }
+    if (strippedHeader && cleanedText.length > 0) {
+      item.question = cleanedText;
+      stem = cleanedText;
+    }
+
+    // Bóc tách phương án trắc nghiệm nếu còn dính trong stem
+    const splittedFromStem = splitMcqOptionsInServer(stem);
+    if (splittedFromStem.length >= 2) {
+      const firstAIdx = stem.search(/(?:^|\n|\s+)(?:\[A\]|\(A\)|A[\.:\)])\s+/);
+      if (firstAIdx >= 0) {
+        item.question = stem.substring(0, firstAIdx).trim();
+      } else {
+        item.question = stem.replace(/(?:^|\n|\s+)(?:\[A\]|\(A\)|A[\.:\)])\s+[\s\S]*$/, '').trim();
+      }
+      item.options = splittedFromStem;
+      item.type = 'mcq';
+      if (!item.points || item.points > 1.5) item.points = 0.25;
+      return item;
+    }
+
+    // Nếu options có A, B, C, D -> 100% là MCQ, KHÔNG BAO GIỜ LÀ ESSAY!
+    const hasCapitalMcqInOpts = opts.length >= 2 && (
+      opts.some(o => /^(?:\[?[A-D]\]?|[A-D][\.\:\)])\s+/i.test((o || '').trim())) ||
+      (opts.length === 4 && !opts.some(o => /^[a-d]\)/.test((o || '').trim())))
+    );
+
+    if (hasCapitalMcqInOpts) {
+      item.type = 'mcq';
+      if (!item.points || item.points > 1.5) item.points = 0.25;
+      return item;
+    }
+
+    // Nếu options có 1 chuỗi chứa cả A, B, C, D
+    if (opts.length === 1 && /(?:^|\s)[B-D][.:\)]/.test(opts[0])) {
+      const splitted = splitMcqOptionsInServer(opts[0]);
+      if (splitted.length >= 2) {
+        item.options = splitted;
+        item.type = 'mcq';
+        if (!item.points || item.points > 1.5) item.points = 0.25;
+        return item;
+      }
+    }
+
+    // Nếu câu bị gán nhầm essay nhưng lại có options A, B, C, D
+    if (item.type === 'essay' && opts.length >= 2 && opts.some(o => /^[A-D][\.\:\)]/i.test((o || '').trim()))) {
+      item.type = 'mcq';
+      if (!item.points || item.points > 1.5) item.points = 0.25;
+      return item;
+    }
+
+    // Nếu câu essay thực sự có các ý a), b), c) trong options -> gộp vào thân câu hỏi
+    if (item.type === 'essay' && opts.length > 0 && opts.some(o => /^[a-d]\)/i.test((o || '').trim()))) {
+      item.question = item.question + '\n' + opts.join('\n');
+      item.options = [];
+    }
+
+    return item;
+  }
+
   app.post("/api/extract-questions", async (req, res) => {
     try {
       const { fileDataUrl, fileName, mimeType, extractedText } = req.body;
@@ -2409,11 +2668,38 @@ Output a single JSON object with TWO main properties:
 2. "questions": Array of question objects:
 - "id": Unique ID (e.g., "q1", "q2")
 - "type": "mcq" | "tf" | "short" | "essay"
-  *** QUY TẮC BẮT BUỘC ĐỂ PHÂN BIỆT BÀI TOÁN TỰ LUẬN VÀ TRẮC NGHIỆM ĐÚNG/SAI: ***
-  * BÀI TOÁN TỰ LUẬN ("type": "essay", "options": []): Các câu bắt đầu bằng "Bài 1", "Bài 2"..., hoặc có điểm "(1.5 điểm)", "(2.0 điểm)", hoặc nằm trong phần "TỰ LUẬN". Các bài này thường có nhiều ý nhỏ a), b), c), d)... (ví dụ: a) Thu gọn đa thức; b) Tính giá trị; c) Tìm x...). ĐÂY LÀ BÀI TOÁN TỰ LUẬN! BẮT BUỘC đặt "type": "essay", "options": [], giữ nguyên TOÀN BỘ các ý a), b), c) vào trong trường "question" (ngăn cách bằng xuống dòng), và "explanation" là lời giải chi tiết từng bước cho tất cả các ý a), b), c). TUYỆT ĐỐI KHÔNG ĐƯỢC CHUYỂN THÀNH "tf" (ĐÚNG/SAI)!
-  *** QUY TẮC BẮT BUỘC LOẠI TRỪ TIÊU ĐỀ PHẦN VÀ TÓM TẮT LÝ THUYẾT (KHÔNG BIẾN THÀNH CÂU HỎI): ***
-  * TUYỆT ĐỐI KHÔNG biến phần "TÓM TẮT LÝ THUYẾT / TÓM TẮT LÍ THUYẾT / KIẾN THỨC TRỌNG TÂM / KIẾN THỨC CẦN NHỚ" thành câu hỏi bài tập!
-  * TUYỆT ĐỐI KHÔNG biến các dòng tiêu đề phân đoạn như "PHẦN I: TRẮC NGHIỆM KHÁCH QUAN", "TRẮC NGHIỆM KHÁCH QUAN", "BÀI TẬP TRẮC NGHIỆM KHÁCH QUAN", "PHẦN II: TỰ LUẬN", "DẠNG 1: ...", "Chủ đề 1: ..." thành câu hỏi! Đây là tiêu đề phân đoạn, KHÔNG PHẢI là câu hỏi bài tập.
+  *** QUY TẮC PHÂN LOẠI CÂU HỎI CHÍNH XÁC TUYỆT ĐỐI (TRẮC NGHIỆM vs TỰ LUẬN vs ĐÚNG/SAI): ***
+  1. CÂU HỎI TRẮC NGHIỆM KHÁCH QUAN 4 LỰA CHỌN ("type": "mcq"):
+  * BẤT KỲ CÂU HỎI NÀO CÓ 4 PHƯƠNG ÁN LỰA CHỌN A, B, C, D (dù câu đó bắt đầu bằng "Câu 1", "Bài 1", "Ví dụ 1", hay có ghi điểm '0.25đ', '0.2đ'...) THÌ 100% BẮT BUỘC ĐẶT "type": "mcq"!
+  * ĐƯA 4 PHƯƠNG ÁN VÀO MẢNG "options": ["A. ...", "B. ...", "C. ...", "D. ..."].
+  * TUYỆT ĐỐI KHÔNG ĐƯỢC CHUYỂN CÂU HỎI CÓ A, B, C, D THÀNH TỰ LUẬN ("essay")!
+  * TUYỆT ĐỐI KHÔNG gộp các phương án A, B, C, D vào thân câu hỏi "question" rồi để "options": []!
+  2. CÂU HỎI TRẮC NGHIỆM ĐÚNG/SAI ("type": "tf"):
+  * CHỈ KHI đề bài ghi rõ "Câu trắc nghiệm Đúng/Sai" hoặc yêu cầu xét tính Đúng/Sai cho 4 mệnh đề a), b), c), d). Mảng "options" chứa 4 ý: ["a) ...", "b) ...", "c) ...", "d) ..."].
+  3. CÂU HỎI TRẢ LỜI NGẮN ("type": "short"):
+  * Câu hỏi chỉ yêu cầu điền một đáp số ngắn, không có phương án A, B, C, D và không có nhiều ý tự luận.
+  4. BÀI TOÁN TỰ LUẬN ("type": "essay"):
+  * CHỈ ÁP DỤNG CHO CÁC BÀI TOÁN TỰ LUẬN YÊU CẦU HỌC SINH TỰ TRÌNH BÀY LỜI GIẢI TỪNG BƯỚC, HOÀN TOÀN KHÔNG CÓ CÁC PHƯƠNG ÁN CHỌN A, B, C, D! (Ví dụ: "Bài 1: Rút gọn biểu thức... a) Tính giá trị; b) Tìm x...").
+  * Giữ nguyên TOÀN BỘ các ý a), b), c) vào trong trường "question" (ngăn cách bằng xuống dòng), "options": [].
+  * "explanation" là lời giải chi tiết từng bước cho từng ý a), b), c).
+  * LƯU Ý SỐNG CÒN: Nếu câu có phương án chọn A, B, C, D thì 100% BẮT BUỘC LÀ TRẮC NGHIỆM ("mcq"), TUYỆT ĐỐI KHÔNG BAO GIỜ ĐƯỢC XẾP VÀO TỰ LUẬN ("essay")!
+
+  *** QUY TẮC BẮT BUỘC: LOẠI TRỪ TIÊU ĐỀ PHẦN, CHỈ DẪN LÀM BÀI VÀ TÓM TẮT LÝ THUYẾT (KHÔNG BIẾN THÀNH CÂU HỎI): ***
+  * TUYỆT ĐỐI KHÔNG tạo câu hỏi từ các dòng tiêu đề phân đoạn, tiêu đề phần, tiêu đề dạng bài như:
+    - "PHẦN I: TRẮC NGHIỆM KHÁCH QUAN", "PHẦN II: TỰ LUẬN", "PHẦN TỰ LUẬN", "A. TRẮC NGHIỆM", "B. TỰ LUẬN", "I. TRẮC NGHIỆM", "II. TỰ LUẬN"
+    - "PHẦN III: TRẢ LỜI NGẮN", "PHẦN III. CÂU TRẮC NGHIỆM TRẢ LỜI NGẮN", "PHẦN 3: CÂU HỎI TRẢ LỜI NGẮN", "III. TRẢ LỜI NGẮN", "3. TRẢ LỜI NGẮN"
+    - "DẠNG BÀI TRẢ LỜI NGẮN", "DẠNG TOÁN: TRẢ LỜI NGẮN", "DẠNG CÂU HỎI TRẢ LỜI NGẮN", "CÂU TRẮC NGHIỆM TRẢ LỜI NGẮN", "CÂU HỎI TRẢ LỜI NGẮN", "TRẮC NGHIỆM TRẢ LỜI NGẮN", "TRẢ LỜI NGẮN"
+    - "Thí sinh trả lời từ câu 1 đến câu 6", "Thí sinh trả lời từ câu 1 đến câu 12", "Thí sinh trả lời từ câu 1 đến câu 4", "Câu 1: đến câu 12. Mỗi câu hỏi chỉ chọn một phương án", "đến câu 12. Mỗi câu hỏi chỉ chọn một phương án"
+    - "(Thí sinh điền kết quả / đáp số vào ô trống tương ứng.)", "(Mỗi câu hỏi thí sinh chỉ chọn một phương án đúng (A, B, C hoặc D).)"
+    - "Trong mỗi ý a), b), c), d) ở mỗi câu, thí sinh chọn đúng hoặc sai"
+    - "BÀI TẬP TỰ LUẬN", "BÀI TẬP TRẮC NGHIỆM", "BÀI TẬP TRẢ LỜI NGẮN", "BÀI TẬP VỀ NHÀ", "BÀI TẬP RÈN LUYỆN", "BÀI TẬP TỰ LUYỆN", "BÀI TẬP ÔN LUYỆN"
+    - "DẠNG 1: ...", "DẠNG 2: ...", "CHỦ ĐỀ 1: ...", "CHUYÊN ĐỀ 1: ...", "VẤN ĐỀ 1: ..."
+    - "TÓM TẮT LÝ THUYẾT", "TÓM TẮT LÍ THUYẾT", "KIẾN THỨC TRỌNG TÂM", "KIẾN THỨC CẦN NHỚ"
+    - "Bài 1: Mệnh đề", "Bài 2: Tập hợp" (tên bài học trong sách giáo khoa)
+    Đây là TIÊU ĐỀ PHÂN ĐOẠN HOẶC CHỈ DẪN LÀM BÀI, KHÔNG PHẢI LÀ CÂU HỎI! TUYỆT ĐỐI KHÔNG ĐƯỢC ĐƯA VÀO mảng "questions".
+  * ĐẢM BẢO GIỮ NGUYÊN BỐ CỤC ĐỀ GỐC: Nếu đề gốc bắt đầu bằng Phần I là trắc nghiệm nhiều phương án (12 câu), hãy trích xuất 12 câu đó làm các câu đầu tiên, KHÔNG ĐƯỢC tự ý chèn tiêu đề hoặc câu hỏi Trả lời ngắn lên trước!
+  * Nếu dòng đầu tiên của câu hỏi có dính kèm tiêu đề phân đoạn (ví dụ: "PHẦN III. CÂU TRẮC NGHIỆM TRẢ LỜI NGẮN\\nCâu 1: ..."), hãy BỎ TOÀN BỘ DÒNG TIÊU ĐỀ ĐÓ và chỉ lấy nội dung câu hỏi toán học từ "Câu 1: ...".
+- "sectionHeader": (Optional) Tiêu đề phân đoạn nguyên bản trong đề thi gốc nếu có (Ví dụ: "PHẦN I. CÂU HỎI TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN", "PHẦN II. CÂU TRẮC NGHIỆM ĐÚNG SAI", "PHẦN III. CÂU TRẮC NGHIỆM TRẢ LỜI NGẮN", "PHẦN II. TỰ LUẬN")
 - "question": Full question stem in Vietnamese. Wrap all math formulas, variables, and vectors in LaTeX $...$ or $$...$$
 - "options": 
   * For "mcq": Array of 4 choices ["A. ...", "B. ...", "C. ...", "D. ..."] (with LaTeX math wrapped in $)
@@ -2464,27 +2750,59 @@ Output valid JSON only, without markdown fences. Escaping backslashes for LaTeX 
             let sanitized = sanitizeQuestionFigures(rawQuestions);
             let reconciled = reconcileAnswersWithExplanations(sanitized);
             if (Array.isArray(reconciled) && reconciled.length > 0) {
-              const cleaned = reconciled
-                .filter((q: any) => {
-                  const stem = (q.question || '').trim();
-                  // Kiểm tra tiêu đề phần / tiêu đề trắc nghiệm khách quan
-                  const isHeader = /^(?:(?:PHẦN|Phần|CHƯƠNG|Chương|MỤC|Mục|CHỦ\s*ĐỀ|Chủ\s*đề)\s*[IVX\d]+[\.:\s\-–—]*)?(?:[A-D|IVX\d]+[\.:\)\s\-–—]+)?\s*(?:TRẮC\s*NGHIỆM\s*(?:KHÁCH\s*QUAN)?|CÂU\s*HỎI\s*TRẮC\s*NGHIỆM|BÀI\s*TẬP\s*TRẮC\s*NGHIỆM|CÂU\s*TRẮC\s*NGHIỆM|BÀI\s*TẬP\s*TỰ\s*LUẬN|TỰ\s*LUẬN|HỆ\s*THỐNG\s*CÂU\s*HỎI|HỆ\s*THỐNG\s*BÀI\s*TẬP|BÀI\s*TẬP\s*ÔN\s*LUYỆN)\s*(?:\([^)]*\))?$/i.test(stem) ||
-                    /^(?:DẠNG|Dạng|Chủ\s*đề)\s*[\dIVX]+[:\.\-–—\s][^\n]{0,80}$/i.test(stem);
-                  if (isHeader) return false;
-                  // Kiểm tra khối lý thuyết độc lập
-                  const isTheory = /^(?:(?:[I|1|A-D]\.\s*|PHẦN\s*[I|1|A-D][\.:\s]*)?(?:TÓM\s*TẮT\s*(?:KIẾN\s*THỨC|L[ÝÍ]\s*THUYẾT|NỘI\s*DUNG)?|L[ÝÍ]\s*THUYẾT|KIẾN\s*THỨC\s*(?:TRỌNG\s*TÂM|CẦN\s*NHỚ)|NỘI\s*DUNG\s*L[ÝÍ]\s*THUYẾT))/i.test(stem);
-                  if (isTheory && (!Array.isArray(q.options) || q.options.length === 0)) return false;
-                  return true;
-                })
-                .map((q: any) => ({
+              // Kế thừa tiêu đề phần nguyên bản từ các mục tiêu đề đứng riêng trước khi lọc bỏ
+              let activeHeader = '';
+              const withPropagatedHeaders: any[] = [];
+              for (const q of reconciled) {
+                const stem = (q.question || '').trim();
+                const { cleanedText, strippedHeader } = stripLeadingSectionHeaderInServer(stem);
+                if (strippedHeader && !isInstructionOrRangeOnlyInServer(strippedHeader)) {
+                  activeHeader = strippedHeader;
+                }
+                const effectiveStem = cleanedText || stem;
+                if (!effectiveStem || isServerSectionHeader(effectiveStem) || isInstructionOrRangeOnlyInServer(effectiveStem)) {
+                  if (effectiveStem && !isInstructionOrRangeOnlyInServer(effectiveStem)) {
+                    activeHeader = effectiveStem;
+                  }
+                  continue;
+                }
+                const isTheory = /^(?:(?:[I|1|A-D]\.\s*|PHẦN\s*[I|1|A-D][\.:\s]*)?(?:TÓM\s*TẮT\s*(?:KIẾN\s*THỨC|L[ÝÍ]\s*THUYẾT|NỘI\s*DUNG)?|L[ÝÍ]\s*THUYẾT|KIẾN\s*THỨC\s*(?:TRỌNG\s*TÂM|CẦN\s*NHỚ)|NỘI\s*DUNG\s*L[ÝÍ]\s*THUYẾT))/i.test(effectiveStem);
+                if (isTheory && (!Array.isArray(q.options) || q.options.length === 0)) {
+                  continue;
+                }
+                const explicitH = (q.sectionHeader || '').trim();
+                if (explicitH && !isInstructionOrRangeOnlyInServer(explicitH)) {
+                  activeHeader = explicitH;
+                }
+                withPropagatedHeaders.push({
                   ...q,
-                  question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
-                  options: Array.isArray(q.options) 
-                    ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
-                    : [],
-                  explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
-                  correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
-                }));
+                  question: effectiveStem,
+                  ...(activeHeader ? { sectionHeader: activeHeader } : {})
+                });
+              }
+
+              // Đối chiếu thêm với bộ phân tích tài liệu gốc để giữ đúng tiêu đề phần nếu AI bỏ sót sectionHeader
+              const docParsedForHeaders = parseQuestionsFromDocumentText(textToExtract);
+
+              const cleaned = withPropagatedHeaders
+                // 2. Cứu câu hỏi trắc nghiệm nếu bị gán nhầm thành tự luận hoặc có options bị dính trong thân câu
+                .map((q: any) => rescueAndReconcileQuestionInServer(q))
+                // 3. Lọc lại lần nữa để đảm bảo 100% không sót tiêu đề sau khi bóc tách
+                .filter((q: any) => !isServerSectionHeader(q.question || '') && !isInstructionOrRangeOnlyInServer(q.question || '') && (q.question || '').trim().length > 0)
+                .map((q: any, idx: number) => {
+                  const matchedDocQ = docParsedForHeaders.length > idx ? docParsedForHeaders[idx] : undefined;
+                  const preservedHeader = q.sectionHeader || matchedDocQ?.sectionHeader;
+                  return {
+                    ...q,
+                    ...(preservedHeader ? { sectionHeader: repairVietnameseDocument(convertTcvn3ToUnicode(preservedHeader)) } : {}),
+                    question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+                    options: Array.isArray(q.options) 
+                      ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+                      : [],
+                    explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+                    correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+                  };
+                });
 
               const rubricCleaned = autoEstablishScoringRubric(cleaned);
               const regexMetadata = extractTestMetadataFromText(textToExtract, fileName, rubricCleaned);
@@ -2512,15 +2830,19 @@ Output valid JSON only, without markdown fences. Escaping backslashes for LaTeX 
 
       // Robust fallback: extract raw text and parse structure
       const fallbackQuestions = parseQuestionsFromDocumentText(textToExtract);
-      const cleanedFallback = fallbackQuestions.map((q: any) => ({
-        ...q,
-        question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
-        options: Array.isArray(q.options) 
-          ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
-          : [],
-        explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
-        correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
-      }));
+      const cleanedFallback = fallbackQuestions
+        .filter((q: any) => !isServerSectionHeader(q.question || '') && !isInstructionOrRangeOnlyInServer(q.question || ''))
+        .map((q: any) => rescueAndReconcileQuestionInServer(q))
+        .filter((q: any) => !isServerSectionHeader(q.question || '') && !isInstructionOrRangeOnlyInServer(q.question || '') && (q.question || '').trim().length > 0)
+        .map((q: any) => ({
+          ...q,
+          question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
+          options: Array.isArray(q.options) 
+            ? q.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+            : [],
+          explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
+          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
+        }));
 
       const rubricFallback = autoEstablishScoringRubric(cleanedFallback);
       const fallbackMetadata = extractTestMetadataFromText(textToExtract, fileName, rubricFallback);
@@ -2632,88 +2954,134 @@ Output valid JSON only, without markdown fences. Escaping backslashes for LaTeX 
     let currentQ: any = null;
     let isCurrentSectionEssay = false;
     let isCurrentSectionTf = false;
+    let isCurrentSectionShort = false;
 
     const pushCurrent = () => {
       if (currentQ && currentQ.question && currentQ.question.trim().length > 0) {
-        const isEssayStem = isCurrentSectionEssay || /^bài\s+\d+/i.test(currentQ.question.trim()) || /(?:tự\s*luận|\d+\s*(?:điểm|đ\b))/i.test(currentQ.question);
-        if (isEssayStem) {
-          currentQ.type = 'essay';
-          if (currentQ.options && currentQ.options.length > 0) {
-            currentQ.question = currentQ.question + '\n' + currentQ.options.join('\n');
-            currentQ.options = [];
-          }
-          currentQ.points = currentQ.points || 2.0;
-        } else if (!currentQ.options || currentQ.options.length === 0) {
-          if (currentQ.type !== 'short') {
-            currentQ.type = 'essay';
-            currentQ.points = currentQ.points || 1.0;
-          }
-        } else {
-          // Kiểm tra xem đây có phải bài toán tự luận có các ý a), b), c) hay không
-          const isActionSubItems = currentQ.options.some((o: string) => /^[a-d][\.\:\)]\s*(?:rút\s*gọn|thu\s*gọn|tính|chứng\s*minh|tìm|giải|phân\s*tích|xác\s*định|vẽ|cho|hãy|biết|đặt|chứng\s*tỏ)/i.test(o.trim()));
-          if (isActionSubItems) {
-            currentQ.type = 'essay';
-            currentQ.question = currentQ.question + '\n' + currentQ.options.join('\n');
-            currentQ.options = [];
-            currentQ.points = currentQ.points || 2.0;
-          } else if (isCurrentSectionTf) {
-            currentQ.type = 'tf';
-            currentQ.points = 1.0;
+        // Nếu bản thân currentQ.question là tiêu đề phân đoạn hoặc dòng chỉ dẫn -> BỎ QUA HOÀN TOÀN
+        if (isServerSectionHeader(currentQ.question) || isInstructionOrRangeOnlyInServer(currentQ.question)) {
+          currentQ = null;
+          return;
+        }
+
+        // Cứu và phân loại chính xác câu hỏi
+        let healed = rescueAndReconcileQuestionInServer(currentQ);
+        if (isServerSectionHeader(healed.question) || isInstructionOrRangeOnlyInServer(healed.question)) {
+          currentQ = null;
+          return;
+        }
+
+        // Kiểm tra xem có phải câu hỏi trắc nghiệm không
+        const isMcq = healed.type === 'mcq' || (Array.isArray(healed.options) && healed.options.length >= 2 && healed.options.some((o: string) => /^[A-D][\.\:\)]/i.test(o.trim())));
+        if (isMcq) {
+          healed.type = 'mcq';
+          healed.points = (healed.points && healed.points <= 0.5) ? healed.points : 0.25;
+        } else if (isCurrentSectionTf || healed.type === 'tf') {
+          healed.type = 'tf';
+          healed.points = 1.0;
+        } else if (isCurrentSectionShort || healed.type === 'short') {
+          healed.type = 'short';
+          healed.points = 0.5;
+        } else if (isCurrentSectionEssay || healed.type === 'essay' || /(?:tự\s*luận)/i.test(healed.question)) {
+          healed.type = 'essay';
+          healed.points = healed.points || 1.0;
+        } else if (!healed.options || healed.options.length === 0) {
+          const hasEssayAction = /(?:chứng\s*minh|rút\s*gọn|giải\s*phương\s*trình|tìm\s*x|tính\s*giá\s*trị|vẽ\s*đồ\s*thị)/i.test(healed.question) || /(?:^|\n)\s*[a-d]\)/i.test(healed.question);
+          if (hasEssayAction) {
+            healed.type = 'essay';
+            healed.points = healed.points || 1.0;
           } else {
-            const isTf = currentQ.type === 'tf';
-            if (isTf) {
-              currentQ.type = 'tf';
-              currentQ.points = 1.0;
-            } else {
-              currentQ.type = 'mcq';
-              currentQ.points = 0.25;
-            }
+            healed.type = 'short';
+            healed.points = 0.5;
           }
         }
+
         questions.push({
-          ...currentQ,
-          question: repairVietnameseDocument(convertTcvn3ToUnicode(currentQ.question)),
-          options: Array.isArray(currentQ.options) ? currentQ.options.map((o: string) => repairVietnameseDocument(convertTcvn3ToUnicode(o))) : [],
-          explanation: repairVietnameseDocument(convertTcvn3ToUnicode(currentQ.explanation || ''))
+          ...healed,
+          question: repairVietnameseDocument(convertTcvn3ToUnicode(healed.question)),
+          options: Array.isArray(healed.options) ? healed.options.map((o: string) => repairVietnameseDocument(convertTcvn3ToUnicode(o))) : [],
+          explanation: repairVietnameseDocument(convertTcvn3ToUnicode(healed.explanation || ''))
         });
       }
     };
 
-    const sectionRegex = /^(?:PHẦN|Phần|CHƯƠNG|Chương|BÀI|Bài)\s+[IVXLCDM\d]+/i;
-    const qRegex = /(?:^|[\.\:\)]\s*|\b)(Câu\s+\d+|Bài\s+\d+|Question\s+\d+)[:\.\s]/i;
+    const qRegex = /(?:^|[\.\:\)]\s*)(?<!(?:từ|đến|các|những)\s*)(Câu\s+\d+|Bài\s+\d+|Question\s+\d+)[:\.\s](?!\s*(?:đến|-|–|—)\s*(?:câu|bài)?\s*\d+)/i;
     const optRegex = /^([A-D])[\.\:\)]\s+(.*)/;
     const tfOptRegex = /^([a-d])[\.\:\)]\s+(.*)/;
     const expRegex = /^(?:\*?\s*)?(?:Lời\s*giải|Hướng\s*dẫn\s*giải|Bài\s*giải|Giải)[:\.\s]*/i;
     const ansRegex = /^(?:Đáp\s*án|Chọn)[:\.\s]*([A-D])\b/i;
 
     let inExplanation = false;
+    let currentSectionHeader = '';
 
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      if (sectionRegex.test(trimmed)) {
+      if (isServerSectionHeader(trimmed) || isInstructionOrRangeOnlyInServer(trimmed)) {
         pushCurrent();
         currentQ = null;
         inExplanation = false;
-        isCurrentSectionEssay = /tự\s*luận/i.test(trimmed);
-        isCurrentSectionTf = /đúng\s*[\/\-]\s*sai/i.test(trimmed);
+        if (!isInstructionOrRangeOnlyInServer(trimmed)) {
+          currentSectionHeader = trimmed;
+        }
+        if (/trả\s*lời\s*ngắn/i.test(trimmed)) {
+          isCurrentSectionShort = true;
+          isCurrentSectionEssay = false;
+          isCurrentSectionTf = false;
+        } else if (/tự\s*luận/i.test(trimmed)) {
+          isCurrentSectionEssay = true;
+          isCurrentSectionTf = false;
+          isCurrentSectionShort = false;
+        } else if (/đúng\s*[\/\-]\s*sai/i.test(trimmed)) {
+          isCurrentSectionTf = true;
+          isCurrentSectionEssay = false;
+          isCurrentSectionShort = false;
+        } else if (/trắc\s*nghiệm/i.test(trimmed)) {
+          isCurrentSectionEssay = false;
+          isCurrentSectionTf = false;
+          isCurrentSectionShort = false;
+        }
         continue;
       }
       const qMatch = trimmed.match(qRegex);
       if (qMatch && qMatch[1]) {
+        if (isInstructionOrRangeOnlyInServer(trimmed)) {
+          continue;
+        }
         pushCurrent();
         inExplanation = false;
         const qStart = trimmed.indexOf(qMatch[1]);
         const cleanStem = qStart >= 0 ? trimmed.slice(qStart).trim() : trimmed;
-        const isEssayStem = isCurrentSectionEssay || /^bài\s+\d+/i.test(cleanStem) || /(?:\d+(?:[.,]\d+)?\s*(?:điểm|đ\b)|tự\s*luận)/i.test(cleanStem);
+        if (isServerSectionHeader(cleanStem) || isInstructionOrRangeOnlyInServer(cleanStem)) {
+          if (!isInstructionOrRangeOnlyInServer(cleanStem)) {
+            currentSectionHeader = cleanStem;
+          }
+          if (/trả\s*lời\s*ngắn/i.test(cleanStem)) {
+            isCurrentSectionShort = true;
+            isCurrentSectionEssay = false;
+            isCurrentSectionTf = false;
+          } else if (/tự\s*luận/i.test(cleanStem)) {
+            isCurrentSectionEssay = true;
+            isCurrentSectionTf = false;
+            isCurrentSectionShort = false;
+          } else if (/trắc\s*nghiệm/i.test(cleanStem)) {
+            isCurrentSectionEssay = false;
+            isCurrentSectionTf = false;
+            isCurrentSectionShort = false;
+          }
+          continue;
+        }
+        const isEssayStem = isCurrentSectionEssay && !isCurrentSectionTf && !isCurrentSectionShort;
+        const resolvedType = isCurrentSectionShort ? 'short' : (isEssayStem ? 'essay' : 'mcq');
         currentQ = {
           id: `q_${questions.length + 1}_${Date.now()}`,
-          type: isEssayStem ? 'essay' : 'mcq',
+          type: resolvedType,
           question: cleanStem,
           options: [],
-          correctAnswer: 'A',
+          correctAnswer: isCurrentSectionShort ? '' : 'A',
           explanation: '',
-          points: isEssayStem ? 1.0 : 0.25
+          points: isCurrentSectionShort ? 0.5 : (isEssayStem ? 1.0 : 0.25),
+          ...(currentSectionHeader ? { sectionHeader: currentSectionHeader } : {})
         };
         continue;
       }
@@ -2746,11 +3114,11 @@ Output valid JSON only, without markdown fences. Escaping backslashes for LaTeX 
 
         const tfMatch = trimmed.match(tfOptRegex);
         if (tfMatch) {
-          if (isCurrentSectionEssay || currentQ.type === 'essay' || /^bài\s+\d+/i.test(currentQ.question) || /(?:tự\s*luận|\d+\s*(?:điểm|đ\b))/i.test(currentQ.question)) {
+          if (isCurrentSectionEssay || currentQ.type === 'essay' || /(?:tự\s*luận)/i.test(currentQ.question)) {
             // Đây là ý nhỏ của bài toán tự luận
             currentQ.type = 'essay';
             currentQ.question = (currentQ.question ? currentQ.question + '\n' : '') + trimmed;
-            currentQ.points = currentQ.points || 2.0;
+            currentQ.points = currentQ.points || 1.0;
           } else {
             currentQ.options.push(trimmed);
             currentQ.type = 'tf';
@@ -2764,11 +3132,16 @@ Output valid JSON only, without markdown fences. Escaping backslashes for LaTeX 
     }
     pushCurrent();
 
+    // Lọc lại để loại bỏ bất kỳ tiêu đề hoặc khối lý thuyết nào bị sót
+    const finalCleaned = questions
+      .filter(q => !isServerSectionHeader(q.question))
+      .map(q => rescueAndReconcileQuestionInServer(q));
+
     // If still no questions found, create sample blocks from paragraphs
-    if (questions.length === 0 && repairedText.length > 20) {
-      const paragraphs = repairedText.split(/\n\s*\n/).filter(p => p.trim().length > 10);
+    if (finalCleaned.length === 0 && repairedText.length > 20) {
+      const paragraphs = repairedText.split(/\n\s*\n/).filter(p => p.trim().length > 10 && !isServerSectionHeader(p));
       paragraphs.slice(0, 10).forEach((p, idx) => {
-        questions.push({
+        finalCleaned.push({
           id: `q_${idx + 1}`,
           type: 'mcq',
           question: `Câu ${idx + 1}: ${p.slice(0, 200)}...`,
@@ -2780,7 +3153,7 @@ Output valid JSON only, without markdown fences. Escaping backslashes for LaTeX 
       });
     }
 
-    return questions;
+    return finalCleaned;
   }
 
   // Helper: Extract complete text and structure from uploaded document (DOCX, DOC, PDF, TXT)

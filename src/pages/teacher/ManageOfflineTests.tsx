@@ -46,6 +46,7 @@ import {
 import MathText from '../../components/MathText';
 import { generateTestVariants, TestVariant, groupQuestionsByExamStructure, detectQuestionType, QuestionType, ExamSection } from '../../utils/variantGenerator';
 import { stripOptionPrefix, detectAnswerDiscrepancy, autoReconcileQuestion } from '../../utils/gradeEngine';
+import { isPureSectionHeader, isInstructionOrRangeOnly, isTheoryQuestion, healQuestionOptions } from '../../utils/practiceFormatter';
 import EditQuestionsModal from '../../components/teacher/EditQuestionsModal';
 import DocumentReferenceSelectorModal, { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
 import { dataUrlToFile, ensureAttachmentDataUrl } from '../../lib/fileUtils';
@@ -1236,14 +1237,19 @@ export default function ManageOfflineTests() {
           if (testInfo.durationMinutes) setExamDuration(Number(testInfo.durationMinutes));
           if (testInfo.schoolYear) setExamSchoolYear(testInfo.schoolYear);
         }
-        const questions = rawQuestions.map((q: any) => ({
-          ...q,
-          question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
-          options: Array.isArray(q.options) ? q.options.map((o: string) => repairVietnameseDocument(convertTcvn3ToUnicode(o || ''))) : [],
-          explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
-          correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer,
-          figureSvg: q.figureSvg ? healMathSvg(q.figureSvg) : q.figureSvg
-        }));
+        const questions = rawQuestions
+          .filter((q: any) => !isPureSectionHeader(q.question || '') && !isTheoryQuestion(q))
+          .map((rawQ: any) => {
+            const healedQ = healQuestionOptions(autoReconcileQuestion(rawQ).question);
+            return {
+              ...healedQ,
+              question: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.question || '')),
+              options: Array.isArray(healedQ.options) ? healedQ.options.map((o: string) => repairVietnameseDocument(convertTcvn3ToUnicode(o || ''))) : [],
+              explanation: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.explanation || '')),
+              correctAnswer: typeof healedQ.correctAnswer === 'string' ? repairVietnameseDocument(healedQ.correctAnswer) : healedQ.correctAnswer,
+              figureSvg: healedQ.figureSvg ? healMathSvg(healedQ.figureSvg) : healedQ.figureSvg
+            };
+          });
         setExtractedQuestions(questions);
 
         const hasEssay = questions.some((q: any) => detectQuestionType(q) === 'essay');
@@ -1318,14 +1324,19 @@ export default function ManageOfflineTests() {
             if (testInfo.schoolYear) setExamSchoolYear(testInfo.schoolYear);
           }
 
-          const questions = rawQuestions.map((q: any) => ({
-            ...q,
-            question: repairVietnameseDocument(convertTcvn3ToUnicode(q.question || '')),
-            options: Array.isArray(q.options) ? q.options.map((o: string) => repairVietnameseDocument(convertTcvn3ToUnicode(o || ''))) : [],
-            explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
-            correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer,
-            figureSvg: q.figureSvg ? healMathSvg(q.figureSvg) : q.figureSvg
-          }));
+          const questions = rawQuestions
+            .filter((q: any) => !isPureSectionHeader(q.question || '') && !isTheoryQuestion(q))
+            .map((rawQ: any) => {
+              const healedQ = healQuestionOptions(autoReconcileQuestion(rawQ).question);
+              return {
+                ...healedQ,
+                question: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.question || '')),
+                options: Array.isArray(healedQ.options) ? healedQ.options.map((o: string) => repairVietnameseDocument(convertTcvn3ToUnicode(o || ''))) : [],
+                explanation: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.explanation || '')),
+                correctAnswer: typeof healedQ.correctAnswer === 'string' ? repairVietnameseDocument(healedQ.correctAnswer) : healedQ.correctAnswer,
+                figureSvg: healedQ.figureSvg ? healMathSvg(healedQ.figureSvg) : healedQ.figureSvg
+              };
+            });
           setExtractedQuestions(questions);
 
           // Auto-detect exam structure

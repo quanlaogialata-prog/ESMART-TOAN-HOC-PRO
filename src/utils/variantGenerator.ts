@@ -1,4 +1,5 @@
 import { resolveMcqLetter, stripOptionPrefix, canonicalMathText } from './gradeEngine';
+import { splitMcqOptions, isPureSectionHeader, isInstructionOrRangeOnly } from './practiceFormatter';
 
 export type QuestionType = 'mcq' | 'tf' | 'short' | 'essay';
 
@@ -9,38 +10,63 @@ export interface TestVariant {
 }
 
 export function detectQuestionType(q: any): QuestionType {
+  if (!q) return 'mcq';
   const type = (q.type || '').toString().toLowerCase().trim();
-  if (type === 'tf' || type === 'true_false' || type === 'dung_sai') return 'tf';
-  if (type === 'short' || type === 'short_answer' || type === 'dien_khuyet' || type === 'tra_loi_ngan') return 'short';
-  if (type === 'essay' || type === 'tu_luan' || q.isEssay) return 'essay';
-
-  const rawQ = (q.question || '').toLowerCase();
+  const rawQ = (q.question || '').toString();
   const opts = Array.isArray(q.options) ? q.options : [];
   const ans = (q.correctAnswer || '').toString().trim().toLowerCase();
 
-  // If options have a), b), c), d) or answer contains Đ/S or multiple values
+  // 1. ƯU TIÊN HÀNG ĐẦU: Nếu có các phương án trắc nghiệm A, B, C, D rõ ràng -> BẮT BUỘC LÀ MCQ!
+  // Tuyệt đối không cho phép câu trắc nghiệm bị nhận nhầm thành tự luận dù type có bị gán nhầm là 'essay'
+  const hasMcqInOpts = opts.length >= 2 && (
+    opts.some(o => /^(?:\[?[A-D]\]?|[A-D][\.\:\)])\s+/i.test((o || '').trim())) ||
+    (opts.length === 4 && !opts.some(o => /^[a-d][\.\:\)]/i.test((o || '').trim())))
+  );
+  const splittedInStem = splitMcqOptions(rawQ);
+  const hasMcqInStem = splittedInStem.length >= 2;
+
+  if (hasMcqInOpts || hasMcqInStem) {
+    return 'mcq';
+  }
+
+  // 2. Kiểm tra Đúng / Sai (tf)
+  if (type === 'tf' || type === 'true_false' || type === 'dung_sai') return 'tf';
   if (opts.length > 0 && opts.some(o => /^[a-d]\)/i.test(o?.trim() || ''))) {
     if (ans.includes('đ') || ans.includes('s') || ans.includes('true') || ans.includes('false') || ans.includes(',')) {
       return 'tf';
     }
   }
 
-  // If no options
+  // 3. Kiểm tra Trả lời ngắn (short)
+  if (type === 'short' || type === 'short_answer' || type === 'dien_khuyet' || type === 'tra_loi_ngan') return 'short';
+
+  // 4. Kiểm tra Tự luận (essay) - Chỉ khi KHÔNG phải tiêu đề phân đoạn / dòng chỉ dẫn và KHÔNG có phương án trắc nghiệm
+  if ((type === 'essay' || type === 'tu_luan' || q.isEssay) && !isPureSectionHeader(rawQ) && !isInstructionOrRangeOnly(rawQ)) {
+    return 'essay';
+  }
+
+  // 5. Nếu không có options:
   if (opts.length === 0) {
+    // Nếu là tiêu đề phân đoạn hoặc dòng chỉ dẫn: Không tự động chuyển thành câu hỏi tự luận hay trả lời ngắn ảo!
+    if (isPureSectionHeader(rawQ) || isInstructionOrRangeOnly(rawQ)) {
+      return (type === 'short' ? 'short' : (type === 'mcq' ? 'mcq' : 'essay'));
+    }
+
+    const rawLower = rawQ.toLowerCase();
+    const hasMathAction = 
+      rawLower.includes('chứng minh') || 
+      rawLower.includes('rút gọn') || 
+      rawLower.includes('tính giá trị') || 
+      rawLower.includes('giải phương trình') || 
+      rawLower.includes('giải hệ') || 
+      rawLower.includes('tìm x') || 
+      rawLower.includes('tìm m') || 
+      rawLower.includes('vẽ đồ thị') || 
+      (/(?:^|\n)\s*[a-d]\)/i.test(rawQ) && !isPureSectionHeader(rawQ));
+
     const isEssayProblem = 
-      /^(?:bài|bài\s*tập|ví\s*dụ)\s*\d+/i.test(q.question || '') ||
-      /(?:^|\n)\s*[a-d]\)/i.test(q.question || '') ||
-      rawQ.includes('tự luận') || 
-      rawQ.includes('chứng minh') || 
-      rawQ.includes('rút gọn') || 
-      rawQ.includes('tính giá trị') || 
-      rawQ.includes('giải phương trình') || 
-      rawQ.includes('giải hệ') || 
-      rawQ.includes('tìm x') || 
-      rawQ.includes('tìm m') || 
-      rawQ.includes('vẽ đồ thị') || 
-      (ans && ans.length > 25) || 
-      (q.points && q.points >= 1.0);
+      hasMathAction ||
+      ((ans && ans.length > 30) && !rawLower.includes('đáp án'));
 
     if (isEssayProblem) {
       return 'essay';

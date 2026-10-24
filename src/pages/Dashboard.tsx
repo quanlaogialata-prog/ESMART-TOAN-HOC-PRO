@@ -1,15 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router';
-import AdminDashboard from './admin/ManageTeachers';
 import DocumentLibrary from './teacher/DocumentLibrary';
-import ManageTopicPractices from './teacher/ManageTopicPractices';
-import ManageTests from './teacher/ManageTests';
-import ManageOfflineTests from './teacher/ManageOfflineTests';
-import ManageSubmissions from './teacher/ManageSubmissions';
-import Gradebook from './teacher/Gradebook';
-import StudentDashboard from './student/StudentDashboard';
-import SettingsModal from '../components/SettingsModal';
+
+const AdminDashboard = lazy(() => import('./admin/ManageTeachers'));
+const ManageTopicPractices = lazy(() => import('./teacher/ManageTopicPractices'));
+const ManageTests = lazy(() => import('./teacher/ManageTests'));
+const ManageOfflineTests = lazy(() => import('./teacher/ManageOfflineTests'));
+const ManageSubmissions = lazy(() => import('./teacher/ManageSubmissions'));
+const Gradebook = lazy(() => import('./teacher/Gradebook'));
+const StudentDashboard = lazy(() => import('./student/StudentDashboard'));
+const SettingsModal = lazy(() => import('../components/SettingsModal'));
 
 type Tab = 'curriculum' | 'topic-practice' | 'tests' | 'offline-tests' | 'grading' | 'gradebook' | 'admin' | 'student';
 
@@ -109,21 +110,34 @@ export default function Dashboard() {
         </div>
       </header>
       <main className="flex-1 p-4 sm:p-6 overflow-x-hidden overflow-y-auto min-w-0">
-        {role === 'admin' && activeTab === 'admin' && <AdminDashboard />}
-        {(role === 'teacher' || role === 'admin') && activeTab === 'curriculum' && (
-          <DocumentLibrary 
-            onNavigateToTests={() => setActiveTab('tests')} 
-            onNavigateToOfflineTests={() => setActiveTab('offline-tests')} 
-          />
-        )}
-        {(role === 'teacher' || role === 'admin') && activeTab === 'topic-practice' && <ManageTopicPractices />}
-        {(role === 'teacher' || role === 'admin') && activeTab === 'tests' && <ManageTests />}
-        {(role === 'teacher' || role === 'admin') && activeTab === 'offline-tests' && <ManageOfflineTests />}
-        {(role === 'teacher' || role === 'admin') && activeTab === 'grading' && <ManageSubmissions />}
-        {(role === 'teacher' || role === 'admin') && activeTab === 'gradebook' && <Gradebook />}
-        {role === 'student' && <StudentDashboard />}
+        <Suspense
+          fallback={
+            <div className="flex py-20 items-center justify-center flex-col gap-3">
+              <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+              <div className="text-gray-500 font-medium text-xs">Đang tải phân hệ...</div>
+            </div>
+          }
+        >
+          {role === 'admin' && activeTab === 'admin' && <AdminDashboard />}
+          {(role === 'teacher' || role === 'admin') && activeTab === 'curriculum' && (
+            <DocumentLibrary 
+              onNavigateToTests={() => setActiveTab('tests')} 
+              onNavigateToOfflineTests={() => setActiveTab('offline-tests')} 
+            />
+          )}
+          {(role === 'teacher' || role === 'admin') && activeTab === 'topic-practice' && <ManageTopicPractices />}
+          {(role === 'teacher' || role === 'admin') && activeTab === 'tests' && <ManageTests />}
+          {(role === 'teacher' || role === 'admin') && activeTab === 'offline-tests' && <ManageOfflineTests />}
+          {(role === 'teacher' || role === 'admin') && activeTab === 'grading' && <ManageSubmissions />}
+          {(role === 'teacher' || role === 'admin') && activeTab === 'gradebook' && <Gradebook />}
+          {role === 'student' && <StudentDashboard />}
+        </Suspense>
       </main>
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <Suspense fallback={null}>
+          <SettingsModal onClose={() => setShowSettings(false)} />
+        </Suspense>
+      )}
     </div>
   );
 }

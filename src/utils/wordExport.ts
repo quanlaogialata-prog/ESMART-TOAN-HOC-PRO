@@ -2,10 +2,11 @@ import { TopicPractice } from '../types/practice';
 import { 
   formatPracticeQuestionsAndSections, 
   normalizePhieuText, 
-  stripQuestionPrefix,
+  stripQuestionPrefix, 
   splitMcqOptions,
   isTheoryQuestion,
-  isPureSectionHeader
+  isPureSectionHeader,
+  calculateEssayAnswerLineCount
 } from './practiceFormatter';
 import { stripOptionPrefix } from './gradeEngine';
 import { detectQuestionType } from './variantGenerator';
@@ -227,11 +228,13 @@ export function exportPracticeToWord(
       else sectionHeading = `${p}: ${t}`;
     }
 
-    htmlContent += `
+    if (sectionHeading) {
+      htmlContent += `
     <div class='section-title'>
       ${cleanMathHtml(sectionHeading)}
     </div>
 `;
+    }
     if (section.instruction && section.instruction.trim() !== sectionHeading) {
       htmlContent += `
     <div class='section-instruction'>
@@ -251,15 +254,38 @@ export function exportPracticeToWord(
       if (isPureSectionHeader(stripped)) {
         return;
       }
-      const cleanBody = cleanMathHtml(stripped);
+
+      // Tự động kiểm tra và bóc tách phương án trắc nghiệm A, B, C, D nếu còn bị dính trong thân câu hỏi
+      let effectiveOpts = opts;
+      let effectiveText = stripped;
+      if (effectiveOpts.length < 2) {
+        const splitted = splitMcqOptions(stripped);
+        if (splitted.length >= 2) {
+          effectiveOpts = splitted;
+          const firstA = stripped.search(/(?:^|\n|\s+)(?:\[A\]|\(A\)|A[\.:\)])\s+/);
+          if (firstA >= 0) {
+            effectiveText = stripped.substring(0, firstA).trim();
+          }
+        }
+      }
+      const cleanBody = cleanMathHtml(effectiveText);
 
       htmlContent += `
     <div class='question-item'>
 `;
 
+      if (isPureSectionHeader(cleanBody) || isPureSectionHeader(q.question || '')) {
+        htmlContent += `
+        <div style='background-color: #f8fafc; border-bottom: 2pt solid #0f172a; padding: 6px 10px; margin: 12px 0 8px; text-align: center; font-weight: bold; font-size: 11pt; text-transform: uppercase;'>
+          ${cleanBody}
+        </div>
+`;
+        return;
+      }
+
       const rawText = (q.question || '').toLowerCase();
       const isTheory = isTheoryQuestion(q) || (
-        opts.length === 0 && (
+        effectiveOpts.length === 0 && (
           rawText.includes('tóm tắt kiến thức') ||
           rawText.includes('tóm tắt lý thuyết') ||
           rawText.includes('tóm tắt lí thuyết') ||
@@ -283,23 +309,27 @@ export function exportPracticeToWord(
         return;
       }
 
+      const hasCapitalMcqOpts = effectiveOpts.length >= 2 && (
+        effectiveOpts.some((o: string) => /^(?:\[?[A-D]\]?|[A-D][\.\:\)])\s+/i.test((o || '').trim())) ||
+        (effectiveOpts.length === 4 && !effectiveOpts.some((o: string) => /^[a-d][\.\:\)]/i.test((o || '').trim())))
+      );
       const isMcq = !isTheory && (
-        opts.length >= 2 || 
+        hasCapitalMcqOpts || 
         q.type === 'mcq' || 
-        detectQuestionType(q) === 'mcq'
+        detectQuestionType({ ...q, options: effectiveOpts, question: effectiveText }) === 'mcq'
       );
       const isTf = !isTheory && !isMcq && (
         q.type === 'tf' || 
         section.type === 'tf' || 
         detectQuestionType(q) === 'tf' ||
-        opts.some((o: string) => /^[a-d]\)/i.test(o || ''))
-      ) && opts.length > 0;
+        effectiveOpts.some((o: string) => /^[a-d]\)/i.test(o || ''))
+      ) && effectiveOpts.length > 0;
       const isShort = !isTheory && !isMcq && !isTf && (
         q.type === 'short' || 
         section.type === 'short' ||
         detectQuestionType(q) === 'short'
       );
-      // CHỈ CÓ BÀI LÀM ĐỐI VỚI CÂU Ở PHẦN TỰ LUẬN
+      // CHỈ CÓ BÀI LÀM ĐỐI VỚI CÂU Ở PHẦN TỰ LUẬN (Tuyệt đối không áp dụng cho trắc nghiệm)
       const isEssay = !isTheory && !isMcq && !isTf && !isShort && (
         section.type === 'essay' || 
         q.type === 'essay' || 
@@ -314,39 +344,39 @@ export function exportPracticeToWord(
       </div>
 `;
 
-      if (isMcq && opts.length > 0) {
+      if (isMcq && effectiveOpts.length > 0) {
         htmlContent += `<table class='options-table'>`;
-        if (opts.length === 4) {
-          const isShort = opts.every((o: string) => (o || '').length < 24);
-          if (isShort) {
+        if (effectiveOpts.length === 4) {
+          const isShortOpts = effectiveOpts.every((o: string) => (o || '').length < 24);
+          if (isShortOpts) {
             htmlContent += `
             <tr>
-              <td style='width: 25%;'><strong>A.</strong> ${cleanMathHtml(stripOptionPrefix(opts[0]))}</td>
-              <td style='width: 25%;'><strong>B.</strong> ${cleanMathHtml(stripOptionPrefix(opts[1]))}</td>
-              <td style='width: 25%;'><strong>C.</strong> ${cleanMathHtml(stripOptionPrefix(opts[2]))}</td>
-              <td style='width: 25%;'><strong>D.</strong> ${cleanMathHtml(stripOptionPrefix(opts[3]))}</td>
+              <td style='width: 25%;'><strong>A.</strong> ${cleanMathHtml(stripOptionPrefix(effectiveOpts[0]))}</td>
+              <td style='width: 25%;'><strong>B.</strong> ${cleanMathHtml(stripOptionPrefix(effectiveOpts[1]))}</td>
+              <td style='width: 25%;'><strong>C.</strong> ${cleanMathHtml(stripOptionPrefix(effectiveOpts[2]))}</td>
+              <td style='width: 25%;'><strong>D.</strong> ${cleanMathHtml(stripOptionPrefix(effectiveOpts[3]))}</td>
             </tr>
 `;
           } else {
             htmlContent += `
             <tr>
-              <td style='width: 50%;'><strong>A.</strong> ${cleanMathHtml(stripOptionPrefix(opts[0]))}</td>
-              <td style='width: 50%;'><strong>B.</strong> ${cleanMathHtml(stripOptionPrefix(opts[1]))}</td>
+              <td style='width: 50%;'><strong>A.</strong> ${cleanMathHtml(stripOptionPrefix(effectiveOpts[0]))}</td>
+              <td style='width: 50%;'><strong>B.</strong> ${cleanMathHtml(stripOptionPrefix(effectiveOpts[1]))}</td>
             </tr>
             <tr>
-              <td style='width: 50%;'><strong>C.</strong> ${cleanMathHtml(stripOptionPrefix(opts[2]))}</td>
-              <td style='width: 50%;'><strong>D.</strong> ${cleanMathHtml(stripOptionPrefix(opts[3]))}</td>
+              <td style='width: 50%;'><strong>C.</strong> ${cleanMathHtml(stripOptionPrefix(effectiveOpts[2]))}</td>
+              <td style='width: 50%;'><strong>D.</strong> ${cleanMathHtml(stripOptionPrefix(effectiveOpts[3]))}</td>
             </tr>
 `;
           }
         } else {
-          opts.forEach((opt: string, oIdx: number) => {
+          effectiveOpts.forEach((opt: string, oIdx: number) => {
             const letter = String.fromCharCode(65 + oIdx);
             htmlContent += `<tr><td><strong>${letter}.</strong> ${cleanMathHtml(stripOptionPrefix(opt))}</td></tr>`;
           });
         }
         htmlContent += `</table>`;
-      } else if (isTf && opts.length > 0) {
+      } else if (isTf && effectiveOpts.length > 0) {
         htmlContent += `
         <table style='width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 10.5pt;'>
           <tr style='background-color: #f1f5f9; font-weight: bold;'>
@@ -373,15 +403,15 @@ export function exportPracticeToWord(
         </div>
 `;
       } else if (isEssay) {
+        const lineCount = calculateEssayAnswerLineCount(q.question || '', rawOpts);
+        let dottedLines = '';
+        for (let i = 0; i < lineCount; i++) {
+          dottedLines += `          <div style='height: 25px; border-bottom: 1pt dotted #999;${i === 0 ? ' margin-top: 8px;' : ''}'></div>\n`;
+        }
         htmlContent += `
         <div style='margin: 8px 0 12px 10px; font-style: italic; color: #555;'>
           Bài làm:
-          <div style='height: 25px; border-bottom: 1pt dotted #999; margin-top: 8px;'></div>
-          <div style='height: 25px; border-bottom: 1pt dotted #999;'></div>
-          <div style='height: 25px; border-bottom: 1pt dotted #999;'></div>
-          <div style='height: 25px; border-bottom: 1pt dotted #999;'></div>
-          <div style='height: 25px; border-bottom: 1pt dotted #999;'></div>
-        </div>
+${dottedLines}        </div>
 `;
       }
 

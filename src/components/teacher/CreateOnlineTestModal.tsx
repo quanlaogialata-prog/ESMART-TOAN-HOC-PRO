@@ -55,6 +55,7 @@ import DocumentReferenceSelectorModal, { SelectedDocumentReference } from './Doc
 import { dataUrlToFile, ensureAttachmentDataUrl } from '../../lib/fileUtils';
 import { autoReconcileQuestion, checkMcqAnswer, autoEstablishScoringRubric } from '../../utils/gradeEngine';
 import { getCurrentSchoolYear, formatSchoolYear, getStandardSchoolYears, matchesSchoolYear } from '../../utils/schoolYear';
+import { isPureSectionHeader, isTheoryQuestion, healQuestionOptions } from '../../utils/practiceFormatter';
 
 interface CreateOnlineTestModalProps {
   show: boolean;
@@ -364,19 +365,21 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
       const testInfo = (!Array.isArray(resJson) && resJson.testInfo) ? resJson.testInfo : null;
 
       if (Array.isArray(rawExtracted) && rawExtracted.length > 0) {
-        const extracted = rawExtracted.map((rawQ: any) => {
-          const healedQ = autoReconcileQuestion(rawQ).question;
-          return {
-            ...healedQ,
-            question: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.question || '')),
-            options: Array.isArray(healedQ.options) 
-              ? healedQ.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
-              : [],
-            explanation: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.explanation || '')),
-            correctAnswer: typeof healedQ.correctAnswer === 'string' ? repairVietnameseDocument(healedQ.correctAnswer) : healedQ.correctAnswer,
-            figureSvg: healedQ.figureSvg ? healMathSvg(healedQ.figureSvg) : healedQ.figureSvg
-          };
-        });
+        const extracted = rawExtracted
+          .filter((rawQ: any) => !isPureSectionHeader(rawQ.question || '') && !isTheoryQuestion(rawQ))
+          .map((rawQ: any) => {
+            const healedQ = healQuestionOptions(autoReconcileQuestion(rawQ).question);
+            return {
+              ...healedQ,
+              question: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.question || '')),
+              options: Array.isArray(healedQ.options) 
+                ? healedQ.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+                : [],
+              explanation: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.explanation || '')),
+              correctAnswer: typeof healedQ.correctAnswer === 'string' ? repairVietnameseDocument(healedQ.correctAnswer) : healedQ.correctAnswer,
+              figureSvg: healedQ.figureSvg ? healMathSvg(healedQ.figureSvg) : healedQ.figureSvg
+            };
+          });
         const rubricQuestions = autoEstablishScoringRubric(extracted);
         setSingleUploadedQuestions(rubricQuestions);
 
@@ -482,19 +485,21 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
       const testInfo = (!Array.isArray(resJson) && resJson.testInfo) ? resJson.testInfo : null;
 
       if (Array.isArray(rawExtracted) && rawExtracted.length > 0) {
-        const extracted = rawExtracted.map((rawQ: any) => {
-          const healedQ = autoReconcileQuestion(rawQ).question;
-          return {
-            ...healedQ,
-            question: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.question || '')),
-            options: Array.isArray(healedQ.options) 
-              ? healedQ.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
-              : [],
-            explanation: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.explanation || '')),
-            correctAnswer: typeof healedQ.correctAnswer === 'string' ? repairVietnameseDocument(healedQ.correctAnswer) : healedQ.correctAnswer,
-            figureSvg: healedQ.figureSvg ? healMathSvg(healedQ.figureSvg) : healedQ.figureSvg
-          };
-        });
+        const extracted = rawExtracted
+          .filter((rawQ: any) => !isPureSectionHeader(rawQ.question || '') && !isTheoryQuestion(rawQ))
+          .map((rawQ: any) => {
+            const healedQ = healQuestionOptions(autoReconcileQuestion(rawQ).question);
+            return {
+              ...healedQ,
+              question: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.question || '')),
+              options: Array.isArray(healedQ.options) 
+                ? healedQ.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+                : [],
+              explanation: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.explanation || '')),
+              correctAnswer: typeof healedQ.correctAnswer === 'string' ? repairVietnameseDocument(healedQ.correctAnswer) : healedQ.correctAnswer,
+              figureSvg: healedQ.figureSvg ? healMathSvg(healedQ.figureSvg) : healedQ.figureSvg
+            };
+          });
         const rubricQuestions = autoEstablishScoringRubric(extracted);
         setSingleUploadedQuestions(rubricQuestions);
 
@@ -593,19 +598,21 @@ export const CreateOnlineTestModal: React.FC<CreateOnlineTestModalProps> = ({
       const testInfo = (!Array.isArray(resJson) && resJson.testInfo) ? resJson.testInfo : null;
 
       if (Array.isArray(rawExtracted) && rawExtracted.length > 0) {
-        const extracted = rawExtracted.map((rawQ: any) => {
-          const healedQ = autoReconcileQuestion(rawQ).question;
-          return {
-            ...healedQ,
-            question: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.question || '')),
-            options: Array.isArray(healedQ.options) 
-              ? healedQ.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
-              : [],
-            explanation: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.explanation || '')),
-            correctAnswer: typeof healedQ.correctAnswer === 'string' ? repairVietnameseDocument(healedQ.correctAnswer) : healedQ.correctAnswer,
-            figureSvg: healedQ.figureSvg ? healMathSvg(healedQ.figureSvg) : healedQ.figureSvg
-          };
-        });
+        const extracted = rawExtracted
+          .filter((rawQ: any) => !isPureSectionHeader(rawQ.question || '') && !isTheoryQuestion(rawQ))
+          .map((rawQ: any) => {
+            const healedQ = healQuestionOptions(autoReconcileQuestion(rawQ).question);
+            return {
+              ...healedQ,
+              question: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.question || '')),
+              options: Array.isArray(healedQ.options) 
+                ? healedQ.options.map((opt: string) => repairVietnameseDocument(convertTcvn3ToUnicode(opt || ''))) 
+                : [],
+              explanation: repairVietnameseDocument(convertTcvn3ToUnicode(healedQ.explanation || '')),
+              correctAnswer: typeof healedQ.correctAnswer === 'string' ? repairVietnameseDocument(healedQ.correctAnswer) : healedQ.correctAnswer,
+              figureSvg: healedQ.figureSvg ? healMathSvg(healedQ.figureSvg) : healedQ.figureSvg
+            };
+          });
         const rubricQuestions = autoEstablishScoringRubric(extracted);
         setSingleUploadedQuestions(rubricQuestions);
 
