@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { 
   collection, 
   getDocs, 
+  getDocsFromCache,
   addDoc, 
   setDoc,
   deleteDoc, 
@@ -11,11 +12,10 @@ import {
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { TopicPractice } from '../../types/practice';
-import { exportPracticeToWord } from '../../utils/wordExport';
-import { generatePdfFromElements } from '../../utils/offlinePdfExport';
 import PracticeExamPaperContent from '../../components/teacher/PracticeExamPaperContent';
-import CreateTopicPracticeModal, { SAMPLE_PRACTICE_LESSON_PASTE } from '../../components/teacher/CreateTopicPracticeModal';
 import { normalizePhieuText, sortQuestionsStandard, healQuestionOptions } from '../../utils/practiceFormatter';
+
+const CreateTopicPracticeModal = lazy(() => import('../../components/teacher/CreateTopicPracticeModal'));
 import { 
   BookOpen, 
   Plus, 
@@ -175,8 +175,46 @@ const DEFAULT_INITIAL_PRACTICES: TopicPractice[] = [
 
 export default function ManageTopicPractices() {
   const { user } = useAuth();
-  const [practices, setPractices] = useState<TopicPractice[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+
+  const getDeletedPracticeIds = (): Set<string> => {
+    try {
+      const raw = localStorage.getItem('esmart_topic_practices_deleted_ids');
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      return new Set(Array.isArray(arr) ? arr.filter(Boolean) : []);
+    } catch {
+      return new Set();
+    }
+  };
+
+  const sanitizePractice = (p: TopicPractice): TopicPractice => ({
+    ...p,
+    title: normalizePhieuText(p.title || ''),
+    lessonTitle: normalizePhieuText(p.lessonTitle || ''),
+    topicName: normalizePhieuText(p.topicName || ''),
+    questions: (p.questions || []).map(healQuestionOptions)
+  });
+
+  const [practices, setPractices] = useState<TopicPractice[]>(() => {
+    const deletedIds = getDeletedPracticeIds();
+    try {
+      const isInit = localStorage.getItem('esmart_topic_practices_initialized');
+      const cached = localStorage.getItem('esmart_topic_practices_cache');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .filter((p: any) => p && !deletedIds.has(p.id) && !(p._legacyId && deletedIds.has(p._legacyId)))
+            .map(sanitizePractice);
+        }
+      }
+      if (!isInit) {
+        return DEFAULT_INITIAL_PRACTICES.filter(p => !deletedIds.has(p.id));
+      }
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = useState<boolean>(false);
 
   // Filters
   const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>(getCurrentSchoolYear());
@@ -207,17 +245,6 @@ export default function ManageTopicPractices() {
   const [deleteConfirmPractice, setDeleteConfirmPractice] = useState<{ id: string; title: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
-  const getDeletedPracticeIds = (): Set<string> => {
-    try {
-      const raw = localStorage.getItem('esmart_topic_practices_deleted_ids');
-      if (!raw) return new Set();
-      const arr = JSON.parse(raw);
-      return new Set(Array.isArray(arr) ? arr.filter(Boolean) : []);
-    } catch {
-      return new Set();
-    }
-  };
-
   const addDeletedPracticeIds = (ids: (string | undefined)[]) => {
     try {
       const current = getDeletedPracticeIds();
@@ -231,18 +258,12 @@ export default function ManageTopicPractices() {
   };
 
   const loadPractices = async () => {
-    setLoading(true);
     const deletedIds = getDeletedPracticeIds();
-    const sanitizePractice = (p: TopicPractice): TopicPractice => ({
-      ...p,
-      title: normalizePhieuText(p.title || ''),
-      lessonTitle: normalizePhieuText(p.lessonTitle || ''),
-      topicName: normalizePhieuText(p.topicName || ''),
-      questions: (p.questions || []).map(healQuestionOptions)
-    });
 
     try {
-      const snap = await getDocs(collection(db, 'topic_practices'));
+      const snap = await getDocs(collection(db, 'topic_practices')).catch(() =>
+        getDocsFromCache(collection(db, 'topic_practices'))
+      );
 
       if (!snap.empty) {
         const loaded: TopicPractice[] = [];
@@ -444,6 +465,17 @@ export default function ManageTopicPractices() {
     setTimeout(() => setSysMsg(''), 4000);
   };
 
+  // Export to Word on demand
+  const handleExportWord = async (practice: TopicPractice, includeAnswers: boolean) => {
+    try {
+      const { exportPracticeToWord } = await import('../../utils/wordExport');
+      await exportPracticeToWord(practice, { includeAnswers });
+    } catch (err: any) {
+      console.error('Word export error:', err);
+      setSysError('Lỗi xuất Word: ' + (err?.message || 'Không thể tạo file'));
+    }
+  };
+
   // Export to PDF
   const handleExportPdf = async (practice: TopicPractice, withAnswers: boolean) => {
     if (!printableRef.current) return;
@@ -451,6 +483,7 @@ export default function ManageTopicPractices() {
     setPdfProgressText('Đang kết xuất bản in PDF chất lượng cao...');
 
     try {
+      const { generatePdfFromElements } = await import('../../utils/offlinePdfExport');
       const fileName = `${practice.title.replace(/[^a-zA-Z0-9_\-\u00C0-\u024F\u1EA0-\u1EF9\s]/g, '_')}_${withAnswers ? 'Kem_Dap_An' : 'De_On_Luyen'}.pdf`;
       const result = await generatePdfFromElements([printableRef.current], {
         fileName,
@@ -737,7 +770,7 @@ export default function ManageTopicPractices() {
                   {/* Tải Word */}
                   <button
                     type="button"
-                    onClick={() => exportPracticeToWord(practice, { includeAnswers: true })}
+                    onClick={() => handleExportWord(practice, true)}
                     className="px-2.5 py-1.5 bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold transition-all flex items-center gap-1 shadow-2xs cursor-pointer"
                     title="Tải tệp Microsoft Word (.doc) hoàn chỉnh"
                   >
@@ -787,12 +820,14 @@ export default function ManageTopicPractices() {
       {/* 5. MODAL TẠO BÀI ÔN LUYỆN BẰNG COPY & PASTE                  */}
       {/* ============================================================ */}
       {showCreateModal && (
-        <CreateTopicPracticeModal
-          isOpen={showCreateModal}
-          onClose={() => setShowCreateModal(false)}
-          onSave={handleSavePractice}
-          initialGrade={selectedGradeFilter !== 'all' ? Number(selectedGradeFilter) : 8}
-        />
+        <Suspense fallback={null}>
+          <CreateTopicPracticeModal
+            isOpen={showCreateModal}
+            onClose={() => setShowCreateModal(false)}
+            onSave={handleSavePractice}
+            initialGrade={selectedGradeFilter !== 'all' ? Number(selectedGradeFilter) : 8}
+          />
+        </Suspense>
       )}
 
       {/* ============================================================ */}
@@ -867,7 +902,7 @@ export default function ManageTopicPractices() {
                 {/* Tải Word (.doc) */}
                 <button
                   type="button"
-                  onClick={() => exportPracticeToWord(previewPractice, { includeAnswers: previewShowAnswers })}
+                  onClick={() => handleExportWord(previewPractice, previewShowAnswers)}
                   className="px-3 py-1.5 bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
                   title="Tải tệp Word (.doc) mở bằng Microsoft Word hoặc WPS Office"
                 >

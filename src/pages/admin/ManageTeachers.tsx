@@ -1,10 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import { collection, getDocs, updateDoc, doc, setDoc, addDoc, deleteDoc, query, where } from 'firebase/firestore';
+import React, { useEffect, useState, lazy, Suspense } from 'react';
+import { collection, getDocs, getDocsFromCache, updateDoc, doc, setDoc, addDoc, deleteDoc, query, where } from 'firebase/firestore';
 import { initializeApp, deleteApp, getApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword, updatePassword, deleteUser } from 'firebase/auth';
 import { db, firebaseConfig } from '../../lib/firebase';
 import { Users, UserPlus, BookOpen, Database, Key, Trash2, FileSpreadsheet, Download, Pencil, ArrowRightLeft, X, Calendar, Search } from 'lucide-react';
-import ExportStudentAccountsModal from '../../components/ExportStudentAccountsModal';
 import { 
   getCurrentSchoolYear, 
   formatSchoolYear, 
@@ -13,16 +12,32 @@ import {
   compareSchoolYears 
 } from '../../utils/schoolYear';
 
+const ExportStudentAccountsModal = lazy(() => import('../../components/ExportStudentAccountsModal'));
+
 export default function AdminDashboard() {
-  const [users, setUsers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_admin_users_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [loading, setLoading] = useState(false);
   
   // School Year Filter State (Mặc định hiển thị là năm học hiện tại)
   const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>(getCurrentSchoolYear());
 
   // User Management State
   const [activeTab, setActiveTab] = useState<'teacher' | 'student' | 'classes'>('teacher');
-  const [schoolClasses, setSchoolClasses] = useState<any[]>([]);
+  const [schoolClasses, setSchoolClasses] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_admin_classes_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [showAddModal, setShowAddModal] = useState(false);
   const [teacherSearch, setTeacherSearch] = useState('');
 
@@ -165,8 +180,8 @@ export default function AdminDashboard() {
   const loadData = async () => {
     try {
       const fetchPromise = Promise.all([
-        getDocs(collection(db, 'users')),
-        getDocs(collection(db, 'classes'))
+        getDocs(collection(db, 'users')).catch(() => getDocsFromCache(collection(db, 'users'))),
+        getDocs(collection(db, 'classes')).catch(() => getDocsFromCache(collection(db, 'classes')))
       ]);
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Thời gian tải dữ liệu quá lâu')), 8000)
@@ -183,11 +198,15 @@ export default function AdminDashboard() {
         return (a.name || '').localeCompare(b.name || '');
       });
       setSchoolClasses(fetchedClasses);
+      try {
+        localStorage.setItem('esmart_admin_users_cache', JSON.stringify(data));
+        localStorage.setItem('esmart_admin_classes_cache', JSON.stringify(fetchedClasses));
+      } catch {}
     } catch(e: any) {
       console.error(e);
       if (e?.code === 'resource-exhausted') {
         setSysError('Hạn ngạch Firestore tạm thời bị giới hạn (Quota Exceeded). Dữ liệu có thể chưa hiển thị đầy đủ.');
-      } else {
+      } else if (users.length === 0) {
         setSysError('Không thể tải dữ liệu: ' + (e?.message || 'Lỗi mạng hoặc kết nối máy chủ'));
       }
     } finally {
@@ -774,7 +793,7 @@ export default function AdminDashboard() {
     loadData();
   };
 
-  if (loading) return <div>Đang tải danh sách người dùng...</div>;
+  // Không chặn giao diện bằng màn hình chờ, hiển thị tức thì dữ liệu từ bộ nhớ đệm
 
   const filteredUsers = users.filter(u => {
     if (u.role !== activeTab) return false;
@@ -1600,13 +1619,17 @@ export default function AdminDashboard() {
         </div>
       )}
       {/* Export Student Accounts Modal */}
-      <ExportStudentAccountsModal
-        isOpen={showExportModal}
-        onClose={() => setShowExportModal(false)}
-        students={users.filter(u => u.role === 'student' && matchesSchoolYear(u.schoolYear, selectedSchoolYear))}
-        classes={filteredClasses}
-        initialSelectedClass={exportInitialClass}
-      />
+      {showExportModal && (
+        <Suspense fallback={null}>
+          <ExportStudentAccountsModal
+            isOpen={showExportModal}
+            onClose={() => setShowExportModal(false)}
+            students={users.filter(u => u.role === 'student' && matchesSchoolYear(u.schoolYear, selectedSchoolYear))}
+            classes={filteredClasses}
+            initialSelectedClass={exportInitialClass}
+          />
+        </Suspense>
+      )}
 
       {/* Edit Class Modal */}
       {editingClass && (

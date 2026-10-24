@@ -12,7 +12,6 @@ import {
 } from 'firebase/firestore';
 import { db, FIRESTORE_UPGRADE_URL } from '../../lib/firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { generatePdfFromElements } from '../../utils/offlinePdfExport';
 import { 
   FileText, 
   Plus, 
@@ -650,9 +649,23 @@ function SolutionsContent({
 
 export default function ManageOfflineTests() {
   const { user, role } = useAuth();
-  const [offlineTests, setOfflineTests] = useState<OfflineTest[]>([]);
-  const [onlineTests, setOnlineTests] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [offlineTests, setOfflineTests] = useState<OfflineTest[]>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_offline_tests_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [onlineTests, setOnlineTests] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_tests_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [loading, setLoading] = useState(false);
   const [sysMsg, setSysMsg] = useState('');
   const [sysError, setSysError] = useState('');
 
@@ -782,7 +795,6 @@ export default function ManageOfflineTests() {
 
   // Load Data
   const loadData = async () => {
-    setLoading(true);
     setSysError('');
     try {
       // 1. Fetch offline tests with cache fallback
@@ -804,6 +816,9 @@ export default function ManageOfflineTests() {
         offlineList.push({ id: docSnap.id, ...data });
       }
       setOfflineTests(offlineList);
+      try {
+        localStorage.setItem('esmart_offline_tests_cache', JSON.stringify(offlineList));
+      } catch {}
     } catch (err: any) {
       console.error('Error loading tests:', err);
       const isQuota = err?.message?.includes('Quota') || err?.message?.includes('quota') || err?.code === 'resource-exhausted';
@@ -812,7 +827,7 @@ export default function ManageOfflineTests() {
           'Hạn mức đọc dữ liệu miễn phí trong ngày của Firestore đã đạt giới hạn (Quota exceeded for free daily read units). ' +
           'Dữ liệu sẽ tự động được phục hồi khi sang ngày mới hoặc thầy/cô có thể nâng cấp gói cước trên Firebase Console.'
         );
-      } else {
+      } else if (offlineTests.length === 0) {
         setSysError('Không thể tải danh sách đề thi: ' + (err?.message || 'Lỗi mạng'));
       }
     } finally {
@@ -1577,6 +1592,7 @@ export default function ManageOfflineTests() {
         elementsToExport = [container];
       }
 
+      const { generatePdfFromElements } = await import('../../utils/offlinePdfExport');
       const result = await generatePdfFromElements(elementsToExport, {
         fileName,
         onProgress: (text) => setPdfProgressText(text)

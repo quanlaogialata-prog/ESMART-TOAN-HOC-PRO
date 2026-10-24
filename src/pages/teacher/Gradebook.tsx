@@ -1,15 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { collection, getDocs, doc, getDoc, query, where, orderBy } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Download, FileText, Calendar, Filter, Users, FileSpreadsheet, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
-import ExportStudentAccountsModal from '../../components/ExportStudentAccountsModal';
-import { 
-  exportGradebookPdf, 
-  exportGradebookExcel, 
-  exportPeriodSummaryPdf, 
-  exportPeriodSummaryExcel 
-} from '../../utils/gradebookExport';
 import { 
   getCurrentSchoolYear, 
   formatSchoolYear, 
@@ -18,18 +11,38 @@ import {
   compareSchoolYears 
 } from '../../utils/schoolYear';
 
+const ExportStudentAccountsModal = lazy(() => import('../../components/ExportStudentAccountsModal'));
+
 export default function Gradebook() {
   const { user, role } = useAuth();
   const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>(getCurrentSchoolYear());
-  const [classes, setClasses] = useState<any[]>([]);
-  const [selectedClassId, setSelectedClassId] = useState<string>('');
+  const [classes, setClasses] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_admin_classes_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [selectedClassId, setSelectedClassId] = useState<string>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_admin_classes_cache');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        const curYear = parsed.filter((c: any) => matchesSchoolYear(c.schoolYear, getCurrentSchoolYear()));
+        if (curYear.length > 0) return curYear[0].id;
+        if (parsed.length > 0) return parsed[0].id;
+      }
+    } catch {}
+    return '';
+  });
   
   const [students, setStudents] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
   const [submissions, setSubmissions] = useState<any[]>([]);
   
   const [timeFilter, setTimeFilter] = useState('all');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   
   const [teacherName, setTeacherName] = useState('');
   
@@ -50,21 +63,21 @@ export default function Gradebook() {
   const loadData = async () => {
     if (!user) return;
     try {
+      const [uDoc, clsSnap] = await Promise.all([
+        getDoc(doc(db, 'users', user.uid)).catch(() => null),
+        getDocs(collection(db, 'classes'))
+      ]);
+
       let assignedClassIds: string[] = [];
       let tName = user.displayName || 'Giáo viên';
-      if (role === 'teacher') {
-        const uDoc = await getDoc(doc(db, 'users', user.uid));
-        if (uDoc.exists()) {
+      if (uDoc && typeof uDoc.exists === 'function' && uDoc.exists()) {
+        if (role === 'teacher') {
           assignedClassIds = uDoc.data().permissions?.assignedClasses || [];
-          tName = uDoc.data().displayName || tName;
         }
-      } else if (role === 'admin') {
-        const uDoc = await getDoc(doc(db, 'users', user.uid));
-        if (uDoc.exists()) tName = uDoc.data().displayName || tName;
+        tName = uDoc.data().displayName || tName;
       }
       setTeacherName(tName);
 
-      const clsSnap = await getDocs(collection(db, 'classes'));
       let clsData = clsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
       
       if (role === 'teacher') {
@@ -79,10 +92,12 @@ export default function Gradebook() {
       setClasses(clsData);
       
       const currentYearClasses = clsData.filter(c => matchesSchoolYear(c.schoolYear, selectedSchoolYear));
-      if (currentYearClasses.length > 0) {
-        setSelectedClassId(currentYearClasses[0].id);
-      } else if (clsData.length > 0) {
-        setSelectedClassId(clsData[0].id);
+      if (!selectedClassId || !clsData.some(c => c.id === selectedClassId)) {
+        if (currentYearClasses.length > 0) {
+          setSelectedClassId(currentYearClasses[0].id);
+        } else if (clsData.length > 0) {
+          setSelectedClassId(clsData[0].id);
+        }
       }
       setLoading(false);
     } catch (error) {
@@ -102,7 +117,12 @@ export default function Gradebook() {
       const selectedCls = classes.find(c => c.id === classId);
       if (!selectedCls) return;
 
-      const stuSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'student'), where('className', '==', selectedCls.name)));
+      const [stuSnap, asmSnap, subSnap] = await Promise.all([
+        getDocs(query(collection(db, 'users'), where('role', '==', 'student'), where('className', '==', selectedCls.name))),
+        getDocs(query(collection(db, 'assignments'), where('classId', '==', classId))),
+        getDocs(collection(db, 'submissions'))
+      ]);
+
       const stuData = stuSnap.docs
         .map(d => ({ id: d.id, ...d.data() } as any))
         .filter(s => matchesSchoolYear(s.schoolYear, selectedCls.schoolYear || selectedSchoolYear))
@@ -113,15 +133,13 @@ export default function Gradebook() {
         });
       setStudents(stuData);
 
-      const asmSnap = await getDocs(query(collection(db, 'assignments'), where('classId', '==', classId)));
       const asmData = asmSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
       setAssignments(asmData);
 
-      const subSnap = await getDocs(collection(db, 'submissions'));
       const subData = subSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
       
       const classAssignmentIds = asmData.map(a => a.id);
-      const studentIdMap = {};
+      const studentIdMap: Record<string, boolean> = {};
       stuData.forEach(s => studentIdMap[s.id] = true);
 
       const classSubData = subData.filter(s => 
@@ -208,6 +226,7 @@ export default function Gradebook() {
     setExportProgressText('Đang khởi tạo PDF bài kiểm tra...');
     setExportError('');
     try {
+      const { exportGradebookPdf } = await import('../../utils/gradebookExport');
       await exportGradebookPdf(
         students,
         submissions,
@@ -227,12 +246,13 @@ export default function Gradebook() {
     }
   };
 
-  const handleDownloadTestExcel = () => {
+  const handleDownloadTestExcel = async () => {
     const asm = assignments.find(a => a.id === exportTestId);
     const cls = classes.find(c => c.id === selectedClassId);
     if (!asm || !cls) return;
 
     try {
+      const { exportGradebookExcel } = await import('../../utils/gradebookExport');
       exportGradebookExcel(
         students,
         submissions,
@@ -261,6 +281,7 @@ export default function Gradebook() {
     setExportProgressText('Đang khởi tạo PDF tổng hợp...');
     setExportError('');
     try {
+      const { exportPeriodSummaryPdf } = await import('../../utils/gradebookExport');
       await exportPeriodSummaryPdf(
         students,
         getStudentStats,
@@ -280,7 +301,7 @@ export default function Gradebook() {
     }
   };
 
-  const handleDownloadPeriodExcel = () => {
+  const handleDownloadPeriodExcel = async () => {
     const cls = classes.find(c => c.id === selectedClassId);
     if (!cls) return;
 
@@ -290,6 +311,7 @@ export default function Gradebook() {
     if (timeFilter === 'semester') timeText = 'Học kỳ này';
 
     try {
+      const { exportPeriodSummaryExcel } = await import('../../utils/gradebookExport');
       exportPeriodSummaryExcel(
         students,
         getStudentStats,
@@ -574,13 +596,15 @@ export default function Gradebook() {
       )}
       {/* Export Student Accounts Modal */}
       {showExportAccountsModal && (
-        <ExportStudentAccountsModal
-          isOpen={showExportAccountsModal}
-          onClose={() => setShowExportAccountsModal(false)}
-          students={students}
-          classes={classes}
-          initialSelectedClass={classes.find(c => c.id === selectedClassId)?.name || 'all'}
-        />
+        <Suspense fallback={null}>
+          <ExportStudentAccountsModal
+            isOpen={showExportAccountsModal}
+            onClose={() => setShowExportAccountsModal(false)}
+            students={students}
+            classes={classes}
+            initialSelectedClass={classes.find(c => c.id === selectedClassId)?.name || 'all'}
+          />
+        </Suspense>
       )}
     </div>
   );

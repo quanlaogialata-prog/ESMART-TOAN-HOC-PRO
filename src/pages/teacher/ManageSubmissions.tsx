@@ -9,10 +9,31 @@ import CancelAssignmentModal from '../../components/teacher/CancelAssignmentModa
 
 export default function ManageSubmissions() {
   const { user, role } = useAuth();
-  const [submissions, setSubmissions] = useState<any[]>([]);
-  const [assignments, setAssignments] = useState<any>({});
-  const [students, setStudents] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [submissions, setSubmissions] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_submissions_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [assignments, setAssignments] = useState<any>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_assignments_map_cache');
+      return cached ? JSON.parse(cached) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [students, setStudents] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_admin_users_cache');
+      return cached ? JSON.parse(cached).filter((u: any) => u.role === 'student') : [];
+    } catch {
+      return [];
+    }
+  });
+  const [loading, setLoading] = useState(false);
   const [reassignSubId, setReassignSubId] = useState<string | null>(null);
   const [sysMsg, setSysMsg] = useState('');
   const [sysError, setSysError] = useState('');
@@ -25,35 +46,33 @@ export default function ManageSubmissions() {
   const [isCancellingAssignment, setIsCancellingAssignment] = useState<boolean>(false);
 
   const fetchData = async () => {
-    setLoading(true);
     try {
+      const [uDoc, usersSnap, asmSnap, subSnap] = await Promise.all([
+        user ? getDoc(doc(db, 'users', user.uid)).catch(() => null) : Promise.resolve(null),
+        getDocs(query(collection(db, 'users'), where('role', '==', 'student'))),
+        getDocs(collection(db, 'assignments')),
+        getDocs(query(collection(db, 'submissions'), orderBy('submittedAt', 'desc')))
+      ]);
+
       let assignedClassIds: string[] = [];
-      if (user) {
-        const uDoc = await getDoc(doc(db, 'users', user.uid));
-        if (uDoc.exists()) {
-          assignedClassIds = uDoc.data().permissions?.assignedClasses || [];
-        }
+      if (uDoc && typeof uDoc.exists === 'function' && uDoc.exists()) {
+        assignedClassIds = uDoc.data().permissions?.assignedClasses || [];
       }
 
-      // Fetch all student users
-      const usersSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'student')));
       const allStudents: any[] = [];
       usersSnap.forEach(d => allStudents.push({ id: d.id, ...d.data() }));
       setStudents(allStudents);
 
-      const asmSnap = await getDocs(collection(db, 'assignments'));
       const asmMap: any = {};
       asmSnap.forEach(d => {
         asmMap[d.id] = d.data();
       });
       setAssignments(asmMap);
 
-      const subQ = query(collection(db, 'submissions'), orderBy('submittedAt', 'desc'));
-      const subSnap = await getDocs(subQ);
       const subs: any[] = [];
       const subsMap: any = {};
 
-      const studentIdMap = {};
+      const studentIdMap: Record<string, any> = {};
       allStudents.forEach(s => studentIdMap[s.id] = s);
 
       subSnap.forEach(d => {
@@ -103,6 +122,10 @@ export default function ManageSubmissions() {
       });
 
       setSubmissions(subs);
+      try {
+        localStorage.setItem('esmart_submissions_cache', JSON.stringify(subs));
+        localStorage.setItem('esmart_assignments_map_cache', JSON.stringify(asmMap));
+      } catch {}
     } catch (e) {
       console.error(e);
     }
@@ -372,7 +395,7 @@ export default function ManageSubmissions() {
     }
   };
 
-  if (loading) return <div className="p-8 text-center text-gray-500">Đang tải dữ liệu...</div>;
+  // Không chặn giao diện bằng màn hình chờ, hiển thị tức thì dữ liệu từ bộ nhớ đệm
 
   const filteredSubmissions = submissions.filter(sub => {
     if (filterAssignmentId !== 'all' && sub.assignmentId !== filterAssignmentId) {

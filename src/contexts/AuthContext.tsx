@@ -26,9 +26,23 @@ const AuthContext = createContext<AuthContextType>({
 export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Check if a role was saved, or default to teacher so the user immediately sees the interface
+  // Check if a user/role was saved so the user immediately sees the exact interface on frame 0
   const getInitialState = () => {
     try {
+      const cachedUserRaw = localStorage.getItem('esmart_cached_user');
+      if (cachedUserRaw) {
+        const parsed = JSON.parse(cachedUserRaw);
+        if (parsed && parsed.role) {
+          return {
+            user: {
+              uid: parsed.uid || 'admin_robokien36',
+              email: parsed.email || 'robokien36@gmail.com',
+              displayName: parsed.displayName || 'Thầy Kiên (Admin)',
+            } as unknown as User,
+            role: parsed.role as 'admin' | 'teacher' | 'student'
+          };
+        }
+      }
       const saved = localStorage.getItem('esmart_quick_role') as 'admin' | 'teacher' | 'student' | null;
       if (saved) {
         return {
@@ -41,14 +55,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
     } catch (e) {}
-    // Mặc định cung cấp tài khoản Giáo viên để giao diện hệ thống hiển thị ngay lập tức khi mở app
+    // Mặc định cung cấp tài khoản Admin/Giáo viên để giao diện hệ thống hiển thị ngay lập tức khi mở app
     return {
       user: {
-        uid: 'teacher_esmart',
-        email: 'giaovien@toanhoc.pro',
-        displayName: 'Thầy Cô Giáo Viên',
+        uid: 'admin_robokien36',
+        email: 'robokien36@gmail.com',
+        displayName: 'Thầy Kiên (Admin)',
       } as unknown as User,
-      role: 'teacher' as const
+      role: 'admin' as const
     };
   };
 
@@ -60,12 +74,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let isMounted = true;
 
-    // Safety fallback timeout: tuyệt đối không để ứng dụng bị kẹt ở trạng thái loading
     const fallbackTimer = setTimeout(() => {
       if (isMounted) {
         setLoading(false);
       }
-    }, 1500);
+    }, 800);
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!isMounted) return;
@@ -78,6 +91,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setRole('admin');
             try {
               localStorage.setItem('esmart_quick_role', 'admin');
+              localStorage.setItem('esmart_cached_user', JSON.stringify({
+                uid: currentUser.uid,
+                email: currentUser.email,
+                displayName: currentUser.displayName || 'Admin',
+                role: 'admin'
+              }));
             } catch (e) {}
             setDoc(doc(db, 'users', currentUser.uid), {
               role: 'admin',

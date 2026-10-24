@@ -13,7 +13,6 @@ import CancelAssignmentModal from '../../components/teacher/CancelAssignmentModa
 import { QuestionItem } from '../../types/test';
 import { stripOptionPrefix, checkMcqAnswer, detectAnswerDiscrepancy, autoReconcileQuestion } from '../../utils/gradeEngine';
 import { isPureSectionHeader, isTheoryQuestion, healQuestionOptions } from '../../utils/practiceFormatter';
-import { exportGradebookPdf, exportGradebookExcel } from '../../utils/gradebookExport';
 import { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
 import { dataUrlToFile, ensureAttachmentDataUrl } from '../../lib/fileUtils';
 import { repairVietnameseDocument, convertTcvn3ToUnicode, healMathSvg } from '../../lib/vietnameseFont';
@@ -29,18 +28,46 @@ export default function ManageTests() {
   const { user, role } = useAuth();
   const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>(getCurrentSchoolYear());
   const [newSchoolYear, setNewSchoolYear] = useState<string>(getCurrentSchoolYear());
-  const [tests, setTests] = useState<any[]>([]);
-  const [topics, setTopics] = useState<any[]>([]);
+  const [tests, setTests] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_tests_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [topics, setTopics] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_topics_all_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [lessons, setLessons] = useState<any[]>([]);
   const [selectedReference, setSelectedReference] = useState<SelectedDocumentReference | null>(null);
   
-  const [loading, setLoading] = useState(true);
-  const [schoolClasses, setSchoolClasses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [schoolClasses, setSchoolClasses] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_admin_classes_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [assignedClasses, setAssignedClasses] = useState<string[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<string>('');
   const [assignmentsList, setAssignmentsList] = useState<any[]>([]);
   const [submissionsList, setSubmissionsList] = useState<any[]>([]);
-  const [studentsList, setStudentsList] = useState<any[]>([]);
+  const [studentsList, setStudentsList] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('esmart_admin_users_cache');
+      return cached ? JSON.parse(cached).filter((u: any) => u.role === 'student') : [];
+    } catch {
+      return [];
+    }
+  });
 
   // Tự động nhận diện tài liệu tham chiếu từ Thư viện khi chuyển từ tab Thư viện tài liệu
   useEffect(() => {
@@ -160,63 +187,36 @@ export default function ManageTests() {
   }, [user]);
 
   const loadData = async () => {
-    setLoading(true);
     try {
-      // 1. Classes with cache fallback
-      let clsSnap;
-      try {
-        clsSnap = await getDocs(collection(db, 'classes'));
-      } catch {
-        clsSnap = await getDocsFromCache(collection(db, 'classes'));
-      }
-      const clsData = clsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const safeGetDocs = async (qOrCol: any) => {
+        try {
+          return await getDocs(qOrCol);
+        } catch {
+          return await getDocsFromCache(qOrCol);
+        }
+      };
+
+      const [clsSnap, uDocSnap, topicsSnap, testsSnap, stuSnap] = await Promise.all([
+        safeGetDocs(collection(db, 'classes')),
+        user ? getDoc(doc(db, 'users', user.uid)).catch(() => null) : Promise.resolve(null),
+        safeGetDocs(collection(db, 'topics')),
+        safeGetDocs(collection(db, 'tests')),
+        safeGetDocs(query(collection(db, 'users'), where('role', '==', 'student'))).catch(() => null)
+      ]);
+
+      const clsData = clsSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
       setSchoolClasses(clsData);
 
-      if (user) {
-        try {
-          const uDoc = await getDoc(doc(db, 'users', user.uid));
-          if (uDoc.exists()) {
-            setAssignedClasses(uDoc.data().permissions?.assignedClasses || []);
-          }
-        } catch (e) {
-          console.warn('Error reading user doc:', e);
-        }
+      if (uDocSnap && typeof uDocSnap.exists === 'function' && uDocSnap.exists()) {
+        setAssignedClasses(uDocSnap.data().permissions?.assignedClasses || []);
       }
 
-      // 2. Topics with cache fallback
-      let topicsSnap;
-      try {
-        topicsSnap = await getDocs(collection(db, 'topics'));
-      } catch {
-        topicsSnap = await getDocsFromCache(collection(db, 'topics'));
-      }
-      const topicsData = topicsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      const topicsData = topicsSnap.docs.map((d: any) => ({ id: d.id, ...d.data() } as any));
       setTopics(topicsData);
 
-      // 2.5 Lessons with cache fallback
-      try {
-        let lessonsSnap;
-        try {
-          lessonsSnap = await getDocs(collection(db, 'lessons'));
-        } catch {
-          lessonsSnap = await getDocsFromCache(collection(db, 'lessons'));
-        }
-        const lessonsData = lessonsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-        setLessons(lessonsData);
-      } catch (errLessons) {
-        console.warn('Error loading lessons in ManageTests:', errLessons);
-      }
-
-      // 3. Tests with cache fallback
-      let testsSnap;
-      try {
-        testsSnap = await getDocs(collection(db, 'tests'));
-      } catch {
-        testsSnap = await getDocsFromCache(collection(db, 'tests'));
-      }
-      const testsData = testsSnap.docs.map(d => {
+      const testsData = testsSnap.docs.map((d: any) => {
         const data = d.data();
-        const topic = topicsData.find(t => t.id === data.topicId);
+        const topic = topicsData.find((t: any) => t.id === data.topicId);
         return { 
           id: d.id, 
           ...data, 
@@ -230,18 +230,22 @@ export default function ManageTests() {
       });
       setTests(testsData);
 
-      // 4. Students
-      try {
-        let stuSnap;
-        try {
-          stuSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'student')));
-        } catch {
-          stuSnap = await getDocsFromCache(query(collection(db, 'users'), where('role', '==', 'student')));
-        }
-        setStudentsList(stuSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-      } catch (e) {
-        console.warn('Error loading students list:', e);
+      if (stuSnap) {
+        setStudentsList(stuSnap.docs.map((d: any) => ({ id: d.id, ...d.data() })));
       }
+
+      try {
+        localStorage.setItem('esmart_topics_all_cache', JSON.stringify(topicsData));
+        localStorage.setItem('esmart_tests_cache', JSON.stringify(testsData));
+        localStorage.setItem('esmart_admin_classes_cache', JSON.stringify(clsData));
+      } catch {}
+
+      // Tải danh sách bài học không chặn luồng chính
+      safeGetDocs(collection(db, 'lessons'))
+        .then((lessonsSnap: any) => {
+          setLessons(lessonsSnap.docs.map((d: any) => ({ id: d.id, ...d.data() } as any)));
+        })
+        .catch(() => {});
 
       setLoading(false);
     } catch (e: any) {
@@ -252,7 +256,7 @@ export default function ManageTests() {
           'Hạn mức đọc dữ liệu miễn phí trong ngày của Firestore đã đạt giới hạn (Quota exceeded for free daily read units). ' +
           'Dữ liệu sẽ tự động được phục hồi khi sang ngày mới hoặc thầy/cô có thể nâng cấp gói cước trên Firebase Console.'
         );
-      } else {
+      } else if (tests.length === 0) {
         setSysError('Có lỗi khi tải danh sách đề thi: ' + (e?.message || 'Lỗi mạng'));
       }
       setLoading(false);
@@ -1234,6 +1238,7 @@ export default function ManageTests() {
 
     if (format === 'excel') {
       try {
+        const { exportGradebookExcel } = await import('../../utils/gradebookExport');
         exportGradebookExcel(classStudents, submissionsList, a, teacherName);
         setSysMsg(`Đã xuất bảng điểm Excel lớp ${a.className} thành công!`);
         setTimeout(() => setSysMsg(''), 4000);
@@ -1248,6 +1253,7 @@ export default function ManageTests() {
     setExportingAssignId(a.id);
     setSysMsg('Đang tạo bảng điểm PDF chuẩn A4 (chống cắt dòng)...');
     try {
+      const { exportGradebookPdf } = await import('../../utils/gradebookExport');
       await exportGradebookPdf(
         classStudents,
         submissionsList,
@@ -2188,7 +2194,7 @@ export default function ManageTests() {
     }
   };
 
-  if (loading) return <div>Đang tải đề kiểm tra...</div>;
+  // Không chặn giao diện bằng màn hình chờ, hiển thị tức thì dữ liệu từ bộ nhớ đệm
 
   
   const getParsedQuestions = (data: string) => {

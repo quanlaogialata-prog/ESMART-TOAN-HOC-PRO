@@ -2,8 +2,8 @@ import { useState, useEffect, lazy, Suspense } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router';
 import DocumentLibrary from './teacher/DocumentLibrary';
+import AdminDashboard from './admin/ManageTeachers';
 
-const AdminDashboard = lazy(() => import('./admin/ManageTeachers'));
 const ManageTopicPractices = lazy(() => import('./teacher/ManageTopicPractices'));
 const ManageTests = lazy(() => import('./teacher/ManageTests'));
 const ManageOfflineTests = lazy(() => import('./teacher/ManageOfflineTests'));
@@ -20,10 +20,20 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<Tab>(role === 'admin' ? 'admin' : (role === 'teacher' ? 'curriculum' : 'student'));
 
   useEffect(() => {
-    if (role === 'admin') setActiveTab('admin');
-    else if (role === 'teacher') setActiveTab('curriculum');
+    if (role === 'admin') setActiveTab(prev => (prev === 'student' ? 'admin' : prev));
+    else if (role === 'teacher' && (activeTab === 'admin' || activeTab === 'student')) setActiveTab('curriculum');
     else if (role === 'student') setActiveTab('student');
   }, [role]);
+
+  // Tải ngầm các phân hệ phụ ngay sau khi màn hình chính vừa hiển thị để chuyển tab tức thì (0ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      import('./teacher/ManageTopicPractices').catch(() => {});
+      import('./teacher/ManageTests').catch(() => {});
+      import('./teacher/ManageOfflineTests').catch(() => {});
+    }, 300);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const handleSwitch = (e: any) => {

@@ -5,7 +5,9 @@ import {
   getFirestore, 
   doc, 
   getDocFromServer, 
-  Firestore
+  Firestore,
+  persistentLocalCache,
+  persistentMultipleTabManager
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -14,14 +16,22 @@ export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 let firestoreInstance: Firestore;
 try {
   firestoreInstance = initializeFirestore(app, {
-    experimentalAutoDetectLongPolling: true,
+    experimentalForceLongPolling: true,
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager()
+    })
   }, firebaseConfig.firestoreDatabaseId);
 } catch (e) {
   try {
-    firestoreInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    firestoreInstance = initializeFirestore(app, {
+      experimentalForceLongPolling: true,
+    }, firebaseConfig.firestoreDatabaseId);
   } catch (err2) {
-    console.error("Firestore initialization fallback:", err2);
-    firestoreInstance = getFirestore(app);
+    try {
+      firestoreInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    } catch (err3) {
+      firestoreInstance = getFirestore(app);
+    }
   }
 }
 
