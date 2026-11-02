@@ -1,9 +1,9 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router';
-import DocumentLibrary from './teacher/DocumentLibrary';
-import AdminDashboard from './admin/ManageTeachers';
 
+const DocumentLibrary = lazy(() => import('./teacher/DocumentLibrary'));
+const AdminDashboard = lazy(() => import('./admin/ManageTeachers'));
 const ManageTopicPractices = lazy(() => import('./teacher/ManageTopicPractices'));
 const ManageTests = lazy(() => import('./teacher/ManageTests'));
 const ManageOfflineTests = lazy(() => import('./teacher/ManageOfflineTests'));
@@ -24,16 +24,6 @@ export default function Dashboard() {
     else if (role === 'teacher' && (activeTab === 'admin' || activeTab === 'student')) setActiveTab('curriculum');
     else if (role === 'student') setActiveTab('student');
   }, [role]);
-
-  // Tải ngầm các phân hệ phụ ngay sau khi màn hình chính vừa hiển thị để chuyển tab tức thì (0ms)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      import('./teacher/ManageTopicPractices').catch(() => {});
-      import('./teacher/ManageTests').catch(() => {});
-      import('./teacher/ManageOfflineTests').catch(() => {});
-    }, 300);
-    return () => clearTimeout(timer);
-  }, []);
 
   useEffect(() => {
     const handleSwitch = (e: any) => {
@@ -66,6 +56,7 @@ export default function Dashboard() {
           <div className="flex flex-wrap bg-gray-100 p-1 rounded-lg gap-1">
             {role === 'admin' && (
               <button 
+                onMouseEnter={() => { import('./admin/ManageTeachers').catch(() => {}); }}
                 onClick={() => setActiveTab('admin')}
                 className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'admin' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
               >
@@ -73,6 +64,7 @@ export default function Dashboard() {
               </button>
             )}
             <button 
+              onMouseEnter={() => { import('./teacher/DocumentLibrary').catch(() => {}); }}
               onClick={() => setActiveTab('curriculum')}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'curriculum' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
               title="Thư viện tài liệu tham chiếu theo từng chuyên đề của các khối lớp"
@@ -80,6 +72,7 @@ export default function Dashboard() {
               📚 Thư viện tài liệu
             </button>
             <button 
+              onMouseEnter={() => { import('./teacher/ManageTopicPractices').catch(() => {}); }}
               onClick={() => setActiveTab('topic-practice')}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'topic-practice' ? 'bg-white text-blue-600 shadow-sm font-semibold' : 'text-gray-600 hover:text-gray-900'}`}
               title="Mục bài ôn luyện theo chủ đề từ bài học copy-paste dạng bài kiểm tra để in và tải xuống"
@@ -87,24 +80,28 @@ export default function Dashboard() {
               🎯 Bài ôn luyện theo chủ đề
             </button>
             <button 
+              onMouseEnter={() => { import('./teacher/ManageTests').catch(() => {}); }}
               onClick={() => setActiveTab('tests')}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'tests' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Bài kiểm tra và thi online
             </button>
             <button 
+              onMouseEnter={() => { import('./teacher/ManageOfflineTests').catch(() => {}); }}
               onClick={() => setActiveTab('offline-tests')}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'offline-tests' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Bài kiểm tra và thi offline
             </button>
             <button 
+              onMouseEnter={() => { import('./teacher/ManageSubmissions').catch(() => {}); }}
               onClick={() => setActiveTab('grading')}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'grading' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
             >
               Chấm bài
             </button>
             <button 
+              onMouseEnter={() => { import('./teacher/Gradebook').catch(() => {}); }}
               onClick={() => setActiveTab('gradebook')}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${activeTab === 'gradebook' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
             >

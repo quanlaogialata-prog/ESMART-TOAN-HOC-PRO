@@ -1,19 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { collection, query, getDocs, getDocsFromCache, addDoc, where, deleteDoc, doc, updateDoc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db, FIRESTORE_UPGRADE_URL } from '../../lib/firebase';
 import { FileText, Plus, Upload, Clock, List, Calendar, X, Trash2, Eye, Pencil, ArrowLeft, Folder, FolderCheck, Layers, Shuffle, CheckCircle, Copy, Sparkles, Printer, FileCheck, ShieldCheck, LayoutGrid, FileSpreadsheet, Check, ChevronRight, ChevronDown, ChevronUp, BookOpen, Sliders, HelpCircle, Info, Users, AlertTriangle, ExternalLink, Edit3 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import MathText from '../../components/MathText';
 import { generateTestVariants, TestVariant } from '../../utils/variantGenerator';
-import { CreateOnlineTestModal } from '../../components/teacher/CreateOnlineTestModal';
 import QuestionVisualRenderer from '../../components/common/QuestionVisualRenderer';
 import QuestionReferenceBadge from '../../components/common/QuestionReferenceBadge';
-import EditQuestionsModal from '../../components/teacher/EditQuestionsModal';
-import CancelAssignmentModal from '../../components/teacher/CancelAssignmentModal';
 import { QuestionItem } from '../../types/test';
 import { stripOptionPrefix, checkMcqAnswer, detectAnswerDiscrepancy, autoReconcileQuestion } from '../../utils/gradeEngine';
 import { isPureSectionHeader, isTheoryQuestion, healQuestionOptions } from '../../utils/practiceFormatter';
-import { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
+import type { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
+
+const CreateOnlineTestModal = lazy(() => import('../../components/teacher/CreateOnlineTestModal').then(m => ({ default: m.CreateOnlineTestModal })));
+const EditQuestionsModal = lazy(() => import('../../components/teacher/EditQuestionsModal'));
+const CancelAssignmentModal = lazy(() => import('../../components/teacher/CancelAssignmentModal'));
 import { dataUrlToFile, ensureAttachmentDataUrl } from '../../lib/fileUtils';
 import { repairVietnameseDocument, convertTcvn3ToUnicode, healMathSvg } from '../../lib/vietnameseFont';
 import { 
@@ -236,16 +237,14 @@ export default function ManageTests() {
 
       try {
         localStorage.setItem('esmart_topics_all_cache', JSON.stringify(topicsData));
-        localStorage.setItem('esmart_tests_cache', JSON.stringify(testsData));
+        const lightTests = testsData.map((t: any) => ({
+          ...t,
+          fileUrl: typeof t.fileUrl === 'string' && t.fileUrl.length > 2000 ? undefined : t.fileUrl,
+          answerFileUrl: typeof t.answerFileUrl === 'string' && t.answerFileUrl.length > 2000 ? undefined : t.answerFileUrl,
+        }));
+        localStorage.setItem('esmart_tests_cache', JSON.stringify(lightTests));
         localStorage.setItem('esmart_admin_classes_cache', JSON.stringify(clsData));
       } catch {}
-
-      // Tải danh sách bài học không chặn luồng chính
-      safeGetDocs(collection(db, 'lessons'))
-        .then((lessonsSnap: any) => {
-          setLessons(lessonsSnap.docs.map((d: any) => ({ id: d.id, ...d.data() } as any)));
-        })
-        .catch(() => {});
 
       setLoading(false);
     } catch (e: any) {
@@ -264,6 +263,19 @@ export default function ManageTests() {
   };
 
   const [showCreateModal, setShowCreateModal] = useState(false);
+
+  useEffect(() => {
+    if (showCreateModal && lessons.length === 0) {
+      getDocs(collection(db, 'lessons'))
+        .catch(() => getDocsFromCache(collection(db, 'lessons')))
+        .then((lessonsSnap: any) => {
+          if (lessonsSnap?.docs) {
+            setLessons(lessonsSnap.docs.map((d: any) => ({ id: d.id, ...d.data() } as any)));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [showCreateModal, lessons.length]);
   const [creatingType, setCreatingType] = useState<'mcq' | 'essay' | 'mixed'>('mcq');
   const [newTitle, setNewTitle] = useState('');
   const [newDuration, setNewDuration] = useState('45');
@@ -3245,127 +3257,135 @@ export default function ManageTests() {
       )}
 
       {/* Create Online Test Modal */}
-      <CreateOnlineTestModal
-        show={showCreateModal}
-        onClose={handleCloseCreateModal}
-        onSubmit={handleCreateTest}
-        editingTestId={editingTestId}
-        selectedReference={selectedReference}
-        setSelectedReference={setSelectedReference}
-        onlineCreationMode={onlineCreationMode}
-        setOnlineCreationMode={setOnlineCreationMode}
-        examFormat={examFormat}
-        setExamFormat={setExamFormat}
-        autoGenType={autoGenType}
-        setAutoGenType={setAutoGenType}
-        matrixSourceType={matrixSourceType}
-        setMatrixSourceType={setMatrixSourceType}
-        matrixText={matrixText}
-        setMatrixText={setMatrixText}
-        uploadSourceType={uploadSourceType}
-        setUploadSourceType={setUploadSourceType}
-        uploadPastedText={uploadPastedText}
-        setUploadPastedText={setUploadPastedText}
-        matrixConfig={matrixConfig}
-        setMatrixConfig={setMatrixConfig}
-        selectedMatrixPreset={selectedMatrixPreset}
-        setSelectedMatrixPreset={setSelectedMatrixPreset}
-        matrixFile={matrixFile}
-        setMatrixFile={setMatrixFile}
-        activePresetId={activePresetId}
-        setActivePresetId={setActivePresetId}
-        formatPresets={formatPresets}
-        matrixPresets={matrixPresets}
-        applyPreset={applyPreset}
-        applyMatrixPreset={applyMatrixPreset}
-        newTitle={newTitle}
-        setNewTitle={setNewTitle}
-        newDuration={newDuration}
-        setNewDuration={setNewDuration}
-        newGrade={newGrade}
-        setNewGrade={setNewGrade}
-        newTopicId={newTopicId}
-        setNewTopicId={setNewTopicId}
-        newSchoolYear={newSchoolYear}
-        setNewSchoolYear={setNewSchoolYear}
-        topics={topics}
-        part1Count={part1Count}
-        setPart1Count={setPart1Count}
-        part2Count={part2Count}
-        setPart2Count={setPart2Count}
-        part3Count={part3Count}
-        setPart3Count={setPart3Count}
-        customPart1Enabled={customPart1Enabled}
-        setCustomPart1Enabled={setCustomPart1Enabled}
-        customPart1Count={customPart1Count}
-        setCustomPart1Count={setCustomPart1Count}
-        customPart2Enabled={customPart2Enabled}
-        setCustomPart2Enabled={setCustomPart2Enabled}
-        customPart2Count={customPart2Count}
-        setCustomPart2Count={setCustomPart2Count}
-        customPart3Enabled={customPart3Enabled}
-        setCustomPart3Enabled={setCustomPart3Enabled}
-        customPart3Count={customPart3Count}
-        setCustomPart3Count={setCustomPart3Count}
-        mcqCount={mcqCount}
-        setMcqCount={setMcqCount}
-        essayCount={essayCount}
-        setEssayCount={setEssayCount}
-        newFile={newFile}
-        setNewFile={setNewFile}
-        newAnswerFile={newAnswerFile}
-        setNewAnswerFile={setNewAnswerFile}
-        splitAnswers={splitAnswers}
-        setSplitAnswers={setSplitAnswers}
-        createMultiVariant={createMultiVariant}
-        setCreateMultiVariant={setCreateMultiVariant}
-        createVariantMethod={createVariantMethod}
-        setCreateVariantMethod={setCreateVariantMethod}
-        customVariantCodes={customVariantCodes}
-        setCustomVariantCodes={setCustomVariantCodes}
-        shuffleQuestions={shuffleQuestions}
-        setShuffleQuestions={setShuffleQuestions}
-        shuffleOptions={shuffleOptions}
-        setShuffleOptions={setShuffleOptions}
-        referenceFile={referenceFile}
-        setReferenceFile={setReferenceFile}
-        referenceNotes={referenceNotes}
-        setReferenceNotes={setReferenceNotes}
-        customEssayEnabled={customEssayEnabled}
-        setCustomEssayEnabled={setCustomEssayEnabled}
-        customEssayItems={customEssayItems}
-        setCustomEssayItems={setCustomEssayItems}
-        lessons={lessons}
-        isSaving={isSaving}
-        sysError={sysError}
-        setSysError={setSysError}
-        sysMsg={sysMsg}
-        onSaveBatchTests={handleSaveBatchTests}
-      />
+      {showCreateModal && (
+        <Suspense fallback={null}>
+          <CreateOnlineTestModal
+            show={showCreateModal}
+            onClose={handleCloseCreateModal}
+            onSubmit={handleCreateTest}
+            editingTestId={editingTestId}
+            selectedReference={selectedReference}
+            setSelectedReference={setSelectedReference}
+            onlineCreationMode={onlineCreationMode}
+            setOnlineCreationMode={setOnlineCreationMode}
+            examFormat={examFormat}
+            setExamFormat={setExamFormat}
+            autoGenType={autoGenType}
+            setAutoGenType={setAutoGenType}
+            matrixSourceType={matrixSourceType}
+            setMatrixSourceType={setMatrixSourceType}
+            matrixText={matrixText}
+            setMatrixText={setMatrixText}
+            uploadSourceType={uploadSourceType}
+            setUploadSourceType={setUploadSourceType}
+            uploadPastedText={uploadPastedText}
+            setUploadPastedText={setUploadPastedText}
+            matrixConfig={matrixConfig}
+            setMatrixConfig={setMatrixConfig}
+            selectedMatrixPreset={selectedMatrixPreset}
+            setSelectedMatrixPreset={setSelectedMatrixPreset}
+            matrixFile={matrixFile}
+            setMatrixFile={setMatrixFile}
+            activePresetId={activePresetId}
+            setActivePresetId={setActivePresetId}
+            formatPresets={formatPresets}
+            matrixPresets={matrixPresets}
+            applyPreset={applyPreset}
+            applyMatrixPreset={applyMatrixPreset}
+            newTitle={newTitle}
+            setNewTitle={setNewTitle}
+            newDuration={newDuration}
+            setNewDuration={setNewDuration}
+            newGrade={newGrade}
+            setNewGrade={setNewGrade}
+            newTopicId={newTopicId}
+            setNewTopicId={setNewTopicId}
+            newSchoolYear={newSchoolYear}
+            setNewSchoolYear={setNewSchoolYear}
+            topics={topics}
+            part1Count={part1Count}
+            setPart1Count={setPart1Count}
+            part2Count={part2Count}
+            setPart2Count={setPart2Count}
+            part3Count={part3Count}
+            setPart3Count={setPart3Count}
+            customPart1Enabled={customPart1Enabled}
+            setCustomPart1Enabled={setCustomPart1Enabled}
+            customPart1Count={customPart1Count}
+            setCustomPart1Count={setCustomPart1Count}
+            customPart2Enabled={customPart2Enabled}
+            setCustomPart2Enabled={setCustomPart2Enabled}
+            customPart2Count={customPart2Count}
+            setCustomPart2Count={setCustomPart2Count}
+            customPart3Enabled={customPart3Enabled}
+            setCustomPart3Enabled={setCustomPart3Enabled}
+            customPart3Count={customPart3Count}
+            setCustomPart3Count={setCustomPart3Count}
+            mcqCount={mcqCount}
+            setMcqCount={setMcqCount}
+            essayCount={essayCount}
+            setEssayCount={setEssayCount}
+            newFile={newFile}
+            setNewFile={setNewFile}
+            newAnswerFile={newAnswerFile}
+            setNewAnswerFile={setNewAnswerFile}
+            splitAnswers={splitAnswers}
+            setSplitAnswers={setSplitAnswers}
+            createMultiVariant={createMultiVariant}
+            setCreateMultiVariant={setCreateMultiVariant}
+            createVariantMethod={createVariantMethod}
+            setCreateVariantMethod={setCreateVariantMethod}
+            customVariantCodes={customVariantCodes}
+            setCustomVariantCodes={setCustomVariantCodes}
+            shuffleQuestions={shuffleQuestions}
+            setShuffleQuestions={setShuffleQuestions}
+            shuffleOptions={shuffleOptions}
+            setShuffleOptions={setShuffleOptions}
+            referenceFile={referenceFile}
+            setReferenceFile={setReferenceFile}
+            referenceNotes={referenceNotes}
+            setReferenceNotes={setReferenceNotes}
+            customEssayEnabled={customEssayEnabled}
+            setCustomEssayEnabled={setCustomEssayEnabled}
+            customEssayItems={customEssayItems}
+            setCustomEssayItems={setCustomEssayItems}
+            lessons={lessons}
+            isSaving={isSaving}
+            sysError={sysError}
+            setSysError={setSysError}
+            sysMsg={sysMsg}
+            onSaveBatchTests={handleSaveBatchTests}
+          />
+        </Suspense>
+      )}
 
       {/* Comprehensive Edit Questions Modal with Visuals & Reference Content */}
       {editingQuestionsTest && (
-        <EditQuestionsModal
-          testTitle={editingQuestionsTest.title || 'Đề kiểm tra'}
-          initialQuestions={editingQuestionsList}
-          isOpen={Boolean(editingQuestionsTest)}
-          onClose={() => setEditingQuestionsTest(null)}
-          onSave={handleSaveQuestionsFromModal}
-          isSaving={isSavingQuestions}
-        />
+        <Suspense fallback={null}>
+          <EditQuestionsModal
+            testTitle={editingQuestionsTest.title || 'Đề kiểm tra'}
+            initialQuestions={editingQuestionsList}
+            isOpen={Boolean(editingQuestionsTest)}
+            onClose={() => setEditingQuestionsTest(null)}
+            onSave={handleSaveQuestionsFromModal}
+            isSaving={isSavingQuestions}
+          />
+        </Suspense>
       )}
 
       {/* Cancel Assignment Modal */}
       {assignmentToCancel && (
-        <CancelAssignmentModal
-          isOpen={Boolean(assignmentToCancel)}
-          onClose={() => setAssignmentToCancel(null)}
-          assignment={assignmentToCancel}
-          submissionCount={submissionsList.filter(s => s.assignmentId === assignmentToCancel.id).length}
-          studentCount={studentsList.filter(s => s.className === assignmentToCancel.className).length}
-          onConfirmCancel={handleCancelAssignment}
-          isProcessing={isCancellingAssignment}
-        />
+        <Suspense fallback={null}>
+          <CancelAssignmentModal
+            isOpen={Boolean(assignmentToCancel)}
+            onClose={() => setAssignmentToCancel(null)}
+            assignment={assignmentToCancel}
+            submissionCount={submissionsList.filter(s => s.assignmentId === assignmentToCancel.id).length}
+            studentCount={studentsList.filter(s => s.className === assignmentToCancel.className).length}
+            onConfirmCancel={handleCancelAssignment}
+            isProcessing={isCancellingAssignment}
+          />
+        </Suspense>
       )}
 
       {/* Preview Modal */}

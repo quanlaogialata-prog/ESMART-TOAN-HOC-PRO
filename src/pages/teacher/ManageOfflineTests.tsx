@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { 
   collection, 
   query, 
@@ -46,8 +46,10 @@ import MathText from '../../components/MathText';
 import { generateTestVariants, TestVariant, groupQuestionsByExamStructure, detectQuestionType, QuestionType, ExamSection } from '../../utils/variantGenerator';
 import { stripOptionPrefix, detectAnswerDiscrepancy, autoReconcileQuestion } from '../../utils/gradeEngine';
 import { isPureSectionHeader, isInstructionOrRangeOnly, isTheoryQuestion, healQuestionOptions } from '../../utils/practiceFormatter';
-import EditQuestionsModal from '../../components/teacher/EditQuestionsModal';
-import DocumentReferenceSelectorModal, { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
+import type { SelectedDocumentReference } from '../../components/teacher/DocumentReferenceSelectorModal';
+
+const EditQuestionsModal = lazy(() => import('../../components/teacher/EditQuestionsModal'));
+const DocumentReferenceSelectorModal = lazy(() => import('../../components/teacher/DocumentReferenceSelectorModal'));
 import { dataUrlToFile, ensureAttachmentDataUrl } from '../../lib/fileUtils';
 import { repairVietnameseDocument, convertTcvn3ToUnicode, healMathSvg } from '../../lib/vietnameseFont';
 import { 
@@ -2983,18 +2985,20 @@ export default function ManageOfflineTests() {
 
       {/* Edit Questions Modal for Offline Tests */}
       {editingOfflineTest && (
-        <EditQuestionsModal
-          isOpen={!!editingOfflineTest}
-          onClose={() => setEditingOfflineTest(null)}
-          initialQuestions={
-            editingOfflineTest.variants?.find(v => v.code === editingVariantCode)?.questions ||
-            editingOfflineTest.variants?.[0]?.questions ||
-            []
-          }
-          onSave={handleSaveEditedQuestions}
-          isSaving={isSavingEditedQuestions}
-          testTitle={`${editingOfflineTest.title} (Mã đề ${editingVariantCode})`}
-        />
+        <Suspense fallback={null}>
+          <EditQuestionsModal
+            isOpen={!!editingOfflineTest}
+            onClose={() => setEditingOfflineTest(null)}
+            initialQuestions={
+              editingOfflineTest.variants?.find(v => v.code === editingVariantCode)?.questions ||
+              editingOfflineTest.variants?.[0]?.questions ||
+              []
+            }
+            onSave={handleSaveEditedQuestions}
+            isSaving={isSavingEditedQuestions}
+            testTitle={`${editingOfflineTest.title} (Mã đề ${editingVariantCode})`}
+          />
+        </Suspense>
       )}
 
       {/* Download Success Floating Notification */}
@@ -3062,24 +3066,26 @@ export default function ManageOfflineTests() {
 
       {/* MODAL CHỌN TÀI LIỆU THAM CHIẾU TỪ THƯ VIỆN CHO ĐỀ OFFLINE */}
       {showOfflineRefModal && (
-        <DocumentReferenceSelectorModal
-          isOpen={showOfflineRefModal}
-          onClose={() => setShowOfflineRefModal(false)}
-          initialGrade={examGrade || 10}
-          title="Chọn đề gốc hoặc tài liệu tham chiếu từ Thư viện"
-          onSelect={(ref) => {
-            setSelectedOfflineRef(ref);
-            if (ref.grade) setExamGrade(Number(ref.grade) || 10);
-            if (ref.lessonTitle) {
-              setExamTitle(ref.lessonTitle);
-            }
-            if (ref.attachment?.dataUrl && ref.attachment?.name) {
-              const file = dataUrlToFile(ref.attachment.dataUrl, ref.attachment.name, ref.attachment.type);
-              setUploadFile(file);
-              handleExtractQuestionsFromFile(file);
-            }
-          }}
-        />
+        <Suspense fallback={null}>
+          <DocumentReferenceSelectorModal
+            isOpen={showOfflineRefModal}
+            onClose={() => setShowOfflineRefModal(false)}
+            initialGrade={examGrade || 10}
+            title="Chọn đề gốc hoặc tài liệu tham chiếu từ Thư viện"
+            onSelect={(ref) => {
+              setSelectedOfflineRef(ref);
+              if (ref.grade) setExamGrade(Number(ref.grade) || 10);
+              if (ref.lessonTitle) {
+                setExamTitle(ref.lessonTitle);
+              }
+              if (ref.attachment?.dataUrl && ref.attachment?.name) {
+                const file = dataUrlToFile(ref.attachment.dataUrl, ref.attachment.name, ref.attachment.type);
+                setUploadFile(file);
+                handleExtractQuestionsFromFile(file);
+              }
+            }}
+          />
+        </Suspense>
       )}
     </div>
   );

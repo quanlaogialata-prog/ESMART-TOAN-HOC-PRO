@@ -1,6 +1,7 @@
 
 import express from "express";
 import path from "path";
+import zlib from "zlib";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import fs from "fs";
@@ -545,6 +546,51 @@ async function startServer() {
 
   const app = express();
   const PORT = 3000;
+
+  // Fast native GZIP compression for JS, TS, CSS, HTML, JSON, SVG responses (>1KB)
+  app.use((req, res, next) => {
+    const acceptEncoding = String(req.headers['accept-encoding'] || '');
+    if (!acceptEncoding.includes('gzip') || req.method === 'HEAD') {
+      return next();
+    }
+
+    let hasWritten = false;
+    const origWrite = res.write.bind(res);
+    const origEnd = res.end.bind(res);
+
+    res.write = function (chunk: any, ...args: any[]) {
+      hasWritten = true;
+      return (origWrite as any)(chunk, ...args);
+    };
+
+    res.end = function (chunk?: any, ...args: any[]) {
+      if (!hasWritten && chunk && !res.headersSent && !res.getHeader('Content-Encoding')) {
+        const contentType = String(res.getHeader('Content-Type') || '');
+        const url = req.url || '';
+        const isCompressible =
+          /javascript|json|text\/|xml|svg/i.test(contentType) ||
+          /\.(js|mjs|ts|tsx|css|html|json|svg)(\?|$)/i.test(url);
+
+        if (isCompressible) {
+          try {
+            const encoding = typeof args[0] === 'string' ? (args[0] as BufferEncoding) : 'utf8';
+            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), encoding);
+            if (buf.length >= 1024) {
+              const compressed = zlib.gzipSync(buf, { level: 1 });
+              res.setHeader('Content-Encoding', 'gzip');
+              res.setHeader('Vary', 'Accept-Encoding');
+              res.setHeader('Content-Length', compressed.length);
+              const cb = typeof args[0] === 'function' ? args[0] : (typeof args[1] === 'function' ? args[1] : undefined);
+              return cb ? origEnd(compressed, cb) : origEnd(compressed);
+            }
+          } catch {}
+        }
+      }
+      return (origEnd as any)(chunk, ...args);
+    };
+
+    next();
+  });
 
   app.use(express.json({ limit: '50mb' }));
 
@@ -4833,18 +4879,26 @@ TRẢ VỀ DUY NHẤT MỘT MẢNG JSON:
     }
   });
 
+  let viteMiddleware: any = null;
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
-    app.use(vite.middlewares);
+    app.use((req, res, next) => {
+      if (viteMiddleware) return viteMiddleware(req, res, next);
+      next();
+    });
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => { res.sendFile(path.join(distPath, 'index.html')); });
+    app.use(express.static(distPath, { maxAge: '1y', immutable: true }));
+    app.get('*', (_req, res) => { res.sendFile(path.join(distPath, 'index.html')); });
   }
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
+    viteMiddleware = vite.middlewares;
+  }
 }
 
 startServer();
