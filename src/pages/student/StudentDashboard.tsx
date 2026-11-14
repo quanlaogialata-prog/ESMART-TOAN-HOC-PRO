@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, getDocsFromCache, doc, getDoc, deleteDoc } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { collection, query, where, getDocs, getDocsFromCache, doc, getDoc, deleteDoc, db } from '../../lib/firebaseLazy';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   Clock, CheckCircle2, AlertTriangle, BookOpen, Award, 

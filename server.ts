@@ -2,13 +2,14 @@
 import express from "express";
 import path from "path";
 import zlib from "zlib";
+import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import fs from "fs";
 import dotenv from "dotenv";
 import mammoth from "mammoth";
 import { repairVietnameseDocument, convertTcvn3ToUnicode, formatMathExpressions, smartFormatLessonLayout, healMathSvg, cleanHtmlAndSvgContainers } from "./src/lib/vietnameseFont";
-import { extractDocxFullContent } from "./src/lib/docxExtractor";
+import { extractDocxFullContent, extractXlsxFullContent } from "./src/lib/docxExtractor";
 import { generateCurriculumFallbackQuestions, getGrade8ChapterNumber } from "./src/utils/curriculumQuestionBank";
 import { CURRICULUM_TOPICS_BY_GRADE } from "./src/data/curriculumTopics";
 
@@ -547,11 +548,50 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Fast native GZIP compression for JS, TS, CSS, HTML, JSON, SVG responses (>1KB)
+  const srcTransformCache = new Map<string, { raw: Buffer; gzip: Buffer; contentType: string; etag: string; mtimeMs: number }>();
+
+  const getSrcFileMtime = (reqUrl: string): number => {
+    try {
+      const cleanPath = reqUrl.split('?')[0].replace(/^\//, '');
+      if (!cleanPath.startsWith('src/')) return 0;
+      const fullPath = path.join(process.cwd(), cleanPath);
+      return fs.statSync(fullPath).mtimeMs;
+    } catch {
+      return 0;
+    }
+  };
+
+  // Fast native GZIP compression, O(1) inline base64 sourcemap stripping, and RAM cache for /src/* modules
   app.use((req, res, next) => {
-    const acceptEncoding = String(req.headers['accept-encoding'] || '');
-    if (!acceptEncoding.includes('gzip') || req.method === 'HEAD') {
+    if (req.method === 'HEAD') {
       return next();
+    }
+    const reqUrl = req.url || '';
+    const acceptEncoding = String(req.headers['accept-encoding'] || '');
+    const wantsGzip = acceptEncoding.includes('gzip');
+
+    if (req.method === 'GET' && reqUrl.startsWith('/src/')) {
+      const mtimeMs = getSrcFileMtime(reqUrl);
+      const cached = mtimeMs > 0 ? srcTransformCache.get(reqUrl) : undefined;
+      if (cached && cached.mtimeMs === mtimeMs) {
+        if (req.headers['if-none-match'] === cached.etag) {
+          res.status(304).end();
+          return;
+        }
+        res.setHeader('Content-Type', cached.contentType);
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('ETag', cached.etag);
+        if (wantsGzip && cached.gzip.length > 0) {
+          res.setHeader('Content-Encoding', 'gzip');
+          res.setHeader('Vary', 'Accept-Encoding');
+          res.setHeader('Content-Length', cached.gzip.length);
+          res.end(cached.gzip);
+          return;
+        }
+        res.setHeader('Content-Length', cached.raw.length);
+        res.end(cached.raw);
+        return;
+      }
     }
 
     let hasWritten = false;
@@ -567,21 +607,53 @@ async function startServer() {
       if (!hasWritten && chunk && !res.headersSent && !res.getHeader('Content-Encoding')) {
         const contentType = String(res.getHeader('Content-Type') || '');
         const url = req.url || '';
+        const isJsOrTs = /\.(ts|tsx|js|mjs)(\?|$)/i.test(url) && !url.includes('/api/');
         const isCompressible =
+          isJsOrTs ||
           /javascript|json|text\/|xml|svg/i.test(contentType) ||
-          /\.(js|mjs|ts|tsx|css|html|json|svg)(\?|$)/i.test(url);
+          /\.(css|html|json|svg)(\?|$)/i.test(url);
 
         if (isCompressible) {
           try {
             const encoding = typeof args[0] === 'string' ? (args[0] as BufferEncoding) : 'utf8';
-            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), encoding);
-            if (buf.length >= 1024) {
-              const compressed = zlib.gzipSync(buf, { level: 1 });
+            let buf: Buffer;
+            if (isJsOrTs || url.startsWith('/src/')) {
+              const rawStr = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+              const smIdx = rawStr.lastIndexOf('//# sourceMappingURL=data:application/json;base64,');
+              const strippedStr = smIdx !== -1 ? rawStr.slice(0, smIdx) : rawStr;
+              buf = Buffer.from(strippedStr, 'utf8');
+            } else {
+              buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), encoding);
+            }
+
+            const gzipBuf = (wantsGzip || url.startsWith('/src/')) && buf.length >= 256
+              ? zlib.gzipSync(buf, { level: 1 })
+              : Buffer.alloc(0);
+
+            if (req.method === 'GET' && url.startsWith('/src/') && res.statusCode === 200) {
+              const mtimeMs = getSrcFileMtime(url);
+              if (mtimeMs > 0) {
+                const etag = `W/"${buf.length.toString(16)}-${Math.trunc(mtimeMs).toString(16)}"`;
+                res.setHeader('ETag', etag);
+                srcTransformCache.set(url, {
+                  raw: buf,
+                  gzip: gzipBuf,
+                  contentType: contentType || 'application/javascript; charset=utf-8',
+                  etag,
+                  mtimeMs,
+                });
+              }
+            }
+
+            const cb = typeof args[0] === 'function' ? args[0] : (typeof args[1] === 'function' ? args[1] : undefined);
+            if (wantsGzip && gzipBuf.length > 0) {
               res.setHeader('Content-Encoding', 'gzip');
               res.setHeader('Vary', 'Accept-Encoding');
-              res.setHeader('Content-Length', compressed.length);
-              const cb = typeof args[0] === 'function' ? args[0] : (typeof args[1] === 'function' ? args[1] : undefined);
-              return cb ? origEnd(compressed, cb) : origEnd(compressed);
+              res.setHeader('Content-Length', gzipBuf.length);
+              return cb ? origEnd(gzipBuf, cb) : origEnd(gzipBuf);
+            } else if (isJsOrTs || url.startsWith('/src/')) {
+              res.setHeader('Content-Length', buf.length);
+              return cb ? origEnd(buf, cb) : origEnd(buf);
             }
           } catch {}
         }
@@ -975,6 +1047,7 @@ Output exactly a JSON object in this format (no markdown code blocks, just raw J
         mcqCount, 
         essayCount, 
         matrixFileDataUrl, 
+        matrixFileName,
         matrixText,
         mimeType,
         part1Count,
@@ -1054,28 +1127,33 @@ Output exactly a JSON object in this format (no markdown code blocks, just raw J
       }
 
       // Phân tích cấu trúc đề: Tự luận vs Trắc nghiệm
-      const isPureEssayInNotes = 
+      const isMatrixOr3Part = autoGenType === 'matrix' || autoGenType === 'mcq_3part' || formatType === 'matrix' || formatType === 'mcq_3part';
+
+      const isPureEssayInNotes = !isMatrixOr3Part && (
         /(?:cấu\s*trúc|hình\s*thức|kiểu\s*đề|dạng\s*đề|phương\s*thức|hình\s*thức\s*kiểm\s*tra|định\s*dạng)[:\s]*(?:đề\s*)?(?:100%?\s*)?tự\s*luận/i.test(combinedScopeText) ||
         /(?:cấu\s*trúc\s*tự\s*luận|hình\s*thức\s*tự\s*luận|100%?\s*tự\s*luận|đề\s*(?:thi|kiểm\s*tra)\s*(?:chuyên\s*đề\s*)?tự\s*luận|đề\s*tự\s*luận|bài\s*toán\s*tự\s*luận|toàn\s*bộ\s*tự\s*luận|chỉ\s*tự\s*luận|thi\s*tự\s*luận)/i.test(combinedScopeText) ||
         /\b(đề\s*thi\s*tự\s*luận|đề\s*tự\s*luận|tự\s*luận\s*toàn\s*bộ|100%\s*tự\s*luận|chỉ\s*có\s*tự\s*luận|không\s*có\s*trắc\s*nghiệm)\b/i.test(combinedScopeText) ||
         (!/(?:trắc\s*nghiệm\s*4\s*lựa\s*chọn|4\s*lựa\s*chọn|đúng\s*[\/\-]\s*sai|trả\s*lời\s*ngắn|điền\s*số)/i.test(combinedScopeText) && /(?:tự\s*luận|bài\s*toán\s*tự\s*luận)/i.test(combinedScopeText)) ||
         (!/(?:đúng\s*[\/\-]\s*sai\s*:\s*[1-9]|4\s*lựa\s*chọn\s*:\s*[1-9]|trả\s*lời\s*ngắn\s*:\s*[1-9])/i.test(combinedScopeText) && /(?:tự\s*luận\s*:\s*[1-9]|\b\d+\s*câu\s*tự\s*luận|\b\d+\s*bài\s*tự\s*luận)/i.test(combinedScopeText)) ||
-        autoGenType === 'essay' || formatType === 'essay';
+        autoGenType === 'essay' || formatType === 'essay'
+      );
 
-      const hasExplicitTF = /(?:đúng\s*[\/\-]\s*sai|trắc\s*nghiệm\s*đúng\s*sai)/i.test(combinedScopeText) && 
+      const hasExplicitTF = isMatrixOr3Part || (
+        /(?:đúng\s*[\/\-]\s*sai|trắc\s*nghiệm\s*đúng\s*sai)/i.test(combinedScopeText) && 
         !/\b(?:không\s+(?:có\s+|ra\s+)?đúng\s*[\/\-]\s*sai|đúng\s*[\/\-]\s*sai\s*[:=]\s*0\b)/i.test(combinedScopeText) &&
-        !isPureEssayInNotes;
+        !isPureEssayInNotes
+      );
 
-      const p1Req = parseInt(part1Count || customPartsConfig?.part1Count, 10) || 0;
-      enableP1 = isPureEssayInNotes ? false : (customPartsConfig?.enablePart1 === true || (customPartsConfig?.enablePart1 !== false && p1Req > 0));
+      const p1Req = parseInt(part1Count || customPartsConfig?.part1Count, 10) || (isMatrixOr3Part ? 12 : 0);
+      enableP1 = isMatrixOr3Part ? true : (isPureEssayInNotes ? false : (customPartsConfig?.enablePart1 === true || (customPartsConfig?.enablePart1 !== false && p1Req > 0)));
 
-      const p2Req = parseInt(part2Count || customPartsConfig?.part2Count, 10) || 0;
-      enableP2 = isPureEssayInNotes ? false : (hasExplicitTF && customPartsConfig?.enablePart2 === true && p2Req > 0);
+      const p2Req = parseInt(part2Count || customPartsConfig?.part2Count, 10) || (isMatrixOr3Part ? 4 : 0);
+      enableP2 = isMatrixOr3Part ? true : (isPureEssayInNotes ? false : (hasExplicitTF && (customPartsConfig?.enablePart2 === true || autoGenType === 'mcq_3part') && p2Req > 0));
 
-      const p3Req = parseInt(part3Count || customPartsConfig?.part3Count, 10) || 0;
-      enableP3 = isPureEssayInNotes ? false : (customPartsConfig?.enablePart3 === true && p3Req > 0);
+      const p3Req = parseInt(part3Count || customPartsConfig?.part3Count, 10) || (isMatrixOr3Part ? 6 : 0);
+      enableP3 = isMatrixOr3Part ? true : (isPureEssayInNotes ? false : ((customPartsConfig?.enablePart3 === true || autoGenType === 'mcq_3part') && p3Req > 0));
 
-      isPureEssayMode = autoGenType === 'essay' || formatType === 'essay' || isPureEssayInNotes || (!enableP1 && !enableP2 && !enableP3);
+      isPureEssayMode = !isMatrixOr3Part && (autoGenType === 'essay' || formatType === 'essay' || isPureEssayInNotes || (!enableP1 && !enableP2 && !enableP3));
 
       if (isPureEssayMode) {
         enableP1 = false;
@@ -1232,14 +1310,137 @@ ${supplementalText ? `NỘI DUNG TÀI LIỆU THAM CHIẾU:\n"""\n${supplementalT
       }
       const matrixConfig = req.body.matrixConfig;
 
+      // Helper phân tích cấu trúc số câu của 3 dạng trắc nghiệm và tự luận từ văn bản ma trận
+      const analyzeMatrixStructure = (rawMatrix: string) => {
+        let detectedP1 = 12;
+        let detectedP2 = 4;
+        let detectedP3 = 6;
+        let detectedEssay = 0;
+
+        if (!rawMatrix || rawMatrix.trim().length < 10) {
+          return { p1: detectedP1, p2: detectedP2, p3: detectedP3, essay: detectedEssay };
+        }
+
+        const text = rawMatrix;
+
+        // 1. Detect Phần I (Nhiều lựa chọn)
+        const p1Match =
+          text.match(/(?:nhiều\s*(?:phương\s*án|lựa\s*chọn)|phần\s*(?:I|1)\b[^:\n\r]{0,50}?)[:\-\s|]*(\d{1,2})\s*(?:câu|lệnh)/i) ||
+          text.match(/(\d{1,2})\s*câu\s*(?:trắc\s*nghiệm\s*)?(?:nhiều\s*(?:phương\s*án|lựa\s*chọn)|4\s*lựa\s*chọn)/i);
+        if (p1Match && p1Match[1]) {
+          const v = parseInt(p1Match[1], 10);
+          if (v >= 4 && v <= 40) detectedP1 = v;
+        }
+
+        // 2. Detect Phần II (Đúng/Sai)
+        const p2Match =
+          text.match(/(?:đúng\s*[\/\-–\s]\s*sai|phần\s*(?:II|2)\b[^:\n\r]{0,50}?)[:\-\s|]*(\d{1,2})\s*(câu|ý|lệnh\s*hỏi)?/i) ||
+          text.match(/(\d{1,2})\s*(câu|ý|lệnh\s*hỏi)\s*(?:trắc\s*nghiệm\s*)?đúng\s*[\/\-–\s]\s*sai/i);
+        if (p2Match && p2Match[1]) {
+          const v = parseInt(p2Match[1], 10);
+          const unit = (p2Match[2] || '').toLowerCase();
+          if (unit.includes('ý') || unit.includes('lệnh') || (v >= 8 && v % 4 === 0)) {
+            detectedP2 = Math.max(1, Math.round(v / 4));
+          } else if (v >= 1 && v <= 10) {
+            detectedP2 = v;
+          }
+        }
+
+        // 3. Detect Phần III (Trả lời ngắn)
+        const p3Match =
+          text.match(/(?:trả\s*lời\s*ngắn|phần\s*(?:III|3)\b[^:\n\r]{0,50}?)[:\-\s|]*(\d{1,2})\s*(?:câu|lệnh)/i) ||
+          text.match(/(\d{1,2})\s*câu\s*(?:trắc\s*nghiệm\s*)?trả\s*lời\s*ngắn/i);
+        if (p3Match && p3Match[1]) {
+          const v = parseInt(p3Match[1], 10);
+          if (v >= 1 && v <= 20) detectedP3 = v;
+        }
+
+        // 4. Detect Phần Tự luận (Chỉ khi có ghi rõ số câu > 0)
+        const essayMatch =
+          text.match(/(?:phần\s*(?:IV|4)\s*[\.\-:]?\s*tự\s*luận|tự\s*luận)[:\-\s|]*([1-9]\d?)\s*(?:câu|bài)/i) ||
+          text.match(/([1-9]\d?)\s*(?:câu|bài)\s*tự\s*luận/i);
+        if (essayMatch && essayMatch[1]) {
+          const v = parseInt(essayMatch[1], 10);
+          if (v >= 1 && v <= 10) detectedEssay = v;
+        }
+
+        return { p1: detectedP1, p2: detectedP2, p3: detectedP3, essay: detectedEssay };
+      };
+
+      let detectedMatrixCounts = { p1: 12, p2: 4, p3: 6, essay: 0 };
+
       if (autoGenType === 'matrix') {
+        let extractedMatrixFileText = '';
+        if (matrixFileDataUrl) {
+          try {
+            const extractedDoc = await extractTextFromAttachment(matrixFileDataUrl, matrixFileName || "matrix_file", mimeType);
+            if (extractedDoc && extractedDoc.text && extractedDoc.text.trim().length > 15) {
+              extractedMatrixFileText = repairVietnameseDocument(convertTcvn3ToUnicode(extractedDoc.text.trim()));
+            }
+          } catch (e) {
+            console.warn("Could not extract text from matrix attachment", e);
+          }
+        }
+
+        const combinedMatrixSource = `${extractedMatrixFileText}\n${matrixText || ''}`.trim();
+        detectedMatrixCounts = analyzeMatrixStructure(combinedMatrixSource);
+        req.body.part1Count = detectedMatrixCounts.p1;
+        req.body.part2Count = detectedMatrixCounts.p2;
+        req.body.part3Count = detectedMatrixCounts.p3;
+        req.body.matrixEssayCount = detectedMatrixCounts.essay;
+
         prompt += `\n======================================================
-ĐỀ THI ĐƯỢC THIẾT KẾ THEO MA TRẬN ĐỀ THI VÀ BẢN ĐẶC TẢ CHI TIẾT:
-*** NGUYÊN TẮC BẮT BUỘC:
-1. TẤT CẢ NỘI DUNG, PHẠM VI KIẾN THỨC VÀ CẤU TRÚC ĐỀ THI ĐỀU PHẢI TUÂN THỦ THEO MA TRẬN VÀ BẢN ĐẶC TẢ ĐÃ CUNG CẤP.
-2. NỘI DUNG KIẾN THỨC THAM CHIẾU ĐƯỢC LẤY MẶC ĐỊNH THEO THƯ VIỆN TÀI LIỆU THAM CHIẾU CHUẨN TOÁN SGK KẾT NỐI TRI THỨC VÀ CÁC BÀI HỌC CỦA KHỐI LỚP ${effectiveGrade}.
-3. TỪNG CÂU HỎI ĐỀ THI PHẢI BÁM SÁT CÁC YÊU CẦU CẦN ĐẠT VÀ MỨC ĐỘ NHẬN THỨC ĐƯỢC QUY ĐỊNH TRONG BẢN ĐẶC TẢ. ***
+ĐỀ THI ĐƯỢC THIẾT KẾ THEO MA TRẬN ĐỀ THI VÀ BẢN ĐẶC TẢ CHI TIẾT (CHUẨN CẤU TRÚC ĐỀ THI MỚI CỦA BỘ GD&ĐT):
+*** NGUYÊN TẮC BẮT BUỘC TUYỆT ĐỐI VỀ PHÂN VÙNG 3 DẠNG TRẮC NGHIỆM VÀ CẤU TRÚC CHUẨN TỪNG DẠNG:
+Đề thi BẮT BUỘC phải được phân vùng theo đúng thứ tự các phần trong ma trận tải lên, tuân thủ nghiêm ngặt quy chuẩn từng dạng câu hỏi:
+
+1. PHẦN I. CÂU TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN (Số lượng theo ma trận: ${detectedMatrixCounts.p1} câu):
+   - Trường "type": BẮT BUỘC là "mcq"
+   - Trường "question": Nội dung câu hỏi rõ ràng, chuẩn thuật ngữ Toán học SGK. KHÔNG gộp các phương án A, B, C, D vào trong "question".
+   - Trường "options": BẮT BUỘC là mảng gồm ĐÚNG 4 chuỗi ký tự bắt đầu bằng "A. ...", "B. ...", "C. ...", "D. ...". Chỉ có duy nhất 1 phương án đúng.
+   - Trường "correctAnswer": BẮT BUỘC chỉ ghi 1 chữ cái in hoa: "A", "B", "C", hoặc "D".
+   - Trường "points": 0.25 điểm / câu (hoặc theo điểm ma trận quy định).
+
+2. PHẦN II. CÂU TRẮC NGHIỆM ĐÚNG SAI (Số lượng theo ma trận: ${detectedMatrixCounts.p2} câu lớn, mỗi câu lớn có 4 ý a, b, c, d):
+   - Trường "type": BẮT BUỘC là "tf"
+   - Trường "question": CHỈ chứa phần dẫn chung (giả thiết bài toán, hàm số, biểu thức hoặc hình học). TUYỆT ĐỐI KHÔNG viết các ý a), b), c), d) vào bên trong trường "question".
+   - Trường "options": BẮT BUỘC là mảng gồm ĐÚNG 4 mệnh đề phát biểu theo thứ tự từ dễ đến khó (Nhận biết -> Thông hiểu -> Vận dụng), bắt đầu chính xác bằng:
+     [
+       "a) Mệnh đề thứ nhất...",
+       "b) Mệnh đề thứ hai...",
+       "c) Mệnh đề thứ ba...",
+       "d) Mệnh đề thứ tư..."
+     ]
+   - Trường "correctAnswer": BẮT BUỘC ghi đầy đủ kết quả Đúng (Đ) hoặc Sai (S) của cả 4 ý theo đúng định dạng chuẩn: "a-Đ, b-S, c-Đ, d-S" (ví dụ: "a-Đ, b-Đ, c-S, d-Đ").
+   - Trường "points": 1.0 điểm / câu (gồm 4 ý a, b, c, d).
+
+3. PHẦN III. CÂU TRẮC NGHIỆM TRẢ LỜI NGẮN (Số lượng theo ma trận: ${detectedMatrixCounts.p3} câu):
+   - Trường "type": BẮT BUỘC là "short"
+   - Trường "question": Bài toán yêu cầu tính giá trị cụ thể (kết quả là một số nguyên hoặc số thập phân ngắn gọn, nếu là số thập phân thì nêu rõ quy tắc làm tròn trong đề bài, ví dụ: "làm tròn kết quả đến hàng phần mười").
+   - Trường "options": BẮT BUỘC để mảng rỗng [].
+   - Trường "correctAnswer": BẮT BUỘC chỉ ghi con số kết quả ngắn gọn (ví dụ: "12", "-3,5", "4"), KHÔNG ghi kèm lời giải hay đơn vị dài dòng.
+   - Trường "points": 0.5 điểm / câu.
+${detectedMatrixCounts.essay > 0 ? `
+4. PHẦN IV. TỰ LUẬN (Số lượng theo ma trận: ${detectedMatrixCounts.essay} câu):
+   - Trường "type": BẮT BUỘC là "essay"
+   - Trường "options": []
+   - Có lời giải chi tiết từng bước và thang điểm rõ ràng.` : `
+4. LƯU Ý QUAN TRỌNG: Nếu ma trận tải lên chỉ gồm 3 phần trắc nghiệm (Phần I: Nhiều lựa chọn, Phần II: Đúng/Sai, Phần III: Trả lời ngắn) và KHÔNG có phần Tự luận thì TUYỆT ĐỐI KHÔNG sinh câu hỏi "essay".`}
+
+*** THỨ TỰ SẮP XẾP CÂU HỎI TRONG MẢNG JSON:
+- BẮT BUỘC sắp xếp toàn bộ câu hỏi PHẦN I ("type": "mcq") đứng đầu tiên -> tiếp theo là toàn bộ câu hỏi PHẦN II ("type": "tf") -> tiếp theo là toàn bộ câu hỏi PHẦN III ("type": "short")${detectedMatrixCounts.essay > 0 ? ' -> cuối cùng là PHẦN IV ("type": "essay")' : ''}. Tuyệt đối không trộn lẫn thứ tự các phần!
 `;
+        if (extractedMatrixFileText) {
+          prompt += `
+--- NỘI DUNG MA TRẬN ĐỀ THI & BẢN ĐẶC TẢ TRÍCH XUẤT TỪ TỆP TẢI LÊN ---
+"""
+${extractedMatrixFileText}
+"""
+YÊU CẦU BẮT BUỘC ĐỐI VỚI MA TRẬN TẢI LÊN TRÊN:
+- Đọc kỹ toàn bộ bảng ma trận và bản đặc tả ở trên để xác định CHÍNH XÁC tổng số câu hỏi, số câu ở từng phần (Phần I "mcq", Phần II "tf" với 4 ý a,b,c,d mỗi câu, Phần III "short", và Tự luận "essay" nếu có), thang điểm từng câu và mức độ nhận thức (Nhận biết, Thông hiểu, Vận dụng, Vận dụng cao).
+- Sinh ĐÚNG VÀ ĐỦ 100% số lượng câu hỏi ở từng phần và từng chủ đề kiến thức đúng như ma trận tải lên quy định, tuyệt đối không tự ý thêm bớt số câu.
+`;
+        }
         if (matrixText && typeof matrixText === 'string' && matrixText.trim().length > 10) {
           prompt += `
 --- NỘI DUNG MA TRẬN ĐỀ THI & BẢN ĐẶC TẢ DO GIÁO VIÊN NHẬP/DÁN TRỰC TIẾP ---
@@ -1247,7 +1448,7 @@ ${supplementalText ? `NỘI DUNG TÀI LIỆU THAM CHIẾU:\n"""\n${supplementalT
 ${matrixText.trim()}
 """
 YÊU CẦU ĐỐI VỚI BẢN ĐẶC TẢ TRÊN:
-- Đọc kỹ bảng ma trận và bản đặc tả ở trên để phân bổ chính xác số câu, dạng thức câu hỏi (nhiều lựa chọn, đúng/sai, trả lời ngắn hoặc tự luận) và mức độ nhận thức (Nhận biết, Thông hiểu, Vận dụng, Vận dụng cao).
+- Đọc kỹ bảng ma trận và bản đặc tả ở trên để phân bổ chính xác số câu, dạng thức câu hỏi (Phần I "mcq", Phần II "tf", Phần III "short", hoặc Tự luận "essay") và mức độ nhận thức (Nhận biết, Thông hiểu, Vận dụng, Vận dụng cao).
 - Biên soạn nội dung câu hỏi bám sát đúng từng mạch kiến thức và yêu cầu cần đạt nêu trong bản đặc tả.
 `;
         }
@@ -1261,49 +1462,6 @@ MA TRẬN NĂNG LỰC & MỨC ĐỘ NHẬN THỨC:
   * Vận dụng: ${matrixConfig.levels?.apply || '20'}%
   * Vận dụng cao: ${matrixConfig.levels?.highApply || '10'}%
 ${matrixConfig.notes ? `- Ghi chú ma trận: ${matrixConfig.notes}` : ''}`;
-        }
-
-        if (formatType === 'mcq_3part') {
-          const p1 = parseInt(part1Count, 10) || 12;
-          const p2 = parseInt(part2Count, 10) || 4;
-          const p3 = parseInt(part3Count, 10) || 6;
-          prompt += `
-HÌNH THỨC ĐỀ THI THEO MA TRẬN: TRẮC NGHIỆM 3 PHẦN (CHUẨN BỘ GD&ĐT):
-1. PHẦN I: ${p1} câu Trắc nghiệm 4 lựa chọn (A, B, C, D), "type": "mcq", 0.25 điểm/câu. Các câu hỏi phân bổ từ Nhận biết đến Thông hiểu.
-2. PHẦN II: ${p2} câu Trắc nghiệm Đúng/Sai (mỗi câu 4 ý a, b, c, d), "type": "tf", 1.0 điểm/câu. Mức độ Thông hiểu và Vận dụng. "correctAnswer": "a-Đ, b-S, c-Đ, d-S".
-3. PHẦN III: ${p3} câu Trắc nghiệm Trả lời ngắn, "type": "short", 0.5 điểm/câu. Mức độ Vận dụng và Vận dụng cao (học sinh điền đáp số số học/biểu thức ngắn).
-`;
-        } else if (formatType === 'mcq_custom') {
-          const enableP1 = customPartsConfig?.enablePart1 !== false && customPartsConfig?.enablePart1 !== undefined ? customPartsConfig.enablePart1 : true;
-          const p1 = parseInt(customPartsConfig?.part1Count, 10) || 10;
-          const enableP2 = Boolean(customPartsConfig?.enablePart2);
-          const p2 = parseInt(customPartsConfig?.part2Count, 10) || 4;
-          const enableP3 = Boolean(customPartsConfig?.enablePart3);
-          const p3 = parseInt(customPartsConfig?.part3Count, 10) || 4;
-          prompt += `
-HÌNH THỨC ĐỀ THI THEO MA TRẬN: TRẮC NGHIỆM TÙY BIẾN:
-${enableP1 ? `- ${p1} câu Trắc nghiệm 4 lựa chọn ("type": "mcq", 4 phương án A,B,C,D, "correctAnswer": "A"/"B"/"C"/"D")` : ''}
-${enableP2 ? `- ${p2} câu Trắc nghiệm Đúng/Sai ("type": "tf", 4 ý a,b,c,d, "correctAnswer": "a-Đ, b-S, c-Đ, d-S")` : ''}
-${enableP3 ? `- ${p3} câu Trắc nghiệm Trả lời ngắn ("type": "short", học sinh điền đáp số, không có options)` : ''}
-`;
-        } else if (formatType === 'essay') {
-          const eCount = parseInt(essayCount, 10) || 3;
-          prompt += `
-HÌNH THỨC ĐỀ THI THEO MA TRẬN: TỰ LUẬN (${eCount} bài toán tự luận):
-- "type": "essay"
-- Phân bổ theo các mức độ nhận thức: Nhận biết - Thông hiểu (câu 1, 2), Vận dụng (câu 3), Vận dụng cao (câu cuối).
-- Kèm thang điểm chi tiết cho từng câu trong "points" (tổng điểm 10 điểm) và barem giải chi tiết từng bước trong "explanation".
-`;
-        } else if (formatType === 'mixed') {
-          const mCount = parseInt(mcqCount, 10) || 14;
-          const eCount = parseInt(essayCount, 10) || 2;
-          prompt += `
-HÌNH THỨC ĐỀ THI THEO MA TRẬN: TỔNG HỢP (TRẮC NGHIỆM KẾT HỢP TỰ LUẬN):
-- Phần Trắc nghiệm: ${mCount} câu trắc nghiệm khách quan ("type": "mcq", 4 lựa chọn A, B, C, D).
-- Phần Tự luận: ${eCount} bài toán tự luận ("type": "essay") có lời giải chi tiết và barem điểm từng bước.
-`;
-        } else {
-          prompt += `\nHãy tạo đề thi bám sát tuyệt đối ma trận được cung cấp trong tài liệu hoặc cấu hình.`;
         }
       } else if (autoGenType === 'mcq_3part') {
         const p1 = parseInt(part1Count, 10) || 12;
@@ -1530,7 +1688,11 @@ B. PHẦN TỰ LUẬN (${eCount} bài toán tự luận):
         }
       }
 
-      if (isPureEssayMode) {
+      if (autoGenType === 'matrix') {
+        prompt += `\nCRITICAL REQUIREMENT - CẤU TRÚC VÀ QUY CHUẨN ĐẦU RA BẮT BUỘC THEO MA TRẬN:
+1. BẮT BUỘC TẠO ĐÚNG SỐ LƯỢNG CÂU HỎI, ĐÚNG DẠNG THỨC ("mcq", "tf", "short", "essay") VÀ ĐÚNG CHỦ ĐỀ KIẾN THỨC NHƯ TRONG MA TRẬN ĐÃ TẢI LÊN / CUNG CẤP.
+`;
+      } else if (isPureEssayMode) {
         prompt += `\nCRITICAL REQUIREMENT - CẤU TRÚC VÀ QUY CHUẨN ĐẦU RA BẮT BUỘC (100% TỰ LUẬN):
 *** YÊU CẦU BẮT BUỘC: ĐÂY LÀ ĐỀ THI TỰ LUẬN TOÀN BỘ ("type": "essay") ***
 1. TẤT CẢ các câu hỏi trong mảng JSON BẮT BUỘC 100% PHẢI LÀ CÂU HỎI TỰ LUẬN ("type": "essay", "options": []).
@@ -1598,8 +1760,7 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
 
       let response;
       const genConfig = {
-        maxOutputTokens: 20000,
-        temperature: 0.3
+        maxOutputTokens: 20000
       };
 
       const userParts: any[] = [];
@@ -1619,24 +1780,17 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
       }
 
       if (autoGenType === 'matrix' && matrixFileDataUrl) {
-        try {
-          const extractedDoc = await extractTextFromAttachment(matrixFileDataUrl, "matrix_file", mimeType);
-          if (extractedDoc && extractedDoc.text && extractedDoc.text.trim().length > 15) {
+        const detectedMatrixMime = (mimeType || matrixFileDataUrl.match(/data:([^;]+);/)?.[1] || '').toLowerCase();
+        if (detectedMatrixMime.includes('pdf') || detectedMatrixMime.startsWith('image/')) {
+          const base64Data = matrixFileDataUrl.split(',')[1];
+          if (base64Data) {
             userParts.push({
-              text: `NỘI DUNG MA TRẬN & BẢN ĐẶC TẢ TRÍCH XUẤT TỪ TỆP ĐÍNH KÈM:\n"""\n${repairVietnameseDocument(convertTcvn3ToUnicode(extractedDoc.text))}\n"""\nBiên soạn đề thi bám sát 100% theo bản đặc tả này.`
+              inlineData: {
+                mimeType: detectedMatrixMime.includes('pdf') ? 'application/pdf' : detectedMatrixMime,
+                data: base64Data
+              }
             });
           }
-        } catch (e) {
-          console.warn("Could not extract text from matrix attachment", e);
-        }
-        const base64Data = matrixFileDataUrl.split(',')[1];
-        if (base64Data) {
-          userParts.push({
-            inlineData: {
-              mimeType: mimeType || "application/pdf",
-              data: base64Data
-            }
-          });
         }
       }
 
@@ -1684,6 +1838,9 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
 
       // BẢO VỆ CHẶT CHẼ ĐỊNH DẠNG (TYPE-GUARD):
       const typeGuarded = cleaned.map((q: any) => {
+        if (autoGenType === 'matrix') {
+          return q;
+        }
         if (isPureEssayMode) {
           return {
             ...q,
@@ -1807,7 +1964,301 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
         return q;
       });
 
-      res.json(finalCleaned);
+      // Chuẩn hóa cấu trúc 3 dạng trắc nghiệm (Phần I: mcq, Phần II: tf, Phần III: short) & Phân vùng thứ tự chuẩn Bộ GD&ĐT
+      const normalizeExamQuestionsStructure = (rawQuestions: any[]) => {
+        if (!Array.isArray(rawQuestions)) return [];
+
+        const fallbackPool = generateCurriculumFallbackQuestions({
+          ...req.body,
+          grade: effectiveGrade,
+          selectedTopicTitles: targetTopics
+        });
+        const fbMcqPool = fallbackPool.filter((fq: any) => fq.type === 'mcq');
+        const fbTfPool = fallbackPool.filter((fq: any) => fq.type === 'tf');
+        const fbShortPool = fallbackPool.filter((fq: any) => fq.type === 'short');
+
+        const extractStringOption = (item: any): string => {
+          if (!item) return '';
+          if (typeof item === 'string') return item.trim();
+          if (typeof item === 'object') {
+            return String(item.text || item.statement || item.content || item.label || item.value || '').trim();
+          }
+          return String(item).trim();
+        };
+
+        const extractEmbeddedFourStatements = (sourceText: string): { stem: string; statements: string[] } | null => {
+          if (!sourceText) return null;
+          // Hỗ trợ tách a), b), c), d) cả khi xuống dòng, trên cùng 1 dòng hoặc in đậm **a)**
+          const regex = /([\s\S]*?)(?:^|\n|\s+|;)\s*(?:\*\*|\*)?(?:Ý\s+|Mệnh\s+đề\s+)?a[\)\.\:](?:\*\*|\*)?\s*([\s\S]+?)(?:\n|\s{2,}|;)\s*(?:\*\*|\*)?(?:Ý\s+|Mệnh\s+đề\s+)?b[\)\.\:](?:\*\*|\*)?\s*([\s\S]+?)(?:\n|\s{2,}|;)\s*(?:\*\*|\*)?(?:Ý\s+|Mệnh\s+đề\s+)?c[\)\.\:](?:\*\*|\*)?\s*([\s\S]+?)(?:\n|\s{2,}|;)\s*(?:\*\*|\*)?(?:Ý\s+|Mệnh\s+đề\s+)?d[\)\.\:](?:\*\*|\*)?\s*([\s\S]+)$/i;
+          const m = sourceText.match(regex);
+          if (m) {
+            return {
+              stem: (m[1] || '').trim(),
+              statements: [
+                `a) ${m[2].trim()}`,
+                `b) ${m[3].trim()}`,
+                `c) ${m[4].trim()}`,
+                `d) ${m[5].trim()}`
+              ]
+            };
+          }
+          return null;
+        };
+
+        const normalized = rawQuestions.map((rawQ: any, idx: number) => {
+          const q = { ...rawQ };
+          let qText = String(q.question || q.stem || q.prompt || '').trim();
+
+          // Lấy danh sách phương án/mệnh đề từ mọi trường có thể có trong JSON của AI
+          const rawOptArray =
+            (Array.isArray(q.options) && q.options.length > 0 ? q.options : null) ||
+            (Array.isArray(q.statements) && q.statements.length > 0 ? q.statements : null) ||
+            (Array.isArray(q.subQuestions) && q.subQuestions.length > 0 ? q.subQuestions : null) ||
+            (Array.isArray(q.items) && q.items.length > 0 ? q.items : null) ||
+            (Array.isArray(q.propositions) && q.propositions.length > 0 ? q.propositions : null) ||
+            (Array.isArray(q.choices) && q.choices.length > 0 ? q.choices : null) ||
+            ((q.a && q.b && q.c && q.d) ? [q.a, q.b, q.c, q.d] : []);
+
+          let opts: string[] = Array.isArray(rawOptArray)
+            ? rawOptArray.map(extractStringOption).filter(Boolean)
+            : [];
+          let rawType = String(q.type || '').toLowerCase().trim();
+          let ans = String(q.correctAnswer ?? q.answer ?? '').trim();
+          const exp = String(q.explanation || '').trim();
+
+          // Tự động nhận diện lại type nếu bị sai lệch (PHÂN BIỆT CHỮ HOA A, B, C, D VÀ CHỮ THƯỜNG a, b, c, d!)
+          if (rawType === 'multiple_choice' || rawType === 'part1' || rawType === 'tn1') rawType = 'mcq';
+          else if (rawType === 'true_false' || rawType === 'part2' || rawType === 'tn2' || rawType === 'ds') rawType = 'tf';
+          else if (rawType === 'short_answer' || rawType === 'part3' || rawType === 'tn3' || rawType === 'tln') rawType = 'short';
+
+          const isSingleMcqAns = /^(?:Đáp\s*án\s*|Phương\s*án\s*|Chọn\s*)?[A-D]\.?$/i.test(ans);
+          const hasUppercaseMcqOpts = opts.length === 4 && opts.every((o, i) => new RegExp(`^[${['A', 'B', 'C', 'D'][i]}][\\.\\)\\:\\-]`).test(o));
+          const hasLowercaseTfOpts = opts.length === 4 && opts.every((o, i) => new RegExp(`^[${['a', 'b', 'c', 'd'][i]}][\\)\\.:\\-]`).test(o));
+          const looksLikeTfAns = /[a-d]\s*[\-:]\s*(?:Đ|S|Đúng|Sai|True|False)/i.test(ans) || (/\b(Đúng|Sai)\b/i.test(ans) && ans.includes(','));
+
+          if (isSingleMcqAns || hasUppercaseMcqOpts) {
+            rawType = 'mcq';
+          } else if (looksLikeTfAns || hasLowercaseTfOpts) {
+            rawType = 'tf';
+          }
+
+          if (!['mcq', 'tf', 'short', 'essay'].includes(rawType)) {
+            rawType = opts.length >= 4 ? 'mcq' : 'short';
+          }
+
+          // Xử lý chuẩn hóa PHẦN I: Trắc nghiệm nhiều phương án lựa chọn (mcq)
+          if (rawType === 'mcq') {
+            if (opts.length < 4) {
+              // Tách A. B. C. D. nếu bị gộp trong question
+              const mcqSplit = qText.match(/([\s\S]+?)(?:\n+|\s{2,})A[\.\)]\s*([\s\S]+?)(?:\n+|\s{2,})B[\.\)]\s*([\s\S]+?)(?:\n+|\s{2,})C[\.\)]\s*([\s\S]+?)(?:\n+|\s{2,})D[\.\)]\s*([\s\S]+)$/);
+              if (mcqSplit) {
+                qText = mcqSplit[1].trim();
+                opts = [
+                  `A. ${mcqSplit[2].trim()}`,
+                  `B. ${mcqSplit[3].trim()}`,
+                  `C. ${mcqSplit[4].trim()}`,
+                  `D. ${mcqSplit[5].trim()}`
+                ];
+              }
+            }
+            // Nếu câu MCQ vẫn thiếu phương án hoặc nội dung trống, bổ sung từ ngân hàng chuẩn
+            const hasValidMcqOpts = opts.length >= 4 && opts.slice(0, 4).every(o => o.replace(/^[A-Da-d][\.\)\-:]\s*/, '').trim().length > 0);
+            if (!qText || !hasValidMcqOpts) {
+              const fbMcq = fbMcqPool[idx % Math.max(1, fbMcqPool.length)];
+              if (fbMcq) {
+                qText = fbMcq.question;
+                opts = [...(fbMcq.options || [])];
+                ans = fbMcq.correctAnswer;
+                q.explanation = fbMcq.explanation;
+                q.reference = fbMcq.reference;
+              }
+            }
+            const letters = ['A', 'B', 'C', 'D'];
+            opts = opts.slice(0, 4).map((o, i) => {
+              const cleanedOpt = o.replace(/^[A-Da-d][\.\)\-:]\s*/, '').trim();
+              return `${letters[i]}. ${cleanedOpt}`;
+            });
+            // Chuẩn hóa đáp án về A, B, C, D
+            const ansMatch = ans.match(/^(?:Đáp\s*án\s*|Phương\s*án\s*|Chọn\s*)?([A-D])\b/i) || exp.match(/(?:Chọn\s+(?:đáp\s*án\s*|phương\s*án\s*)?|Đáp\s*án\s*(?:đúng\s*)?(?:là\s*)?[:=]?\s*)([A-D])\b/i);
+            ans = ansMatch ? ansMatch[1].toUpperCase() : 'A';
+            q.points = Number(q.points) || 0.25;
+          }
+
+          // Xử lý chuẩn hóa PHẦN II: Trắc nghiệm Đúng/Sai (tf)
+          else if (rawType === 'tf') {
+            // 1. Tách 4 mệnh đề a), b), c), d) nếu bị gộp trong question
+            const extractedFromQ = extractEmbeddedFourStatements(qText);
+            if (extractedFromQ) {
+              if (extractedFromQ.stem.length >= 5) {
+                qText = extractedFromQ.stem;
+              } else {
+                qText = 'Xét tính đúng sai của các mệnh đề khẳng định dưới đây:';
+              }
+              if (opts.length < 4) {
+                opts = extractedFromQ.statements;
+              }
+            }
+
+            // 2. Nếu opts vẫn chưa đủ 4 ý, thử tách từ explanation
+            if (opts.length < 4 && exp) {
+              const extractedFromExp = extractEmbeddedFourStatements(exp);
+              if (extractedFromExp && extractedFromExp.statements.length === 4) {
+                opts = extractedFromExp.statements;
+              }
+            }
+
+            const labels = ['a', 'b', 'c', 'd'];
+            if (opts.length >= 4) {
+              opts = opts.slice(0, 4).map((o, i) => {
+                const cleanedOpt = o.replace(/^(?:\*\*|\*)?(?:Ý\s+|Mệnh\s+đề\s+)?[a-dA-D][\)\.\-:](?:\*\*|\*)?\s*/i, '').trim();
+                return `${labels[i]}) ${cleanedOpt}`;
+              });
+            }
+
+            // 3. Kiểm tra nghiêm ngặt: Câu Đúng/Sai bắt buộc phải có phần dẫn qText rõ ràng VÀ đủ 4 mệnh đề a, b, c, d có nội dung thực sự (không được là "..." hay rỗng)
+            const isStemValid = qText.replace(/[^a-zA-Z0-9À-ỹ]/g, '').length >= 6;
+            const areAll4StatementsValid =
+              opts.length === 4 &&
+              opts.every(o => {
+                const body = o.replace(/^[a-d][\)\.\-:]\s*/i, '').replace(/\.\.\./g, '').trim();
+                return body.length >= 3;
+              });
+
+            if (!isStemValid || !areAll4StatementsValid) {
+              const fbTf = fbTfPool[idx % Math.max(1, fbTfPool.length)];
+              if (fbTf) {
+                if (!isStemValid) qText = fbTf.question;
+                if (!areAll4StatementsValid) {
+                  opts = [...(fbTf.options || [])];
+                  ans = fbTf.correctAnswer;
+                  q.explanation = fbTf.explanation;
+                }
+                if (!q.reference) q.reference = fbTf.reference;
+              }
+            }
+
+            // Chuẩn hóa correctAnswer về dạng "a-Đ, b-S, c-Đ, d-S"
+            const tfStates: Record<string, string> = { a: 'Đ', b: 'S', c: 'Đ', d: 'S' };
+            for (const lb of labels) {
+              const m = ans.match(new RegExp(`\\b${lb}\\s*[\\-:=\\)]\\s*(Đúng|Sai|Đ|S|True|False|T|F)\\b`, 'i'));
+              if (m) {
+                const val = m[1].toUpperCase();
+                tfStates[lb] = (val.startsWith('Đ') || val.startsWith('T')) ? 'Đ' : 'S';
+              }
+            }
+            if (!/[a-d]\s*[\-:=\)]/i.test(ans)) {
+              const tokens = ans.match(/\b(Đúng|Sai|Đ|S)\b/gi);
+              if (tokens && tokens.length === 4) {
+                labels.forEach((lb, i) => {
+                  tfStates[lb] = tokens[i].toUpperCase().startsWith('Đ') ? 'Đ' : 'S';
+                });
+              }
+            }
+            ans = `a-${tfStates.a}, b-${tfStates.b}, c-${tfStates.c}, d-${tfStates.d}`;
+            q.points = Number(q.points) || 1.0;
+          }
+
+          // Xử lý chuẩn hóa PHẦN III: Trắc nghiệm trả lời ngắn (short)
+          else if (rawType === 'short') {
+            opts = [];
+            ans = ans.replace(/^(?:Đáp\s*án|Đáp\s*số|Kết\s*quả)\s*[:=]\s*/i, '').replace(/\.$/, '').trim();
+            if (!qText || !ans) {
+              const fbShort = fbShortPool[idx % Math.max(1, fbShortPool.length)];
+              if (fbShort) {
+                if (!qText) qText = fbShort.question;
+                if (!ans) ans = fbShort.correctAnswer;
+                if (!q.explanation) q.explanation = fbShort.explanation;
+              }
+            }
+            q.points = Number(q.points) || 0.5;
+          }
+
+          // Xử lý chuẩn hóa PHẦN IV: Tự luận (essay)
+          else if (rawType === 'essay') {
+            opts = [];
+            q.points = Number(q.points) || 1.0;
+          }
+
+          // Xóa tiền tố "Câu 1:", "Phần I..." dư thừa trong nội dung câu hỏi để giao diện tự đánh số theo từng phần
+          qText = qText
+            .replace(/^(?:PHẦN\s*(?:I|II|III|IV|1|2|3|4)[^\n]*\n+)/i, '')
+            .replace(/^(?:Câu|Bài)\s*\d+\s*[\.:]\s*/i, '')
+            .trim();
+
+          return {
+            ...q,
+            id: q.id || `q_${idx + 1}`,
+            type: rawType,
+            question: qText,
+            options: opts,
+            correctAnswer: ans
+          };
+        });
+
+        // Đảm bảo ĐỦ 3 PHẦN TRẮC NGHIỆM (Phần I: mcq, Phần II: tf, Phần III: short) khi tạo đề theo Ma trận hoặc Trắc nghiệm 3 phần
+        if (autoGenType === 'matrix' || autoGenType === 'mcq_3part' || formatType === 'matrix' || formatType === 'mcq_3part') {
+          const targetP1 = autoGenType === 'matrix' ? (detectedMatrixCounts.p1 || 12) : (parseInt(part1Count, 10) || 12);
+          const targetP2 = autoGenType === 'matrix' ? (detectedMatrixCounts.p2 || 4) : (parseInt(part2Count, 10) || 4);
+          const targetP3 = autoGenType === 'matrix' ? (detectedMatrixCounts.p3 || 6) : (parseInt(part3Count, 10) || 6);
+
+          const curMcq = normalized.filter(q => q.type === 'mcq');
+          const curTf = normalized.filter(q => q.type === 'tf');
+          const curShort = normalized.filter(q => q.type === 'short');
+          const curEssay = normalized.filter(q => q.type === 'essay');
+
+          while (curMcq.length < targetP1 && fbMcqPool.length > 0) {
+            const fb = fbMcqPool[curMcq.length % fbMcqPool.length];
+            curMcq.push({
+              ...fb,
+              id: `q_mcq_fill_${curMcq.length + 1}`,
+              type: 'mcq',
+              points: 0.25
+            });
+          }
+
+          while (curTf.length < targetP2 && fbTfPool.length > 0) {
+            const fb = fbTfPool[curTf.length % fbTfPool.length];
+            curTf.push({
+              ...fb,
+              id: `q_tf_fill_${curTf.length + 1}`,
+              type: 'tf',
+              points: 1.0
+            });
+          }
+
+          while (curShort.length < targetP3 && fbShortPool.length > 0) {
+            const fb = fbShortPool[curShort.length % fbShortPool.length];
+            curShort.push({
+              ...fb,
+              id: `q_short_fill_${curShort.length + 1}`,
+              type: 'short',
+              points: 0.5
+            });
+          }
+
+          const combined3Part = [...curMcq, ...curTf, ...curShort, ...curEssay];
+          return combined3Part.map((q, idx) => ({
+            ...q,
+            id: `q${idx + 1}`
+          }));
+        }
+
+        // Sắp xếp phân vùng nghiêm ngặt theo thứ tự: PHẦN I (mcq) -> PHẦN II (tf) -> PHẦN III (short) -> PHẦN IV (essay)
+        const sectionOrder: Record<string, number> = { mcq: 1, tf: 2, short: 3, essay: 4 };
+        const sorted = [...normalized].sort((a, b) => {
+          const oa = sectionOrder[a.type] || 99;
+          const ob = sectionOrder[b.type] || 99;
+          return oa - ob;
+        });
+
+        return sorted.map((q, idx) => ({
+          ...q,
+          id: `q${idx + 1}`
+        }));
+      };
+
+      const structuredQuestions = normalizeExamQuestionsStructure(finalCleaned);
+      res.json(structuredQuestions);
     } catch (error: any) {
       console.warn("AI generation failed or rate limited, gracefully returning curriculum standard questions:", error?.message || error);
       try {
@@ -1822,6 +2273,8 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
           selectedTopicTitles: targetTopics 
         });
 
+        const isMatrixOr3PartFallback = req.body.autoGenType === 'matrix' || req.body.autoGenType === 'mcq_3part' || req.body.formatType === 'matrix' || req.body.formatType === 'mcq_3part';
+
         const cleaned = (fallbackQuestions || []).map((q: any) => {
           let item = {
             ...q,
@@ -1832,12 +2285,14 @@ CRITICAL FORMATTING: Since this is JSON, every backslash in LaTeX formulas MUST 
             explanation: repairVietnameseDocument(convertTcvn3ToUnicode(q.explanation || '')),
             correctAnswer: typeof q.correctAnswer === 'string' ? repairVietnameseDocument(q.correctAnswer) : q.correctAnswer
           };
-          if (isPureEssayMode) {
-            item.type = 'essay';
-            item.options = [];
-          } else if (!enableP2 && item.type === 'tf') {
-            item.type = 'essay';
-            item.options = [];
+          if (!isMatrixOr3PartFallback) {
+            if (isPureEssayMode) {
+              item.type = 'essay';
+              item.options = [];
+            } else if (!enableP2 && item.type === 'tf') {
+              item.type = 'essay';
+              item.options = [];
+            }
           }
           return item;
         });
@@ -3214,7 +3669,12 @@ Output valid JSON only, without markdown fences. Escaping backslashes for LaTeX 
     
     // Magic byte checks for reliability
     const isZipOrDocx = (buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4B && buffer[2] === 0x03 && buffer[3] === 0x04);
-    const isDocx = Boolean(
+    const isXlsx = Boolean(
+      (fileName && fileName.toLowerCase().endsWith('.xlsx')) ||
+      detectedMime.includes('spreadsheetml') ||
+      detectedMime.includes('excel')
+    );
+    const isDocx = !isXlsx && Boolean(
       (fileName && fileName.toLowerCase().endsWith('.docx')) || 
       detectedMime.includes('wordprocessingml') || 
       detectedMime.includes('docx') ||
@@ -3226,6 +3686,17 @@ Output valid JSON only, without markdown fences. Escaping backslashes for LaTeX 
     const isPdf = Boolean((fileName && fileName.toLowerCase().endsWith('.pdf')) || detectedMime.includes('pdf') || isPdfMagic);
     const isTxt = Boolean((fileName && fileName.toLowerCase().endsWith('.txt')) || detectedMime.startsWith('text/'));
     const isImage = Boolean(detectedMime.startsWith('image/'));
+
+    if (isXlsx) {
+      try {
+        const xlsxText = await extractXlsxFullContent(buffer);
+        if (xlsxText && xlsxText.trim().length > 10) {
+          return { text: xlsxText, pages: [], isPdf: false, isDocx: false, isImage: false };
+        }
+      } catch (eXlsx) {
+        console.warn("extractXlsxFullContent error:", eXlsx);
+      }
+    }
 
     if (isDocx) {
       let docxXmlFull = '';
@@ -3258,6 +3729,16 @@ Output valid JSON only, without markdown fences. Escaping backslashes for LaTeX 
         chosen = docxMd || docxRaw || docxXmlFull;
       }
 
+      // If ZIP buffer had no Word content, try extracting as Excel (.xlsx)
+      if (!chosen || chosen.trim().length < 10) {
+        try {
+          const fallbackXlsx = await extractXlsxFullContent(buffer);
+          if (fallbackXlsx && fallbackXlsx.trim().length > 10) {
+            return { text: fallbackXlsx, pages: [], isPdf: false, isDocx: false, isImage: false };
+          }
+        } catch (_e) {}
+      }
+
       const repaired = repairVietnameseDocument(chosen);
       return { text: convertTcvn3ToUnicode(repaired), pages: [], isPdf: false, isDocx: true, isImage: false };
     }
@@ -3286,27 +3767,8 @@ Output valid JSON only, without markdown fences. Escaping backslashes for LaTeX 
     }
 
     if (isPdf) {
-      let pdfText = '';
-      let pages: Array<{ num: number; text: string }> = [];
-      try {
-        const pdfModule = await import('pdf-parse');
-        const ParserClass = (pdfModule as any).PDFParse || (pdfModule as any).default?.PDFParse;
-        if (ParserClass) {
-          const parser = new ParserClass({ data: buffer });
-          const res = await parser.getText({ pageJoiner: '\n\n--- TRANG page_number ---\n\n' });
-          await parser.destroy();
-          pdfText = res?.text || (typeof res === 'string' ? res : '') || '';
-          if (Array.isArray(res?.pages)) {
-            pages = res.pages.map((p: any) => ({
-              num: p.num || 1,
-              text: repairVietnameseDocument(p.text || '')
-            }));
-          }
-        }
-      } catch (e) {
-        console.warn("PDF extraction warning:", e);
-      }
-      return { text: repairVietnameseDocument(pdfText), pages, isPdf: true, isDocx: false, isImage: false };
+      // PDF files are passed directly as multimodal inlineData to Gemini
+      return { text: '', pages: [], isPdf: true, isDocx: false, isImage: false };
     }
 
     if (isTxt) {
@@ -4879,26 +5341,412 @@ TRẢ VỀ DUY NHẤT MỘT MẢNG JSON:
     }
   });
 
-  let viteMiddleware: any = null;
-  if (process.env.NODE_ENV !== "production") {
-    app.use((req, res, next) => {
-      if (viteMiddleware) return viteMiddleware(req, res, next);
-      next();
-    });
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath, { maxAge: '1y', immutable: true }));
-    app.get('*', (_req, res) => { res.sendFile(path.join(distPath, 'index.html')); });
-  }
-
+  // Bind port 3000 immediately so Nginx never sees 502 / warmup.html
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
-    viteMiddleware = vite.middlewares;
+  // Self-cleaning Service Worker & registerSW endpoints so any browser with a stale SW immediately heals itself
+  const selfUnregisterSwJs = Buffer.from(
+    `self.addEventListener('install', function() { self.skipWaiting(); });
+self.addEventListener('activate', function(e) {
+  e.waitUntil(
+    caches.keys().then(function(names) {
+      return Promise.all(names.map(function(n) { return caches.delete(n); }));
+    }).then(function() {
+      return self.registration.unregister();
+    }).then(function() {
+      return self.clients.matchAll({ type: 'window' });
+    }).then(function(clients) {
+      clients.forEach(function(c) { if (c.url && 'navigate' in c) c.navigate(c.url); });
+    })
+  );
+});
+`,
+    'utf8'
+  );
+
+  app.get(['/sw.js', '/dev-dist/sw.js'], (_req, res) => {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    res.end(selfUnregisterSwJs);
+  });
+
+  app.get('/registerSW.js', (_req, res) => {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    res.end(
+      `if ('serviceWorker' in navigator) { navigator.serviceWorker.getRegistrations().then(function(rs){ rs.forEach(function(r){ r.unregister(); }); }); }`
+    );
+  });
+
+  // Serve KaTeX CSS & fonts directly with immutable caching
+  app.use(
+    '/katex',
+    express.static(path.join(process.cwd(), 'node_modules', 'katex', 'dist'), {
+      maxAge: '365d',
+      immutable: true,
+    })
+  );
+
+  // Serve static files from public/ directory
+  app.use(
+    express.static(path.join(process.cwd(), 'public'), {
+      index: false,
+      maxAge: '1h',
+    })
+  );
+
+  const distCandidates = [
+    path.join(process.cwd(), 'dist'),
+    path.join(process.cwd(), 'dev-dist', 'client'),
+  ];
+  let activeDistDir = distCandidates[0];
+  const distMemoryCache = new Map<string, { raw: Buffer; gzip: Buffer; contentType: string; etag: string }>();
+
+  const getMimeType = (filePath: string): string => {
+    const ext = path.extname(filePath).toLowerCase();
+    const map: Record<string, string> = {
+      '.html': 'text/html; charset=utf-8',
+      '.js': 'application/javascript; charset=utf-8',
+      '.mjs': 'application/javascript; charset=utf-8',
+      '.css': 'text/css; charset=utf-8',
+      '.json': 'application/json; charset=utf-8',
+      '.webmanifest': 'application/manifest+json; charset=utf-8',
+      '.svg': 'image/svg+xml',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.webp': 'image/webp',
+      '.ico': 'image/x-icon',
+      '.woff2': 'font/woff2',
+      '.woff': 'font/woff',
+      '.ttf': 'font/ttf',
+    };
+    return map[ext] || 'application/octet-stream';
+  };
+
+  const getDistCachedFile = (relPath: string) => {
+    const cacheKey = `${activeDistDir}:${relPath}`;
+    const existing = distMemoryCache.get(cacheKey);
+    if (existing) return existing;
+    const fullPath = path.join(activeDistDir, relPath);
+    if (!fullPath.startsWith(activeDistDir + path.sep) && fullPath !== path.join(activeDistDir, 'index.html')) {
+      return null;
+    }
+    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+      return null;
+    }
+    const raw = fs.readFileSync(fullPath);
+    const contentType = getMimeType(fullPath);
+    const isCompressible = /\.(html|js|mjs|css|json|svg|webmanifest)$/i.test(fullPath);
+    const gzip = isCompressible && raw.length >= 256 ? zlib.gzipSync(raw, { level: 1 }) : Buffer.alloc(0);
+    const etag = `W/"${raw.length.toString(16)}-${crypto.createHash('md5').update(raw).digest('hex').slice(0, 8)}"`;
+    const entry = { raw, gzip, contentType, etag };
+    distMemoryCache.set(cacheKey, entry);
+    return entry;
+  };
+
+  const computeSourceFingerprint = (): string => {
+    const hash = crypto.createHash('md5');
+    const rootDir = process.cwd();
+    const rootIndex = path.join(rootDir, 'index.html');
+    if (fs.existsSync(rootIndex)) {
+      hash.update('index.html:');
+      hash.update(fs.readFileSync(rootIndex));
+    }
+    const walk = (dir: string) => {
+      if (!fs.existsSync(dir)) return;
+      const entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.isFile()) {
+          hash.update(path.relative(rootDir, full) + ':');
+          hash.update(fs.readFileSync(full));
+        }
+      }
+    };
+    walk(path.join(rootDir, 'src'));
+    return hash.digest('hex');
+  };
+
+  let lastFingerprintCheckTime = 0;
+  let cachedIsDistFresh = false;
+  let lastSeenDistFingerprint = '';
+
+  const checkIsDistFresh = (): boolean => {
+    const now = Date.now();
+    if (now - lastFingerprintCheckTime < 1500) {
+      return cachedIsDistFresh;
+    }
+    lastFingerprintCheckTime = now;
+    try {
+      const currentFp = computeSourceFingerprint();
+
+      for (const candidate of distCandidates) {
+        const fpFile = path.join(candidate, '.build-fingerprint');
+        const indexFile = path.join(candidate, 'index.html');
+        if (fs.existsSync(fpFile) && fs.existsSync(indexFile)) {
+          const distFp = fs.readFileSync(fpFile, 'utf8').trim();
+          if (distFp && distFp === currentFp) {
+            if (distFp !== lastSeenDistFingerprint || activeDistDir !== candidate) {
+              distMemoryCache.clear();
+              lastSeenDistFingerprint = distFp;
+              activeDistDir = candidate;
+            }
+            cachedIsDistFresh = true;
+            return true;
+          }
+        }
+      }
+      cachedIsDistFresh = false;
+      return false;
+    } catch {
+      cachedIsDistFresh = false;
+      return false;
+    }
+  };
+
+  const preloadDistIntoRam = () => {
+    try {
+      getDistCachedFile('index.html');
+      const assetsDir = path.join(activeDistDir, 'assets');
+      if (fs.existsSync(assetsDir)) {
+        for (const f of fs.readdirSync(assetsDir)) {
+          if (f.endsWith('.js') || f.endsWith('.css')) {
+            getDistCachedFile(path.join('assets', f));
+          }
+        }
+      }
+    } catch {}
+  };
+
+  let fastBuildPromise: Promise<boolean> | null = null;
+
+  // Fast ~1.1s cold-container builder using esbuild + @tailwindcss/node + @tailwindcss/oxide
+  // Ensures that even when Cloud Run restores a container without dist/, we never fall back to slow Vite cold bundling
+  const ensureFastDistBuild = (): Promise<boolean> => {
+    if (checkIsDistFresh()) {
+      preloadDistIntoRam();
+      return Promise.resolve(true);
+    }
+    if (fastBuildPromise) return fastBuildPromise;
+
+    fastBuildPromise = (async () => {
+      const t0 = Date.now();
+      try {
+        const rootDir = process.cwd();
+        const outDir = path.join(rootDir, 'dist');
+        const assetsDir = path.join(outDir, 'assets');
+        fs.mkdirSync(assetsDir, { recursive: true });
+
+        const esbuildMod = await import('esbuild');
+        const esbuild = (esbuildMod as any).default || esbuildMod;
+
+        const buildJsPromise = esbuild.build({
+          entryPoints: [path.join(rootDir, 'src', 'main.tsx')],
+          bundle: true,
+          splitting: true,
+          format: 'esm',
+          outdir: assetsDir,
+          entryNames: 'main',
+          chunkNames: 'chunk-[hash]',
+          minify: true,
+          target: ['es2020'],
+          jsx: 'automatic',
+          define: {
+            'process.env.NODE_ENV': '"production"',
+            'process.env.GEMINI_API_KEY': JSON.stringify(process.env.GEMINI_API_KEY || ''),
+          },
+          alias: {
+            'lucide-react': path.join(rootDir, 'src', 'lib', 'lucide-bundle.js'),
+            '@': rootDir,
+          },
+          loader: {
+            '.png': 'dataurl',
+            '.svg': 'dataurl',
+            '.jpg': 'dataurl',
+            '.jpeg': 'dataurl',
+            '.webp': 'dataurl',
+            '.woff2': 'file',
+            '.woff': 'file',
+            '.ttf': 'file',
+            '.css': 'empty',
+          },
+          logLevel: 'silent',
+        });
+
+        const buildCssPromise = (async () => {
+          const twNode = await import('@tailwindcss/node');
+          const twOxide = await import('@tailwindcss/oxide');
+          const cssInput = fs.readFileSync(path.join(rootDir, 'src', 'index.css'), 'utf8');
+          const compiler = await twNode.compile(cssInput, {
+            base: path.join(rootDir, 'src'),
+            onDependency: () => {},
+          });
+          const scanner = new twOxide.Scanner({
+            sources: [
+              { base: path.join(rootDir, 'src'), pattern: '**/*', negated: false },
+              { base: rootDir, pattern: 'index.html', negated: false },
+            ],
+          });
+          const candidates = scanner.scan();
+          const rawCss = compiler.build(candidates);
+          const minCss = esbuild.transformSync(rawCss, { loader: 'css', minify: true });
+          fs.writeFileSync(path.join(assetsDir, 'main.css'), minCss.code, 'utf8');
+        })();
+
+        await Promise.all([buildJsPromise, buildCssPromise]);
+
+        const rawHtml = fs.readFileSync(path.join(rootDir, 'index.html'), 'utf8');
+        const prodHtml = rawHtml
+          .replace('</head>', '    <link rel="stylesheet" href="/assets/main.css">\n  </head>')
+          .replace('/src/main.tsx', '/assets/main.js');
+        fs.writeFileSync(path.join(outDir, 'index.html'), prodHtml, 'utf8');
+
+        const fp = computeSourceFingerprint();
+        fs.writeFileSync(path.join(outDir, '.build-fingerprint'), fp, 'utf8');
+
+        lastFingerprintCheckTime = 0;
+        checkIsDistFresh();
+        preloadDistIntoRam();
+        console.log(`Fast dist bundle ready in ${Date.now() - t0}ms`);
+        return true;
+      } catch (err) {
+        console.error('Fast dist build fallback warning:', err);
+        return false;
+      } finally {
+        fastBuildPromise = null;
+      }
+    })();
+
+    return fastBuildPromise;
+  };
+
+  // Trigger fast dist check/build immediately at server startup
+  ensureFastDistBuild().catch(() => {});
+
+  // Lightweight 500-byte replacement for /@vite/client (saves 183KB and avoids failing WebSocket attempts in iframe)
+  const liteViteClientCode = Buffer.from(
+    `const sheetsMap = new Map();
+export function updateStyle(id, content) {
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement('style');
+    style.setAttribute('type', 'text/css');
+    style.setAttribute('data-vite-dev-id', id);
+    style.textContent = content;
+    document.head.appendChild(style);
+    sheetsMap.set(id, style);
+  } else {
+    style.textContent = content;
   }
+}
+export function removeStyle(id) {
+  const style = sheetsMap.get(id);
+  if (style) {
+    document.head.removeChild(style);
+    sheetsMap.delete(id);
+  }
+}
+export function createHotContext() {
+  return {
+    data: {},
+    accept() {},
+    acceptExports() {},
+    dispose() {},
+    prune() {},
+    decline() {},
+    invalidate() {},
+    on() {},
+    off() {},
+    send() {},
+  };
+}
+export function injectQuery(url) { return url; }
+export class ErrorOverlay extends HTMLElement {}
+`,
+    'utf8'
+  );
+
+  app.get('/@vite/client', (_req, res) => {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Content-Length', liteViteClientCode.length);
+    res.end(liteViteClientCode);
+  });
+
+  let viteMiddleware: any = null;
+  let vitePromise: Promise<any> | null = null;
+
+  const ensureViteServer = () => {
+    if (!vitePromise) {
+      vitePromise = createViteServer({ server: { middlewareMode: true, hmr: false }, appType: "spa" }).then((vite) => {
+        viteMiddleware = vite.middlewares;
+        return vite;
+      });
+    }
+    return vitePromise;
+  };
+
+  app.use(async (req, res, next) => {
+    try {
+      const reqPath = req.path || '/';
+
+      if (req.method === 'GET' && !reqPath.startsWith('/src/') && !reqPath.startsWith('/@')) {
+        if (!checkIsDistFresh()) {
+          await ensureFastDistBuild();
+        }
+        if (checkIsDistFresh()) {
+          const cleanRel = reqPath === '/' || reqPath === '/index.html'
+            ? 'index.html'
+            : reqPath.replace(/^\//, '');
+          let entry = getDistCachedFile(cleanRel);
+          let isImmutableAsset = reqPath.startsWith('/assets/');
+
+          // SPA fallback for routes like /login or /assignment/:id
+          if (!entry && !path.extname(cleanRel)) {
+            entry = getDistCachedFile('index.html');
+            isImmutableAsset = false;
+          }
+
+          if (entry) {
+            if (req.headers['if-none-match'] === entry.etag) {
+              res.status(304).end();
+              return;
+            }
+            res.setHeader('Content-Type', entry.contentType);
+            res.setHeader(
+              'Cache-Control',
+              isImmutableAsset ? 'public, max-age=31536000, immutable' : 'no-cache'
+            );
+            res.setHeader('ETag', entry.etag);
+            const acceptEncoding = String(req.headers['accept-encoding'] || '');
+            if (acceptEncoding.includes('gzip') && entry.gzip.length > 0) {
+              res.setHeader('Content-Encoding', 'gzip');
+              res.setHeader('Vary', 'Accept-Encoding');
+              res.setHeader('Content-Length', entry.gzip.length);
+              res.end(entry.gzip);
+              return;
+            }
+            res.setHeader('Content-Length', entry.raw.length);
+            res.end(entry.raw);
+            return;
+          }
+        }
+      }
+
+      if (!viteMiddleware) {
+        await ensureViteServer();
+      }
+      if (viteMiddleware) return viteMiddleware(req, res, next);
+      next();
+    } catch (e) {
+      next(e);
+    }
+  });
 }
 
 startServer();

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, getDocs, addDoc, updateDoc, query, where, deleteDoc, doc } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { collection, getDocs, addDoc, updateDoc, query, where, deleteDoc, doc, db } from '../../lib/firebaseLazy';
 import { 
   BookOpen, Plus, FileText, X, ExternalLink, Download, 
   UploadCloud, Trash2, Pencil, AlertTriangle, Sparkles, Loader2,
@@ -9,10 +8,13 @@ import {
   FileCheck, EyeOff, Calendar
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { 
-  convertTcvn3ToUnicode, 
-  repairVietnameseDocument
-} from '../../lib/vietnameseFont';
+let _vnFontModPromise: Promise<typeof import('../../lib/vietnameseFont')> | null = null;
+const loadVietnameseFont = () => {
+  if (!_vnFontModPromise) {
+    _vnFontModPromise = import('../../lib/vietnameseFont');
+  }
+  return _vnFontModPromise;
+};
 import { saveFileToIDB } from '../../lib/idbStorage';
 import { ensureAttachmentDataUrl } from '../../lib/fileUtils';
 import { 
@@ -382,6 +384,7 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
         };
       }
 
+      const { convertTcvn3ToUnicode, repairVietnameseDocument } = await loadVietnameseFont();
       const docData: any = {
         topicId: targetTopicId,
         title: repairVietnameseDocument(convertTcvn3ToUnicode(docForm.title.trim())),
@@ -774,6 +777,7 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
       if (res.ok) {
         const resData = await res.json();
         if (resData.content) {
+          const { convertTcvn3ToUnicode, repairVietnameseDocument } = await loadVietnameseFont();
           const repairedKnowledge = repairVietnameseDocument(convertTcvn3ToUnicode(resData.content));
           const repairedTitle = repairVietnameseDocument(convertTcvn3ToUnicode(resData.title || lessonItem.title));
           const lessonRef = doc(db, 'lessons', lessonItem.id);
@@ -830,6 +834,7 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
         console.warn('Could not resolve dataUrl for online test:', e);
       }
     }
+    const { convertTcvn3ToUnicode, repairVietnameseDocument } = await loadVietnameseFont();
     let cleanKnowledge = repairVietnameseDocument(convertTcvn3ToUnicode(docItem.knowledge || ''));
     if (!cleanKnowledge && fullAttachment && fullAttachment.dataUrl) {
       setSysMsg(`Đang trích xuất nội dung từ tệp "${fullAttachment.name}" để tạo bài thi online...`);
@@ -909,6 +914,7 @@ export default function DocumentLibrary({ onNavigateToTests, onNavigateToOffline
         console.warn('Could not resolve dataUrl for offline test:', e);
       }
     }
+    const { convertTcvn3ToUnicode, repairVietnameseDocument } = await loadVietnameseFont();
     let cleanKnowledge = repairVietnameseDocument(convertTcvn3ToUnicode(docItem.knowledge || ''));
     if (!cleanKnowledge && fullAttachment && fullAttachment.dataUrl) {
       setSysMsg(`Đang trích xuất nội dung từ tệp "${fullAttachment.name}" để tạo đề thi offline...`);

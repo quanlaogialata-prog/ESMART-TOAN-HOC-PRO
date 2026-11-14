@@ -2,14 +2,29 @@ import { useState, useEffect, lazy, Suspense } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router';
 
-const DocumentLibrary = lazy(() => import('./teacher/DocumentLibrary'));
-const AdminDashboard = lazy(() => import('./admin/ManageTeachers'));
+const importDocumentLibrary = () => import('./teacher/DocumentLibrary');
+const importAdminDashboard = () => import('./admin/ManageTeachers');
+const importStudentDashboard = () => import('./student/StudentDashboard');
+
+try {
+  const savedRole = typeof window !== 'undefined' ? localStorage.getItem('esmart_quick_role') : null;
+  if (savedRole === 'teacher') {
+    importDocumentLibrary().catch(() => {});
+  } else if (savedRole === 'student') {
+    importStudentDashboard().catch(() => {});
+  } else {
+    importAdminDashboard().catch(() => {});
+  }
+} catch {}
+
+const DocumentLibrary = lazy(importDocumentLibrary);
+const AdminDashboard = lazy(importAdminDashboard);
 const ManageTopicPractices = lazy(() => import('./teacher/ManageTopicPractices'));
 const ManageTests = lazy(() => import('./teacher/ManageTests'));
 const ManageOfflineTests = lazy(() => import('./teacher/ManageOfflineTests'));
 const ManageSubmissions = lazy(() => import('./teacher/ManageSubmissions'));
 const Gradebook = lazy(() => import('./teacher/Gradebook'));
-const StudentDashboard = lazy(() => import('./student/StudentDashboard'));
+const StudentDashboard = lazy(importStudentDashboard);
 const SettingsModal = lazy(() => import('../components/SettingsModal'));
 
 type Tab = 'curriculum' | 'topic-practice' | 'tests' | 'offline-tests' | 'grading' | 'gradebook' | 'admin' | 'student';
@@ -34,6 +49,16 @@ export default function Dashboard() {
     window.addEventListener('switch-dashboard-tab', handleSwitch);
     return () => window.removeEventListener('switch-dashboard-tab', handleSwitch);
   }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (role === 'admin' || role === 'teacher') {
+        import('./teacher/DocumentLibrary').catch(() => {});
+        import('./teacher/ManageTests').catch(() => {});
+      }
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [role]);
 
   if (loading) {
     return (
@@ -119,9 +144,23 @@ export default function Dashboard() {
       <main className="flex-1 p-4 sm:p-6 overflow-x-hidden overflow-y-auto min-w-0">
         <Suspense
           fallback={
-            <div className="flex py-20 items-center justify-center flex-col gap-3">
-              <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-              <div className="text-gray-500 font-medium text-xs">Đang tải phân hệ...</div>
+            <div className="space-y-4 animate-pulse">
+              <div className="bg-white rounded-xl border border-gray-200 p-5 flex items-center justify-between">
+                <div className="space-y-2">
+                  <div className="h-5 w-48 bg-gray-200 rounded"></div>
+                  <div className="h-3.5 w-72 bg-gray-100 rounded"></div>
+                </div>
+                <div className="flex gap-2">
+                  <div className="h-9 w-28 bg-blue-100 rounded-lg"></div>
+                  <div className="h-9 w-28 bg-gray-100 rounded-lg"></div>
+                </div>
+              </div>
+              <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
+                <div className="h-10 bg-gray-100 rounded-lg w-full"></div>
+                <div className="h-12 bg-gray-50 rounded-lg w-full"></div>
+                <div className="h-12 bg-gray-50 rounded-lg w-full"></div>
+                <div className="h-12 bg-gray-50 rounded-lg w-full"></div>
+              </div>
             </div>
           }
         >

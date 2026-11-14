@@ -25,15 +25,70 @@ export function exportPracticeToWord(
     'per_section'
   );
 
-  const cleanMathHtml = (str: string = ''): string => {
-    if (!str) return '';
-    return str
+  const escapeHtmlLine = (line: string): string =>
+    line
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;')
-      .replace(/\n/g, '<br/>');
+      .replace(/'/g, '&#039;');
+
+  const cleanMathHtml = (str: string = ''): string => {
+    if (!str) return '';
+    const lines = str.replace(/\r\n/g, '\n').split('\n');
+    const out: string[] = [];
+    let i = 0;
+
+    const isPipeRow = (l: string) => {
+      const t = l.trim();
+      return t.startsWith('|') && (t.match(/\|/g) || []).length >= 3;
+    };
+
+    while (i < lines.length) {
+      if (isPipeRow(lines[i])) {
+        const tblLines: string[] = [lines[i]];
+        let j = i + 1;
+        while (j < lines.length && isPipeRow(lines[j])) {
+          tblLines.push(lines[j]);
+          j++;
+        }
+        if (tblLines.length >= 2) {
+          const parsedRows: string[][] = [];
+          for (const tl of tblLines) {
+            let clean = tl.trim();
+            if (clean.startsWith('|')) clean = clean.slice(1);
+            if (clean.endsWith('|')) clean = clean.slice(0, -1);
+            const cells = clean.split('|').map(c => c.trim());
+            const isSep = cells.every(c => c === '' || /^:?-{2,}:?$/.test(c));
+            if (!isSep) parsedRows.push(cells);
+          }
+          if (parsedRows.length > 0) {
+            const maxC = Math.max(...parsedRows.map(r => r.length));
+            let tblHtml = `<table style='border-collapse: collapse; margin: 6px 0; border: 1.5pt solid #000; font-size: 11pt;'>`;
+            parsedRows.forEach((r, rIdx) => {
+              tblHtml += `<tr style='border-bottom: 1pt solid #000;'>`;
+              for (let cIdx = 0; cIdx < maxC; cIdx++) {
+                const cellVal = escapeHtmlLine(r[cIdx] || '');
+                const borderStyle = cIdx === 0
+                  ? 'border-right: 1.5pt solid #000; background-color: #f8fafc; font-weight: bold;'
+                  : '';
+                const btmStyle = rIdx < parsedRows.length - 1 ? 'border-bottom: 1pt solid #000;' : '';
+                tblHtml += `<td style='padding: 4px 10px; text-align: center; ${borderStyle} ${btmStyle}'>${cellVal}</td>`;
+              }
+              tblHtml += `</tr>`;
+            });
+            tblHtml += `</table>`;
+            out.push(tblHtml);
+            i = j;
+            continue;
+          }
+        }
+      }
+      out.push(escapeHtmlLine(lines[i]));
+      i++;
+    }
+
+    return out.join('<br/>');
   };
 
   const sanitizeFileName = (name: string): string => {

@@ -812,7 +812,7 @@ export function formatMathExpressions(raw: string): string {
   text = text.replace(/\\le\s+ft(?=[^a-zA-Z]|$)/g, '\\left');
   text = text.replace(/\\ne\s+q(?=[^a-zA-Z0-9]|$)/g, '\\neq');
   text = text.replace(/\\ge\s+q(?=[^a-zA-Z0-9]|$)/g, '\\geq');
-  text = text.replace(/\\n(?=[A-ZÀ-ỹa-z0-9\-\*\s])/g, (_match, offset, full) => {
+  text = text.replace(/\\n(?=[A-ZÀ-ỹa-z0-9\-\*\s\|\$<>#])/g, (_match, offset, full) => {
     const rest = full.slice(offset);
     if (/^\\n(e|eq|otin|earrow|abla|u)\b/.test(rest)) {
       return '\\n'; // giữ nguyên macro latex
@@ -1678,6 +1678,40 @@ export function cleanHtmlAndSvgContainers(text: string): string {
   if (!text) return '';
   let res = text;
 
+  // 0. Chuyển đổi bảng HTML <table>...</table> thành bảng Markdown chuẩn trước khi lọc thẻ HTML
+  if (/<table\b/i.test(res)) {
+    res = res.replace(/<table\b[^>]*>([\s\S]*?)<\/table>/gi, (_m, tableInner) => {
+      const trMatches = tableInner.match(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi) || [];
+      const mdRows: string[][] = [];
+      for (const tr of trMatches) {
+        const cellMatches = tr.match(/<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi) || [];
+        if (cellMatches.length > 0) {
+          const cells = cellMatches.map((c: string) =>
+            c
+              .replace(/^<(?:td|th)\b[^>]*>|<\/(?:td|th)>$/gi, '')
+              .replace(/<br\s*\/?>/gi, ' ')
+              .replace(/<\/?(?:p|div)\b[^>]*>/gi, ' ')
+              .replace(/\r?\n/g, ' ')
+              .trim()
+          );
+          mdRows.push(cells);
+        }
+      }
+      if (mdRows.length === 0) return '';
+      const colCount = Math.max(...mdRows.map(r => r.length));
+      const lines = mdRows.map(r => {
+        const padded = [...r];
+        while (padded.length < colCount) padded.push('');
+        return `| ${padded.join(' | ')} |`;
+      });
+      if (lines.length >= 1) {
+        const sep = `| ${Array(colCount).fill(':---:').join(' | ')} |`;
+        return `\n\n${lines[0]}\n${sep}\n${lines.slice(1).join('\n')}\n\n`;
+      }
+      return '';
+    });
+  }
+
   // 1. Loại bỏ các khối bao bọc như <div align="center"><svg>...</svg></div> hoặc <center><svg>...</svg></center>
   res = res.replace(/<(?:div|p|center)\b[^>]*>\s*(<svg\b[\s\S]*?<\/svg>)\s*<\/(?:div|p|center)>/gi, '\n\n$1\n\n');
 
@@ -1701,7 +1735,16 @@ export function cleanHtmlAndSvgContainers(text: string): string {
   res = res.replace(/&amp;/gi, '&');
 
   // 5. Chuyển đổi các thẻ HTML thông thường hay xuất hiện trong lời giải chi tiết (br, b, strong, i, em, p, span...)
-  res = res.replace(/<br\s*\/?>/gi, '\n\n');
+  // Lưu ý: Không thay <br> bằng \n\n nếu đang nằm trên dòng bảng Markdown (| ... |) để tránh làm gãy hàng bảng
+  res = res
+    .split('\n')
+    .map(line => {
+      if (line.trim().startsWith('|') && line.includes('|')) {
+        return line.replace(/<br\s*\/?>/gi, ' ');
+      }
+      return line.replace(/<br\s*\/?>/gi, '\n\n');
+    })
+    .join('\n');
   res = res.replace(/<\/?(?:b|strong)>/gi, '**');
   res = res.replace(/<\/?(?:i|em)>/gi, '*');
   res = res.replace(/<\/?(?:p|div)\b[^>]*>/gi, '\n\n');

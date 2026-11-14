@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Maximize2, X, Table as TableIcon, Image as ImageIcon } from 'lucide-react';
-import MathText from '../MathText';
-import { healMathSvg } from '../../lib/vietnameseFont';
+import MathText, { MathTableRenderer } from '../MathText';
+import { healMathSvg, cleanHtmlAndSvgContainers } from '../../lib/vietnameseFont';
 
 interface QuestionVisualRendererProps {
   figureType?: 'none' | 'svg' | 'table' | 'image' | string;
@@ -34,13 +34,17 @@ export default function QuestionVisualRenderer({
     return null;
   }
 
-  // Parse markdown-style, delimited, JSON, or HTML table into rows & cells
+  // Parse markdown-style, delimited, JSON, or HTML table into MathTableRenderer
   const renderTableContent = (tableText: string) => {
     if (!tableText) return null;
     const rawTrimmed = tableText.trim();
 
-    // 1. If HTML table, render safely
+    // 1. If HTML table, convert to Markdown pipe table via cleanHtmlAndSvgContainers and render with MathTableRenderer
     if (rawTrimmed.startsWith('<table') && rawTrimmed.endsWith('</table>')) {
+      const converted = cleanHtmlAndSvgContainers(rawTrimmed);
+      if (converted.includes('|')) {
+        return <MathTableRenderer rawTable={converted} />;
+      }
       return (
         <div 
           className="overflow-x-auto my-2 border border-slate-300 rounded-xl bg-white shadow-xs p-3 text-sm [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-slate-300 [&_th]:p-2 [&_th]:bg-slate-100 [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_td]:text-center"
@@ -50,12 +54,12 @@ export default function QuestionVisualRenderer({
     }
 
     // 2. Try JSON table format { headers: [...], rows: [...] }
-    let parsedRows: string[][] = [];
     if (rawTrimmed.startsWith('{') || rawTrimmed.startsWith('[')) {
       try {
         const json = JSON.parse(rawTrimmed);
+        const parsedRows: string[][] = [];
         if (Array.isArray(json)) {
-          parsedRows = json.map(r => Array.isArray(r) ? r.map(String) : [String(r)]);
+          json.forEach(r => parsedRows.push(Array.isArray(r) ? r.map(String) : [String(r)]));
         } else if (json && typeof json === 'object') {
           if (Array.isArray(json.headers)) parsedRows.push(json.headers.map(String));
           if (Array.isArray(json.rows)) {
@@ -64,88 +68,26 @@ export default function QuestionVisualRenderer({
             });
           }
         }
+        if (parsedRows.length > 0) {
+          const mdPipe = parsedRows.map(r => `| ${r.join(' | ')} |`).join('\n');
+          return <MathTableRenderer rawTable={mdPipe} />;
+        }
       } catch (e) {}
     }
 
-    // 3. Markdown or pipe / tab delimited parser
-    if (parsedRows.length === 0) {
-      const rawLines = rawTrimmed.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-      for (const line of rawLines) {
-        // Skip separator lines like |---|---| or +---+---+
-        if (/^[|+:\-\s]+$/.test(line) && line.includes('-')) continue;
-
-        let clean = line;
-        if (clean.startsWith('|')) clean = clean.substring(1);
-        if (clean.endsWith('|')) clean = clean.substring(0, clean.length - 1);
-
-        const cells = clean.includes('|') 
-          ? clean.split('|').map(c => c.trim())
-          : (clean.includes('\t') ? clean.split('\t').map(c => c.trim()) : [clean]);
-
-        // If cells are not just markdown separator dashes
-        if (cells.some(c => c.length > 0 && !/^:?-+:?$/.test(c))) {
-          parsedRows.push(cells);
-        }
-      }
+    // 3. If tab-delimited without pipes, convert to pipe table
+    if (!rawTrimmed.includes('|') && rawTrimmed.includes('\t')) {
+      const mdPipe = rawTrimmed
+        .split('\n')
+        .map(l => l.trim())
+        .filter(Boolean)
+        .map(l => `| ${l.split('\t').map(c => c.trim()).join(' | ')} |`)
+        .join('\n');
+      return <MathTableRenderer rawTable={mdPipe} />;
     }
 
-    if (parsedRows.length === 0) return null;
-
-    // Detect if this is a Function Variation Table (Bảng biến thiên: rows labeled x, y', y, f'(x), f(x))
-    const firstColLabels = parsedRows.map(r => (r[0] || '').replace(/[\$\s]/g, '').toLowerCase());
-    const isVariationTable = firstColLabels.some(l => 
-      l === 'x' || l === "y'" || l === 'y' || l === "f'(x)" || l === 'f(x)' || l.includes('đạo hàm')
-    );
-
-    return (
-      <div className="overflow-x-auto my-2 border border-slate-300 rounded-xl bg-white shadow-xs">
-        <table className="w-full text-center border-collapse text-sm min-w-[340px]">
-          <tbody>
-            {parsedRows.map((row, rIdx) => {
-              const isHeaderRow = !isVariationTable && rIdx === 0;
-
-              return (
-                <tr 
-                  key={rIdx} 
-                  className={rIdx % 2 === 0 ? 'bg-slate-50/70' : 'bg-white'}
-                >
-                  {row.map((cell, cIdx) => {
-                    const isFirstCol = cIdx === 0;
-                    const isUndefinedBar = cell === '||' || cell === '$||$' || cell === '|||';
-
-                    // Ensure LaTeX variation symbols (nearrow, searrow, infty, etc.) inside cells are wrapped in $
-                    let formattedCell = cell;
-                    if (!isUndefinedBar) {
-                      formattedCell = formattedCell.replace(/(?<!\$)\\?(nearrow|searrow|uparrow|downarrow|infty|pm|mp)\b(?!\$)/g, '$\\$1$');
-                    }
-
-                    return (
-                      <td
-                        key={cIdx}
-                        className={`px-3 py-2.5 sm:px-4 sm:py-3 border border-slate-300 text-slate-800 ${
-                          isHeaderRow || (isVariationTable && isFirstCol)
-                            ? 'font-bold bg-slate-100/90 border-r-2 border-r-slate-400 text-slate-900'
-                            : 'text-slate-700'
-                        }`}
-                      >
-                        {isUndefinedBar ? (
-                          <span className="inline-flex items-center justify-center gap-1 font-bold text-slate-500 tracking-tighter text-base select-none px-1" title="Không xác định">
-                            <span className="w-0.5 h-6 bg-slate-400 inline-block"></span>
-                            <span className="w-0.5 h-6 bg-slate-400 inline-block"></span>
-                          </span>
-                        ) : (
-                          <MathText content={formattedCell} />
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
+    // 4. Standard Markdown pipe table (including Bảng xét dấu & Bảng biến thiên)
+    return <MathTableRenderer rawTable={rawTrimmed} />;
   };
 
   return (

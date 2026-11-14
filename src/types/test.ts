@@ -26,4 +26,5 @@ export interface QuestionItem extends QuestionFigure {
   points?: number;
   explanation?: string;
   reference?: QuestionReference;
+  sectionHeader?: string;
 }

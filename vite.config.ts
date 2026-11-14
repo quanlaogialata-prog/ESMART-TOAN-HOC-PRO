@@ -1,9 +1,55 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { defineConfig, Plugin } from 'vite';
-import { VitePWA } from 'vite-plugin-pwa';
+
+function computeSrcFingerprint(rootDir: string): string {
+  const hash = crypto.createHash('md5');
+  const indexHtml = path.join(rootDir, 'index.html');
+  if (fs.existsSync(indexHtml)) {
+    hash.update('index.html:');
+    hash.update(fs.readFileSync(indexHtml));
+  }
+  const walk = (dir: string) => {
+    if (!fs.existsSync(dir)) return;
+    const entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.isFile()) {
+        hash.update(path.relative(rootDir, full) + ':');
+        hash.update(fs.readFileSync(full));
+      }
+    }
+  };
+  walk(path.join(rootDir, 'src'));
+  return hash.digest('hex');
+}
+
+function buildFingerprintPlugin(): Plugin {
+  return {
+    name: 'vite-plugin-esmart-build-fingerprint',
+    closeBundle() {
+      try {
+        const distDir = path.resolve(__dirname, 'dist');
+        if (fs.existsSync(distDir)) {
+          const fp = computeSrcFingerprint(__dirname);
+          fs.writeFileSync(path.join(distDir, '.build-fingerprint'), fp, 'utf8');
+          // Mirror dist/ into dev-dist/client/ so the built bundle survives Cloud Run container restarts
+          const persistentClientDir = path.resolve(__dirname, 'dev-dist', 'client');
+          fs.rmSync(persistentClientDir, { recursive: true, force: true });
+          fs.mkdirSync(path.dirname(persistentClientDir), { recursive: true });
+          fs.cpSync(distDir, persistentClientDir, { recursive: true, force: true });
+        }
+      } catch (e) {
+        console.warn('Could not persist build bundle to dev-dist/client:', e);
+      }
+    },
+  };
+}
 
 // LINT.IfChange(aistudio_media_plugin)
 function aistudioMediaPlugin(): Plugin {
@@ -65,75 +111,49 @@ function aistudioMediaPlugin(): Plugin {
 }
 // LINT.ThenChange(//depot/google3/java/com/google/alkali/boq/makersuite/applet_dev_service/templates/initializers/react_theme/vite.config.ts:aistudio_media_plugin)
 
-export default defineConfig(() => {
+export default defineConfig(({ command }) => {
+  if (command === 'build') {
+    process.env.NODE_ENV = 'production';
+  }
   return {
     plugins: [
-      react(), 
-      tailwindcss(), 
+      react(),
+      tailwindcss(),
       aistudioMediaPlugin(),
-      VitePWA({
-        registerType: 'autoUpdate',
-        includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icon.svg'],
-        manifest: {
-          id: '/',
-          name: 'Trung tâm ESMART',
-          short_name: 'ESMART',
-          description: 'Hệ thống ôn tập và kiểm tra môn Toán',
-          theme_color: '#ffffff',
-          background_color: '#ffffff',
-          display: 'standalone',
-          start_url: '/',
-          scope: '/',
-          icons: [
-            {
-              src: '/pwa-192x192.png',
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/pwa-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/pwa-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'maskable',
-            },
-          ],
-        },
-        workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
-          maximumFileSizeToCacheInBytes: 5000000,
-        },
-        devOptions: {
-          enabled: false,
-        },
-      })
+      buildFingerprintPlugin(),
     ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+        'lucide-react': path.resolve(__dirname, 'src/lib/lucide-bundle.js'),
       },
     },
+    esbuild: {
+      sourcemap: false,
+      legalComments: 'none' as const,
+    },
+    css: {
+      devSourcemap: false,
+    },
     optimizeDeps: {
+      holdUntilCrawlEnd: false,
+      esbuildOptions: {
+        minify: true,
+        sourcemap: false,
+        legalComments: 'none' as const,
+      },
       include: [
         'react',
         'react-dom',
         'react-dom/client',
+        'react/jsx-runtime',
+        'react/jsx-dev-runtime',
         'react-router',
-        'firebase/app',
-        'firebase/auth',
-        'firebase/firestore',
-        'lucide-react',
       ],
     },
     server: {
-      hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      hmr: false,
+      watch: null,
     },
   };
 });

@@ -5,9 +5,7 @@ import {
   getFirestore, 
   doc, 
   getDocFromServer, 
-  Firestore,
-  persistentLocalCache,
-  persistentMultipleTabManager
+  Firestore
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -16,22 +14,13 @@ export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 let firestoreInstance: Firestore;
 try {
   firestoreInstance = initializeFirestore(app, {
-    experimentalForceLongPolling: true,
-    localCache: persistentLocalCache({
-      tabManager: persistentMultipleTabManager()
-    })
+    experimentalAutoDetectLongPolling: true,
   }, firebaseConfig.firestoreDatabaseId);
 } catch (e) {
   try {
-    firestoreInstance = initializeFirestore(app, {
-      experimentalForceLongPolling: true,
-    }, firebaseConfig.firestoreDatabaseId);
+    firestoreInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
   } catch (err2) {
-    try {
-      firestoreInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-    } catch (err3) {
-      firestoreInstance = getFirestore(app);
-    }
+    firestoreInstance = getFirestore(app);
   }
 }
 

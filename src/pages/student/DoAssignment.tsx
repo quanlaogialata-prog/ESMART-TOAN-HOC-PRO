@@ -9,6 +9,8 @@ import MathText from '../../components/MathText';
 import QuestionVisualRenderer from '../../components/common/QuestionVisualRenderer';
 import MathRadicalInput from '../../components/common/MathRadicalInput';
 import { gradeQuestion, resolveMcqLetter, parseTfSubAnswers, cleanOptionText, stripOptionPrefix, autoReconcileQuestion } from '../../utils/gradeEngine';
+import { splitMcqOptions } from '../../utils/practiceFormatter';
+import { generateCurriculumFallbackQuestions } from '../../utils/curriculumQuestionBank';
 
 export default function DoAssignment() {
   const { assignmentId } = useParams();
@@ -149,14 +151,99 @@ export default function DoAssignment() {
 
         // ensure IDs exist, types are normalized, and answers are reconciled with explanations
         if (!Array.isArray(parsedQuestions)) parsedQuestions = [];
-        parsedQuestions = parsedQuestions.map((q: any, i: number) => {
-          const rec = autoReconcileQuestion(q);
-          return { 
-            ...rec.question, 
-            id: rec.question.id || `q${i}`,
-            type: (rec.question.type || 'mcq').toString().toLowerCase().trim()
+        const fallbackBank = generateCurriculumFallbackQuestions({
+          grade: Number(testData.grade || assignData.grade || 8),
+          formatType: 'mcq_3part',
+          selectedTopicTitles: testData.selectedTopicTitles
+        });
+        const fbMcqPool = fallbackBank.filter(fq => fq.type === 'mcq');
+        const fbTfPool = fallbackBank.filter(fq => fq.type === 'tf');
+        const fbShortPool = fallbackBank.filter(fq => fq.type === 'short');
+
+        parsedQuestions = parsedQuestions.map((rawItem: any, i: number) => {
+          const rec = autoReconcileQuestion(rawItem);
+          const q = rec.question || {};
+          let qText = String(q.question || q.stem || '').trim();
+          let opts: string[] = Array.isArray(q.options) ? q.options.map((o: any) => String(o || '').trim()).filter(Boolean) : [];
+          let qType = (q.type || 'mcq').toString().toLowerCase().trim();
+          let ans = String(q.correctAnswer ?? q.answer ?? '').trim();
+          const exp = String(q.explanation || '').trim();
+
+          const isSingleMcqAns = /^(?:Đáp\s*án\s*|Phương\s*án\s*|Chọn\s*)?[A-D]\.?$/i.test(ans);
+          const isNumericShortAns = /^-?\d+(?:[.,\/]\d+)?$/.test(ans);
+          const hasUppercaseMcqOpts = opts.length === 4 && opts.every((o, idx) => new RegExp(`^[${['A', 'B', 'C', 'D'][idx]}][\\.\\)\\:\\-]`).test(o));
+          const hasLowercaseTfOpts = opts.length === 4 && opts.every((o, idx) => new RegExp(`^[${['a', 'b', 'c', 'd'][idx]}][\\)\\.:\\-]`).test(o));
+          const hasTfAns = /[a-d]\s*[\-:]\s*(?:Đ|S|Đúng|Sai)/i.test(ans);
+          const hasMcqExpConclusion = /(?:Chọn\s+(?:đáp\s*án\s*|phương\s*án\s*)?[A-D]\b|Đáp\s*án\s*(?:đúng\s*)?(?:là\s*)?[:=]?\s*[A-D]\b)/i.test(exp) && !/a\)[\s\S]*b\)[\s\S]*c\)/i.test(exp);
+
+          const isActuallyMcq =
+            isSingleMcqAns ||
+            hasUppercaseMcqOpts ||
+            (qType === 'mcq' && !hasTfAns && !hasLowercaseTfOpts && !(opts.length === 0 && isNumericShortAns && Number(q.points) === 0.5)) ||
+            ((qType === 'tf' || qType === 'essay') && !hasTfAns && !hasLowercaseTfOpts && (Number(q.points) === 0.25 || hasMcqExpConclusion));
+
+          if (isActuallyMcq) {
+            qType = 'mcq';
+            if (opts.length < 4) {
+              const splitted = splitMcqOptions(qText);
+              if (splitted.length >= 4) {
+                opts = splitted.slice(0, 4);
+                const firstA = qText.search(/(?:^|\n|\s+)(?:\[A\]|\(A\)|A[\.:\)])\s+/);
+                if (firstA > 0) qText = qText.substring(0, firstA).trim();
+              }
+            }
+            const hasAll4ValidOpts =
+              opts.length >= 4 &&
+              opts.slice(0, 4).every(o => o.replace(/^(?:\[?[A-Da-d]\]?|\([A-Da-d]\)|[A-Da-d][\.\)\-:])\s*/, '').replace(/\.\.\./g, '').trim().length > 0);
+            if (!qText || !hasAll4ValidOpts) {
+              const fbMcq = fbMcqPool[i % Math.max(1, fbMcqPool.length)];
+              if (fbMcq) {
+                qText = fbMcq.question;
+                opts = [...(fbMcq.options || [])];
+                ans = fbMcq.correctAnswer;
+              }
+            }
+            const letters = ['A', 'B', 'C', 'D'];
+            if (opts.length >= 4) {
+              opts = opts.slice(0, 4).map((o, idx) => `${letters[idx]}. ${o.replace(/^(?:\[?[A-Da-d]\]?|\([A-Da-d]\)|[A-Da-d][\.\)\-:])\s*/, '').trim()}`);
+            }
+          } else if (hasTfAns || hasLowercaseTfOpts || qType === 'tf') {
+            qType = 'tf';
+            if (opts.length < 4) {
+              const fbTf = fbTfPool[i % Math.max(1, fbTfPool.length)];
+              if (fbTf) {
+                opts = [...(fbTf.options || [])];
+                ans = fbTf.correctAnswer;
+              }
+            }
+          } else if (
+            qType === 'short' ||
+            (qType === 'essay' && opts.length === 0 && (Number(q.points) === 0.5 || (isNumericShortAns && !/a\)[\s\S]*b\)/i.test(qText))))
+          ) {
+            qType = 'short';
+            opts = [];
+            if (!qText || !ans) {
+              const fbShort = fbShortPool[i % Math.max(1, fbShortPool.length)];
+              if (fbShort) {
+                if (!qText) qText = fbShort.question;
+                if (!ans) ans = fbShort.correctAnswer;
+              }
+            }
+          }
+
+          qText = qText.replace(/^(?:Câu|Bài)\s*\d+\s*[\.:]\s*/i, '').trim();
+
+          return {
+            ...q,
+            id: q.id || `q${i}`,
+            type: qType,
+            question: qText,
+            options: opts,
+            correctAnswer: ans
           };
         });
+        const sectionOrder: Record<string, number> = { mcq: 1, tf: 2, short: 3, essay: 4 };
+        parsedQuestions.sort((a: any, b: any) => (sectionOrder[a?.type || 'mcq'] || 99) - (sectionOrder[b?.type || 'mcq'] || 99));
         setQuestions(parsedQuestions);
 
         // Auto-correct any legacy grading mismatches for existing submission
@@ -584,14 +671,77 @@ export default function DoAssignment() {
             </div>
           )}
 
-          {questions.map((q, index) => (
-            <div key={q.id} className={`bg-white p-6 rounded-2xl shadow-sm border ${submitted ? (result?.feedback?.[index]?.score === result?.feedback?.[index]?.maxScore ? 'border-green-200' : 'border-red-200') : 'border-gray-200'}`}>
-              <div className="flex justify-between items-start mb-4">
-                <h3 className="font-bold text-gray-800 text-lg">Câu {index + 1}: <span className="font-normal"><MathText content={q.question} /></span></h3>
-                <span className="text-sm font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded">
-                  {q.points || 1} điểm
-                </span>
-              </div>
+          {questions.map((q, index) => {
+            const qType = q.type || 'mcq';
+            const prevType = index > 0 ? (questions[index - 1]?.type || 'mcq') : null;
+            const isNewSection = qType !== prevType;
+            const sectionQuestionNumber = questions
+              .slice(0, index + 1)
+              .filter(item => (item.type || 'mcq') === qType).length;
+            const sectionTotalCount = questions.filter(item => (item.type || 'mcq') === qType).length;
+
+            const sectionConfig: Record<string, { roman: string; title: string; subtitle: string; headerClass: string; badgeClass: string }> = {
+              mcq: {
+                roman: 'PHẦN I',
+                title: 'CÂU TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN',
+                subtitle: `Thí sinh trả lời từ câu 1 đến câu ${sectionTotalCount}. Mỗi câu hỏi thí sinh chỉ chọn một phương án.`,
+                headerClass: 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 text-blue-950',
+                badgeClass: 'bg-blue-600 text-white'
+              },
+              tf: {
+                roman: 'PHẦN II',
+                title: 'CÂU TRẮC NGHIỆM ĐÚNG SAI',
+                subtitle: `Thí sinh trả lời từ câu 1 đến câu ${sectionTotalCount}. Trong mỗi ý a), b), c), d) ở mỗi câu, thí sinh chọn Đúng hoặc Sai.`,
+                headerClass: 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-200 text-amber-950',
+                badgeClass: 'bg-amber-600 text-white'
+              },
+              short: {
+                roman: 'PHẦN III',
+                title: 'CÂU TRẮC NGHIỆM TRẢ LỜI NGẮN',
+                subtitle: `Thí sinh trả lời từ câu 1 đến câu ${sectionTotalCount}. Thí sinh tính toán và điền kết quả vào ô trả lời.`,
+                headerClass: 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200 text-emerald-950',
+                badgeClass: 'bg-emerald-600 text-white'
+              },
+              essay: {
+                roman: 'PHẦN IV',
+                title: 'TỰ LUẬN',
+                subtitle: `Thí sinh trình bày lời giải chi tiết từ câu 1 đến câu ${sectionTotalCount}.`,
+                headerClass: 'bg-gradient-to-r from-purple-50 to-fuchsia-50 border-purple-200 text-purple-950',
+                badgeClass: 'bg-purple-600 text-white'
+              }
+            };
+            const sec = sectionConfig[qType] || sectionConfig.mcq;
+
+            return (
+              <React.Fragment key={q.id || index}>
+                {isNewSection && (
+                  <div className={`p-4 rounded-2xl border shadow-xs mt-6 first:mt-0 ${sec.headerClass}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span className={`px-2.5 py-1 rounded-md text-xs font-extrabold tracking-wide uppercase ${sec.badgeClass}`}>
+                          {sec.roman}
+                        </span>
+                        <h3 className="font-extrabold text-sm sm:text-base uppercase tracking-tight">
+                          {sec.title}
+                        </h3>
+                      </div>
+                      <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/80 border border-current/15">
+                        {sectionTotalCount} câu hỏi
+                      </span>
+                    </div>
+                    <p className="text-xs opacity-85 italic mt-1.5">{sec.subtitle}</p>
+                  </div>
+                )}
+                <div className={`bg-white p-6 rounded-2xl shadow-sm border ${submitted ? (result?.feedback?.[index]?.score === result?.feedback?.[index]?.maxScore ? 'border-green-200' : 'border-red-200') : 'border-gray-200'}`}>
+                  <div className="flex justify-between items-start mb-4 gap-3">
+                    <h3 className="font-bold text-gray-800 text-lg">
+                      <span className="text-indigo-700">Câu {sectionQuestionNumber}:</span>{' '}
+                      <span className="font-normal"><MathText content={q.question} /></span>
+                    </h3>
+                    <span className="text-sm font-bold text-gray-500 bg-gray-100 px-2.5 py-1 rounded shrink-0">
+                      {q.points || (qType === 'mcq' ? 0.25 : qType === 'tf' ? 1 : qType === 'short' ? 0.5 : 1)} điểm
+                    </span>
+                  </div>
               
               {/* Visual Figure / Diagram / Table / Image */}
               <QuestionVisualRenderer
@@ -731,11 +881,29 @@ export default function DoAssignment() {
 
               {/* Trả lời ngắn */}
               {q.type === 'short' && (
-                <div className="mt-4">
+                <div className="mt-4 p-4 rounded-xl border-2 border-dashed border-emerald-400 bg-emerald-50/30 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-extrabold text-emerald-900 uppercase tracking-wide">
+                      Ô điền kết quả trả lời ngắn (Đáp số):
+                    </span>
+                    <div className="inline-flex items-center gap-1" title="4 ô kết quả chuẩn Bộ GD&ĐT">
+                      {Array.from({ length: 4 }).map((_, boxIdx) => {
+                        const chars = String(answers[q.id] || '').trim().split('');
+                        return (
+                          <span
+                            key={boxIdx}
+                            className="w-7 h-8 border-2 border-emerald-500 rounded bg-white flex items-center justify-center font-mono font-bold text-sm text-emerald-900 shadow-2xs"
+                          >
+                            {chars[boxIdx] || ''}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
                   <MathRadicalInput 
                     value={answers[q.id] || ''}
                     onChange={(val) => handleAnswerChange(q.id, val)}
-                    placeholder="Nhập kết quả hoặc đáp số (ví dụ: √2, 2√3, √3/2, 3.5, -1/2)..."
+                    placeholder="Nhập kết quả hoặc đáp số vào đây (ví dụ: 12, -3,5, √2, 3/4)..."
                     disabled={submitted}
                   />
                 </div>
@@ -870,8 +1038,10 @@ export default function DoAssignment() {
                   </div>
                 </div>
               )}
-            </div>
-          ))}
+                </div>
+              </React.Fragment>
+            );
+          })}
 
           {questions.length === 0 && !(test.fileUrl || test.fileName) && (
             <div className="bg-white p-12 text-center rounded-2xl shadow-sm border border-gray-200">

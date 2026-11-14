@@ -1,7 +1,6 @@
-self.addEventListener('install', function(e) {
+self.addEventListener('install', function() {
   self.skipWaiting();
 });
-
 self.addEventListener('activate', function(e) {
   e.waitUntil(
     caches.keys().then(function(cacheNames) {
@@ -11,11 +10,15 @@ self.addEventListener('activate', function(e) {
         })
       );
     }).then(function() {
-      self.clients.claim();
+      return self.registration.unregister();
+    }).then(function() {
+      return self.clients.matchAll({ type: 'window' });
+    }).then(function(clients) {
+      clients.forEach(function(client) {
+        if (client.url && 'navigate' in client) {
+          client.navigate(client.url);
+        }
+      });
     })
   );
-});
-
-self.addEventListener('fetch', function(e) {
-  // Do nothing, bypass cache
 });

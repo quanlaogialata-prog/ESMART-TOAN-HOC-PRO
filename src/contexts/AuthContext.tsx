@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { auth, db } from '../lib/firebase';
+import type { User } from 'firebase/auth';
 
 interface AuthContextType {
   user: User | null;
@@ -24,6 +22,23 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export const useAuth = () => useContext(AuthContext);
+
+let firebaseModulesPromise: Promise<{
+  authMod: typeof import('firebase/auth');
+  firestoreMod: typeof import('firebase/firestore');
+  fbLib: typeof import('../lib/firebase');
+}> | null = null;
+
+function loadFirebaseModules() {
+  if (!firebaseModulesPromise) {
+    firebaseModulesPromise = Promise.all([
+      import('firebase/auth'),
+      import('firebase/firestore'),
+      import('../lib/firebase')
+    ]).then(([authMod, firestoreMod, fbLib]) => ({ authMod, firestoreMod, fbLib }));
+  }
+  return firebaseModulesPromise;
+}
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Check if a user/role was saved so the user immediately sees the exact interface on frame 0
@@ -73,97 +88,98 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     let isMounted = true;
+    let unsubscribeAuth: (() => void) | null = null;
 
-    const fallbackTimer = setTimeout(() => {
-      if (isMounted) {
-        setLoading(false);
-      }
-    }, 800);
-
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    loadFirebaseModules().then(({ authMod, firestoreMod, fbLib }) => {
       if (!isMounted) return;
-      try {
-        if (currentUser) {
-          const isRobo = currentUser.email === 'robokien36@gmail.com' || currentUser.email === 'admin@toanhoc.pro';
+      const { onAuthStateChanged, signOut } = authMod;
+      const { doc, getDoc, setDoc } = firestoreMod;
+      const { auth, db } = fbLib;
 
-          if (isRobo) {
-            setUser(currentUser);
-            setRole('admin');
-            try {
-              localStorage.setItem('esmart_quick_role', 'admin');
-              localStorage.setItem('esmart_cached_user', JSON.stringify({
-                uid: currentUser.uid,
+      unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+        if (!isMounted) return;
+        try {
+          if (currentUser) {
+            const isRobo = currentUser.email === 'robokien36@gmail.com' || currentUser.email === 'admin@toanhoc.pro';
+
+            if (isRobo) {
+              setUser(currentUser);
+              setRole('admin');
+              try {
+                localStorage.setItem('esmart_quick_role', 'admin');
+                localStorage.setItem('esmart_cached_user', JSON.stringify({
+                  uid: currentUser.uid,
+                  email: currentUser.email,
+                  displayName: currentUser.displayName || 'Admin',
+                  role: 'admin'
+                }));
+              } catch (e) {}
+              setDoc(doc(db, 'users', currentUser.uid), {
+                role: 'admin',
                 email: currentUser.email,
                 displayName: currentUser.displayName || 'Admin',
-                role: 'admin'
-              }));
-            } catch (e) {}
-            setDoc(doc(db, 'users', currentUser.uid), {
-              role: 'admin',
-              email: currentUser.email,
-              displayName: currentUser.displayName || 'Admin',
-              createdAt: new Date().toISOString()
-            }, { merge: true }).catch(() => {});
-          } else {
-            // For standard accounts (teachers, students), verify presence in Firestore
-            try {
-              const docPromise = getDoc(doc(db, 'users', currentUser.uid));
-              const timeoutPromise = new Promise<null>((_, reject) => 
-                setTimeout(() => reject(new Error('Firestore user doc timeout')), 2000)
-              );
-              const userDoc = await Promise.race([docPromise, timeoutPromise]) as any;
+                createdAt: new Date().toISOString()
+              }, { merge: true }).catch(() => {});
+            } else {
+              try {
+                const docPromise = getDoc(doc(db, 'users', currentUser.uid));
+                const timeoutPromise = new Promise<null>((_, reject) =>
+                  setTimeout(() => reject(new Error('Firestore user doc timeout')), 2000)
+                );
+                const userDoc = await Promise.race([docPromise, timeoutPromise]) as any;
 
-              if (userDoc && typeof userDoc.exists === 'function' && userDoc.exists()) {
-                const userData = userDoc.data();
-                if (userData?.disabled === true || userData?.status === 'deleted') {
-                  console.warn("User account is disabled or deleted:", currentUser.email);
-                  await signOut(auth);
-                  if (isMounted) {
-                    setUser(null);
-                    setRole(null);
+                if (userDoc && typeof userDoc.exists === 'function' && userDoc.exists()) {
+                  const userData = userDoc.data();
+                  if (userData?.disabled === true || userData?.status === 'deleted') {
+                    console.warn("User account is disabled or deleted:", currentUser.email);
+                    await signOut(auth);
+                    if (isMounted) {
+                      setUser(null);
+                      setRole(null);
+                    }
+                    return;
                   }
-                  return;
-                }
 
-                const currentRole = userData?.role || (currentUser.email?.includes('student') || currentUser.email?.includes('hocsinh') ? 'student' : 'teacher');
-                if (isMounted) {
-                  setUser(currentUser);
-                  setRole(currentRole);
-                  try {
-                    localStorage.setItem('esmart_quick_role', currentRole);
-                  } catch (e) {}
+                  const currentRole = userData?.role || (currentUser.email?.includes('student') || currentUser.email?.includes('hocsinh') ? 'student' : 'teacher');
+                  if (isMounted) {
+                    setUser(currentUser);
+                    setRole(currentRole);
+                    try {
+                      localStorage.setItem('esmart_quick_role', currentRole);
+                    } catch (e) {}
+                  }
+                } else {
+                  const currentRole = currentUser.email?.includes('student') ? 'student' : 'teacher';
+                  if (isMounted) {
+                    setUser(currentUser);
+                    setRole(currentRole);
+                  }
                 }
-              } else {
+              } catch (docErr) {
+                console.warn("Could not load user role from Firestore:", docErr);
                 const currentRole = currentUser.email?.includes('student') ? 'student' : 'teacher';
                 if (isMounted) {
                   setUser(currentUser);
                   setRole(currentRole);
                 }
               }
-            } catch (docErr) {
-              console.warn("Could not load user role from Firestore:", docErr);
-              const currentRole = currentUser.email?.includes('student') ? 'student' : 'teacher';
-              if (isMounted) {
-                setUser(currentUser);
-                setRole(currentRole);
-              }
             }
           }
+        } catch (authErr) {
+          console.error("Auth state change error:", authErr);
+        } finally {
+          if (isMounted) {
+            setLoading(false);
+          }
         }
-      } catch (authErr) {
-        console.error("Auth state change error:", authErr);
-      } finally {
-        clearTimeout(fallbackTimer);
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
+      });
+    }).catch(() => {
+      if (isMounted) setLoading(false);
     });
 
     return () => {
       isMounted = false;
-      clearTimeout(fallbackTimer);
-      unsubscribe();
+      if (unsubscribeAuth) unsubscribeAuth();
     };
   }, []);
 
@@ -182,6 +198,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loginWithGoogle = async () => {
+    const { authMod, firestoreMod, fbLib } = await loadFirebaseModules();
+    const { signInWithPopup, GoogleAuthProvider, signOut } = authMod;
+    const { doc, getDoc } = firestoreMod;
+    const { auth, db } = fbLib;
+
     const provider = new GoogleAuthProvider();
     const cred = await signInWithPopup(auth, provider);
     const currentUser = cred.user;
@@ -204,6 +225,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginWithEmailPassword = async (email: string, pass: string) => {
     try {
+      const { authMod, firestoreMod, fbLib } = await loadFirebaseModules();
+      const { signInWithEmailAndPassword, signOut } = authMod;
+      const { doc, getDoc } = firestoreMod;
+      const { auth, db } = fbLib;
+
       const cred = await signInWithEmailAndPassword(auth, email, pass);
       const currentUser = cred.user;
       const isRobo = currentUser.email === 'robokien36@gmail.com' || currentUser.email === 'admin@toanhoc.pro';
@@ -222,7 +248,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
     } catch (firebaseErr: any) {
-      // Nếu Firebase Auth chưa tạo tài khoản này hoặc lỗi kết nối, cho phép đăng nhập nhanh theo tên truy cập
+      if (firebaseErr?.message && firebaseErr.message.includes('khóa')) throw firebaseErr;
       const cleanEmail = email.toLowerCase();
       if (cleanEmail.includes('admin') || cleanEmail.includes('robokien')) {
         loginAsQuickRole('admin');
@@ -240,10 +266,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     try {
       localStorage.removeItem('esmart_quick_role');
+      localStorage.removeItem('esmart_cached_user');
     } catch (e) {}
-    await signOut(auth).catch(() => {});
     setUser(null);
     setRole(null);
+    loadFirebaseModules().then(({ authMod, fbLib }) => {
+      authMod.signOut(fbLib.auth).catch(() => {});
+    }).catch(() => {});
   };
 
   return (

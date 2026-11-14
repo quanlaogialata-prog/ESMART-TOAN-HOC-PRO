@@ -18,9 +18,17 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "lucide-react": [
+        "./src/lib/lucide-bundle.d.ts"
       ]
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "dev-dist"
+  ]
 }

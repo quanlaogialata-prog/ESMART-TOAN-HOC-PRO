@@ -538,3 +538,112 @@ export async function extractDocxFullContent(buffer: Buffer): Promise<string> {
     return '';
   }
 }
+
+/**
+ * Extracts all worksheets from an Excel (.xlsx) buffer into Markdown tables.
+ */
+export async function extractXlsxFullContent(buffer: Buffer): Promise<string> {
+  try {
+    const zip = await JSZip.loadAsync(buffer);
+    const sharedStringsFile = zip.file('xl/sharedStrings.xml');
+    const sharedStrings: string[] = [];
+    if (sharedStringsFile) {
+      const ssXml = await sharedStringsFile.async('string');
+      const siMatches = ssXml.match(/<si\b[\s\S]*?<\/si>/g) || [];
+      for (const si of siMatches) {
+        const tMatches = Array.from(si.matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g));
+        const val = tMatches
+          .map(m => (m[1] || '')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&apos;/g, "'")
+          )
+          .join('');
+        sharedStrings.push(val);
+      }
+    }
+
+    const sheetFiles = Object.keys(zip.files)
+      .filter(f => /^xl\/worksheets\/sheet\d+\.xml$/i.test(f))
+      .sort((a, b) => {
+        const na = parseInt(a.match(/\d+/)?.[0] || '0', 10);
+        const nb = parseInt(b.match(/\d+/)?.[0] || '0', 10);
+        return na - nb;
+      });
+
+    if (sheetFiles.length === 0) return '';
+
+    const colLetterToIndex = (colStr: string): number => {
+      let idx = 0;
+      for (let i = 0; i < colStr.length; i++) {
+        idx = idx * 26 + (colStr.charCodeAt(i) - 64);
+      }
+      return Math.max(0, idx - 1);
+    };
+
+    const sheetsOutput: string[] = [];
+
+    for (let sIdx = 0; sIdx < sheetFiles.length; sIdx++) {
+      const sf = zip.file(sheetFiles[sIdx]);
+      if (!sf) continue;
+      const sheetXml = await sf.async('string');
+      const rowMatches = sheetXml.match(/<row\b[\s\S]*?<\/row>/g) || [];
+      const rowsData: string[][] = [];
+
+      for (const rowXml of rowMatches) {
+        const cMatches = rowXml.match(/<c\b[\s\S]*?(?:<\/c>|\/>)/g) || [];
+        const rowCells: string[] = [];
+        for (const cXml of cMatches) {
+          const rAttr = cXml.match(/\br="([A-Z]+)\d+"/i);
+          const colIdx = rAttr ? colLetterToIndex(rAttr[1].toUpperCase()) : rowCells.length;
+          const tAttr = cXml.match(/\bt="([^"]+)"/i)?.[1] || '';
+
+          let cellVal = '';
+          if (tAttr === 's') {
+            const vMatch = cXml.match(/<v\b[^>]*>([\s\S]*?)<\/v>/i);
+            const ssIdx = vMatch ? parseInt(vMatch[1].trim(), 10) : -1;
+            if (ssIdx >= 0 && ssIdx < sharedStrings.length) {
+              cellVal = sharedStrings[ssIdx];
+            }
+          } else if (tAttr === 'inlineStr') {
+            const tMatches = Array.from(cXml.matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g));
+            cellVal = tMatches.map(m => m[1] || '').join('');
+          } else {
+            const vMatch = cXml.match(/<v\b[^>]*>([\s\S]*?)<\/v>/i);
+            cellVal = vMatch ? vMatch[1].trim() : '';
+          }
+
+          cellVal = cellVal.replace(/\r?\n/g, ' ').replace(/\|/g, '/').trim();
+          while (rowCells.length < colIdx) {
+            rowCells.push('');
+          }
+          rowCells[colIdx] = cellVal;
+        }
+        if (rowCells.some(c => c.trim().length > 0)) {
+          rowsData.push(rowCells);
+        }
+      }
+
+      if (rowsData.length > 0) {
+        const maxCols = Math.min(25, Math.max(...rowsData.map(r => r.length)));
+        const mdRows = rowsData.map(r => {
+          const padded = r.slice(0, maxCols);
+          while (padded.length < maxCols) padded.push('');
+          return `| ${padded.join(' | ')} |`;
+        });
+        const sep = `| ${Array(maxCols).fill('---').join(' | ')} |`;
+        sheetsOutput.push(`### Bảng Ma Trận (Sheet ${sIdx + 1})\n${mdRows[0]}\n${sep}\n${mdRows.slice(1).join('\n')}`);
+      }
+    }
+
+    const combined = sheetsOutput.join('\n\n').trim();
+    const repaired = repairVietnameseDocument(combined);
+    return convertTcvn3ToUnicode(repaired);
+  } catch (err) {
+    console.warn('extractXlsxFullContent error:', err);
+    return '';
+  }
+}
+

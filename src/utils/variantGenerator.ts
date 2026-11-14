@@ -16,25 +16,26 @@ export function detectQuestionType(q: any): QuestionType {
   const opts = Array.isArray(q.options) ? q.options : [];
   const ans = (q.correctAnswer || '').toString().trim().toLowerCase();
 
-  // 1. ƯU TIÊN HÀNG ĐẦU: Nếu có các phương án trắc nghiệm A, B, C, D rõ ràng -> BẮT BUỘC LÀ MCQ!
-  // Tuyệt đối không cho phép câu trắc nghiệm bị nhận nhầm thành tự luận dù type có bị gán nhầm là 'essay'
+  // 1. Kiểm tra Đúng / Sai (tf) trước tiên nếu có dấu hiệu rõ ràng của câu Đúng/Sai
+  const hasTfAns = /[a-d]\s*[\-:=]\s*(?:đ|s|đúng|sai|true|false)/i.test(ans);
+  const hasLowercaseAbcdOpts = opts.length === 4 && opts.every((o, i) => new RegExp(`^[${['a', 'b', 'c', 'd'][i]}][\\)\\.:\\-]`).test((o || '').trim()));
+  if (type === 'tf' || type === 'true_false' || type === 'dung_sai' || hasTfAns || hasLowercaseAbcdOpts) {
+    // Tuy nhiên nếu đáp án chỉ là 1 chữ cái A, B, C, D duy nhất thì đó là MCQ
+    if (!/^[a-d]$/i.test(ans)) {
+      return 'tf';
+    }
+  }
+
+  // 2. Nếu có các phương án trắc nghiệm A, B, C, D IN HOA rõ ràng -> BẮT BUỘC LÀ MCQ!
   const hasMcqInOpts = opts.length >= 2 && (
-    opts.some(o => /^(?:\[?[A-D]\]?|[A-D][\.\:\)])\s+/i.test((o || '').trim())) ||
-    (opts.length === 4 && !opts.some(o => /^[a-d][\.\:\)]/i.test((o || '').trim())))
+    opts.some(o => /^(?:\[?[A-D]\]?|[A-D][\.\:\)])\s+/.test((o || '').trim())) ||
+    (opts.length === 4 && !opts.some(o => /^[a-d][\.\:\)]/.test((o || '').trim())))
   );
   const splittedInStem = splitMcqOptions(rawQ);
   const hasMcqInStem = splittedInStem.length >= 2;
 
   if (hasMcqInOpts || hasMcqInStem) {
     return 'mcq';
-  }
-
-  // 2. Kiểm tra Đúng / Sai (tf)
-  if (type === 'tf' || type === 'true_false' || type === 'dung_sai') return 'tf';
-  if (opts.length > 0 && opts.some(o => /^[a-d]\)/i.test(o?.trim() || ''))) {
-    if (ans.includes('đ') || ans.includes('s') || ans.includes('true') || ans.includes('false') || ans.includes(',')) {
-      return 'tf';
-    }
   }
 
   // 3. Kiểm tra Trả lời ngắn (short)

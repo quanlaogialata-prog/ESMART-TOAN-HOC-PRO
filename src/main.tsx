@@ -78,31 +78,22 @@ if (rootElement) {
   console.error("Root element not found in DOM");
 }
 
-// Background cleanup: safely handle Service Worker without blocking UI rendering
+// Background cleanup: unregister any old Service Workers and clear stale caches
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
   setTimeout(() => {
     try {
-      if (import.meta.env.DEV) {
-        navigator.serviceWorker.getRegistrations().then((registrations) => {
-          for (const registration of registrations) {
-            registration.unregister().catch(() => {});
-          }
-        }).catch(() => {});
-      } else {
-        import('virtual:pwa-register').then(({ registerSW }) => {
-          try {
-            registerSW({
-              immediate: true,
-              onNeedRefresh() {},
-              onOfflineReady() {}
-            });
-          } catch (e) {
-            console.warn('PWA registration skipped:', e);
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        for (const registration of registrations) {
+          registration.unregister().catch(() => {});
+        }
+      }).catch(() => {});
+      if ('caches' in window) {
+        caches.keys().then((keys) => {
+          for (const key of keys) {
+            caches.delete(key).catch(() => {});
           }
         }).catch(() => {});
       }
-    } catch (e) {
-      console.warn("ServiceWorker handling bypassed:", e);
-    }
+    } catch {}
   }, 100);
 }

@@ -155,15 +155,15 @@ export function healQuestionOptions<T extends any>(q: T): T {
   // Chỉ coi là MCQ khi các phương án có nhãn A, B, C, D in hoa!
   // TUYỆT ĐỐI KHÔNG coi các ý nhỏ chữ thường a), b), c), d) là phương án MCQ!
   const hasCapitalMcqOpts = opts.length >= 2 && (
-    opts.some(o => /^(?:\[?[A-D]\]?|[A-D][\.\:\)])\s+/i.test((o || '').trim())) ||
-    (opts.length === 4 && !opts.some(o => /^[a-d][\.\:\)]/i.test((o || '').trim())))
+    opts.some(o => /^(?:\[?[A-D]\]?|[A-D][\.\:\)])\s+/.test((o || '').trim())) ||
+    (opts.length === 4 && !opts.some(o => /^[a-d][\.\:\)]/.test((o || '').trim())))
   );
 
   let finalType = currentType;
   if (hasCapitalMcqOpts) {
     finalType = 'mcq';
     changed = true;
-  } else if (opts.length >= 2 && opts.some(o => /^[a-d][\.\:\)]/i.test((o || '').trim()))) {
+  } else if (opts.length >= 2 && opts.some(o => /^[a-d][\.\:\)]/.test((o || '').trim()))) {
     // Nếu các options bắt đầu bằng a), b), c) -> Đây là bài tự luận có nhiều ý nhỏ!
     finalType = 'essay';
     changed = true;

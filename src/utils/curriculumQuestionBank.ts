@@ -1421,6 +1421,7 @@ export function generateCurriculumFallbackQuestions(params: {
   selectedTopicTitles?: string[];
   customEssayItems?: any[];
   autoGenType?: string;
+  matrixEssayCount?: number;
 }): CurriculumQuestion[] {
   // Tự động phân tích khối lớp từ tham số grade hoặc trích xuất từ tiêu đề, ghi chú
   let grade = Number(params.grade);
@@ -1530,16 +1531,16 @@ export function generateCurriculumFallbackQuestions(params: {
   let p3Pool = activeBank.filter(q => q.type === 'short');
   let essayPool = activeBank.filter(q => q.type === 'essay');
 
-  // Đảm bảo không bao giờ lấy từ chuyên đề chưa chọn
-  if (p1Pool.length === 0) p1Pool = activeBank;
-  if (p2Pool.length === 0) p2Pool = activeBank.filter(q => q.type === 'tf').length > 0 ? activeBank.filter(q => q.type === 'tf') : activeBank;
-  if (p3Pool.length === 0) p3Pool = activeBank.filter(q => q.type === 'short').length > 0 ? activeBank.filter(q => q.type === 'short') : activeBank;
-  if (essayPool.length === 0) essayPool = activeBank.filter(q => q.type === 'essay').length > 0 ? activeBank.filter(q => q.type === 'essay') : p3Pool;
+  // Đảm bảo từng phần luôn lấy đúng định dạng câu hỏi chuẩn (mcq, tf, short, essay)
+  if (p1Pool.length === 0) p1Pool = bank.filter(q => q.type === 'mcq');
+  if (p2Pool.length === 0) p2Pool = bank.filter(q => q.type === 'tf');
+  if (p3Pool.length === 0) p3Pool = bank.filter(q => q.type === 'short');
+  if (essayPool.length === 0) essayPool = bank.filter(q => q.type === 'essay');
 
-  const format = params.formatType || 'mcq_3part';
+  const format = params.autoGenType === 'matrix' ? 'matrix' : (params.formatType || params.autoGenType || 'mcq_3part');
   const result: CurriculumQuestion[] = [];
 
-  const getSubArray = (pool: CurriculumQuestion[], count: number, prefix: string) => {
+  const getSubArray = (pool: CurriculumQuestion[], count: number, prefix: string, expectedType?: 'mcq' | 'tf' | 'short' | 'essay') => {
     if (count <= 0 || pool.length === 0) return [];
     const items: CurriculumQuestion[] = [];
     for (let i = 0; i < count; i++) {
@@ -1551,6 +1552,7 @@ export function generateCurriculumFallbackQuestions(params: {
       items.push({
         ...template,
         id: `${prefix}_${i + 1}`,
+        type: expectedType || template.type,
         question: template.question,
         reference: {
           topic: assignedTopic,
@@ -1565,7 +1567,20 @@ export function generateCurriculumFallbackQuestions(params: {
     return items;
   };
 
-  if (format === 'description') {
+  if (format === 'matrix' || format === 'mcq_3part') {
+    const c1 = Number(params.part1Count) || 12;
+    const c2 = Number(params.part2Count) || 4;
+    const c3 = Number(params.part3Count) || 6;
+
+    if (c1 > 0) result.push(...getSubArray(p1Pool, c1, 'p1', 'mcq'));
+    if (c2 > 0) result.push(...getSubArray(p2Pool, c2, 'p2', 'tf'));
+    if (c3 > 0) result.push(...getSubArray(p3Pool, c3, 'p3', 'short'));
+
+    const cEssay = format === 'matrix' ? (Number(params.matrixEssayCount) || 0) : 0;
+    if (cEssay > 0) {
+      result.push(...getSubArray(essayPool, cEssay, 'p4', 'essay'));
+    }
+  } else if (format === 'description') {
     const cfg = params.customPartsConfig || {};
     const notesText = `${params.referenceNotes || ''} ${params.title || ''} ${params.referenceKnowledge || ''}`;
     const isPureEssayInNotes = 
@@ -1590,13 +1605,13 @@ export function generateCurriculumFallbackQuestions(params: {
     const hasP3 = !isPureEssayInNotes && (cfg.enablePart3 === true && p3Cnt > 0);
 
     if (hasP1 && p1Cnt > 0) {
-      result.push(...getSubArray(p1Pool, p1Cnt, 'p1'));
+      result.push(...getSubArray(p1Pool, p1Cnt, 'p1', 'mcq'));
     }
     if (hasP2 && p2Cnt > 0) {
-      result.push(...getSubArray(p2Pool, p2Cnt, 'p2'));
+      result.push(...getSubArray(p2Pool, p2Cnt, 'p2', 'tf'));
     }
     if (hasP3 && p3Cnt > 0) {
-      result.push(...getSubArray(p3Pool, p3Cnt, 'p3'));
+      result.push(...getSubArray(p3Pool, p3Cnt, 'p3', 'short'));
     }
 
     let activeEssayItems = (params.customEssayItems && Array.isArray(params.customEssayItems) && params.customEssayItems.length > 0)
@@ -1678,27 +1693,19 @@ export function generateCurriculumFallbackQuestions(params: {
         });
       }
     }
-  } else if (format === 'mcq_3part') {
-    const c1 = Number(params.part1Count) || 12;
-    const c2 = Number(params.part2Count) || 4;
-    const c3 = Number(params.part3Count) || 6;
-
-    result.push(...getSubArray(p1Pool, c1, 'p1'));
-    result.push(...getSubArray(p2Pool, c2, 'p2'));
-    result.push(...getSubArray(p3Pool, c3, 'p3'));
   } else if (format === 'mcq_custom') {
     const cfg = params.customPartsConfig || {};
     if (cfg.enablePart1) {
-      result.push(...getSubArray(p1Pool, Number(cfg.part1Count) || 10, 'cp1'));
+      result.push(...getSubArray(p1Pool, Number(cfg.part1Count) || 10, 'cp1', 'mcq'));
     }
     if (cfg.enablePart2) {
-      result.push(...getSubArray(p2Pool, Number(cfg.part2Count) || 4, 'cp2'));
+      result.push(...getSubArray(p2Pool, Number(cfg.part2Count) || 4, 'cp2', 'tf'));
     }
     if (cfg.enablePart3) {
-      result.push(...getSubArray(p3Pool, Number(cfg.part3Count) || 4, 'cp3'));
+      result.push(...getSubArray(p3Pool, Number(cfg.part3Count) || 4, 'cp3', 'short'));
     }
     if (result.length === 0) {
-      result.push(...getSubArray(p1Pool, 10, 'cp1'));
+      result.push(...getSubArray(p1Pool, 10, 'cp1', 'mcq'));
     }
   } else if (format === 'essay') {
     let activeEssayItems = (params.customEssayItems && Array.isArray(params.customEssayItems) && params.customEssayItems.length > 0)

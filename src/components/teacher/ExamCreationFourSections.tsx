@@ -2077,423 +2077,425 @@ export const ExamCreationFourSections: React.FC<ExamCreationFourSectionsProps> =
 
             {/* LỰA CHỌN HÌNH THỨC CÂU HỎI */}
             <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Scale size={14} className={onlineCreationMode === 'matrix' ? 'text-purple-600' : 'text-indigo-600'} />
-                <h4 className="font-extrabold text-xs text-gray-900">
-                  {onlineCreationMode === 'matrix' ? 'Lựa chọn hình thức câu hỏi bám sát ma trận:' : 'Hình thức cấu trúc câu hỏi:'}
-                </h4>
-              </div>
-            <>
-              {/* 4 Thẻ chọn hình thức đề thi */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                {/* 1. Trắc nghiệm 3 phần */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setExamFormat('mcq_3part');
-                    if (onlineCreationMode !== 'matrix') setAutoGenType('mcq_3part');
-                    const presets = formatPresets.mcq_3part;
-                    if (presets && presets[0]) applyPreset(presets[0], 'mcq_3part');
-                  }}
-                  className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
-                    examFormat === 'mcq_3part'
-                      ? 'bg-blue-600 text-white border-blue-600 shadow-sm ring-2 ring-blue-600/20'
-                      : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
-                  }`}
-                >
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider opacity-85 mb-1">
-                      Chuẩn Bộ GD&ĐT
-                    </div>
-                    <div className="font-bold text-xs sm:text-sm">Trắc nghiệm 3 phần</div>
+              {onlineCreationMode !== 'matrix' && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <Scale size={14} className="text-indigo-600" />
+                    <h4 className="font-extrabold text-xs text-gray-900">
+                      Hình thức cấu trúc câu hỏi:
+                    </h4>
                   </div>
-                  <p className={`text-[11px] mt-2 line-clamp-2 ${examFormat === 'mcq_3part' ? 'text-blue-100' : 'text-gray-500'}`}>
-                    Nhiều PA + Đúng/Sai + Trả lời ngắn
-                  </p>
-                </button>
 
-                {/* 2. Trắc nghiệm tùy biến */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setExamFormat('mcq_custom');
-                    if (onlineCreationMode !== 'matrix') setAutoGenType('mcq_custom');
-                    const presets = formatPresets.mcq_custom;
-                    if (presets && presets[0]) applyPreset(presets[0], 'mcq_custom');
-                  }}
-                  className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
-                    examFormat === 'mcq_custom'
-                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm ring-2 ring-indigo-600/20'
-                      : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
-                  }`}
-                >
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider opacity-85 mb-1">
-                      Linh hoạt
-                    </div>
-                    <div className="font-bold text-xs sm:text-sm">Trắc nghiệm tùy biến</div>
-                  </div>
-                  <p className={`text-[11px] mt-2 line-clamp-2 ${examFormat === 'mcq_custom' ? 'text-indigo-100' : 'text-gray-500'}`}>
-                    Chọn kết hợp 1 hoặc 2 phần tự do
-                  </p>
-                </button>
-
-                {/* 3. Tự luận */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setExamFormat('essay');
-                    if (onlineCreationMode !== 'matrix') setAutoGenType('essay');
-                    const presets = formatPresets.essay;
-                    if (presets && presets[0]) applyPreset(presets[0], 'essay');
-                  }}
-                  className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
-                    examFormat === 'essay'
-                      ? 'bg-amber-600 text-white border-amber-600 shadow-sm ring-2 ring-amber-600/20'
-                      : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
-                  }`}
-                >
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider opacity-85 mb-1">
-                      Toán tự luận
-                    </div>
-                    <div className="font-bold text-xs sm:text-sm">Tự luận</div>
-                  </div>
-                  <p className={`text-[11px] mt-2 line-clamp-2 ${examFormat === 'essay' ? 'text-amber-100' : 'text-gray-500'}`}>
-                    Bài toán tự luận có barem và lời giải
-                  </p>
-                </button>
-
-                {/* 4. Tổng hợp */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setExamFormat('mixed');
-                    if (onlineCreationMode !== 'matrix') setAutoGenType('mixed');
-                    const presets = formatPresets.mixed;
-                    if (presets && presets[0]) applyPreset(presets[0], 'mixed');
-                  }}
-                  className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
-                    examFormat === 'mixed'
-                      ? 'bg-purple-600 text-white border-purple-600 shadow-sm ring-2 ring-purple-600/20'
-                      : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
-                  }`}
-                >
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider opacity-85 mb-1">
-                      TN + Tự luận
-                    </div>
-                    <div className="font-bold text-xs sm:text-sm">Tổng hợp</div>
-                  </div>
-                  <p className={`text-[11px] mt-2 line-clamp-2 ${examFormat === 'mixed' ? 'text-purple-100' : 'text-gray-500'}`}>
-                    Kết hợp trắc nghiệm khách quan & tự luận
-                  </p>
-                </button>
-              </div>
-
-              {/* Mẫu gợi ý đi kèm của hình thức này */}
-              <div className="bg-blue-50/40 p-4 rounded-xl border border-blue-200/70 space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-extrabold uppercase tracking-wider text-blue-950 flex items-center gap-1.5">
-                    <Sparkles size={14} className="text-amber-500" />
-                    Mẫu gợi ý đi kèm của hình thức này
-                  </label>
-                  <span className="text-[11px] text-blue-700 font-medium">
-                    Nhấp để tự động điền số câu, thời gian và barem chuẩn
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                  {(formatPresets[examFormat] || []).map((preset: any) => {
-                    const isSelected = activePresetId === preset.id;
-                    return (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        onClick={() => applyPreset(preset, examFormat)}
-                        className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
-                          isSelected
-                            ? 'bg-white border-blue-500 ring-2 ring-blue-500/20 shadow-sm'
-                            : 'bg-white/80 border-gray-200 hover:border-blue-200 hover:bg-white'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between gap-1 mb-1">
-                            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
-                              {preset.badge}
-                            </span>
-                            <span className="text-xs font-bold text-blue-900 flex items-center gap-1">
-                              <Clock size={12} className="text-blue-600" /> {preset.duration}'
-                            </span>
-                          </div>
-                          <h4 className="font-bold text-xs text-gray-900 leading-snug mt-1">{preset.name}</h4>
-                          <p className="text-[11px] text-gray-500 mt-1 line-clamp-2">{preset.desc}</p>
+                  {/* 4 Thẻ chọn hình thức đề thi */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    {/* 1. Trắc nghiệm 3 phần */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExamFormat('mcq_3part');
+                        setAutoGenType('mcq_3part');
+                        const presets = formatPresets.mcq_3part;
+                        if (presets && presets[0]) applyPreset(presets[0], 'mcq_3part');
+                      }}
+                      className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
+                        examFormat === 'mcq_3part'
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm ring-2 ring-blue-600/20'
+                          : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider opacity-85 mb-1">
+                          Chuẩn Bộ GD&ĐT
                         </div>
-                        
-                        <div className="mt-2.5 pt-2 border-t border-gray-100 flex items-center justify-between text-[11px]">
-                          <span className="text-gray-500 font-medium">{preset.totalQuestions} câu</span>
-                          {isSelected ? (
-                            <span className="text-blue-600 font-bold flex items-center gap-0.5">
-                              <Check size={13} /> Đang chọn
-                            </span>
-                          ) : (
-                            <span className="text-blue-500 hover:underline">Áp dụng</span>
-                          )}
+                        <div className="font-bold text-xs sm:text-sm">Trắc nghiệm 3 phần</div>
+                      </div>
+                      <p className={`text-[11px] mt-2 line-clamp-2 ${examFormat === 'mcq_3part' ? 'text-blue-100' : 'text-gray-500'}`}>
+                        Nhiều PA + Đúng/Sai + Trả lời ngắn
+                      </p>
+                    </button>
+
+                    {/* 2. Trắc nghiệm tùy biến */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExamFormat('mcq_custom');
+                        setAutoGenType('mcq_custom');
+                        const presets = formatPresets.mcq_custom;
+                        if (presets && presets[0]) applyPreset(presets[0], 'mcq_custom');
+                      }}
+                      className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
+                        examFormat === 'mcq_custom'
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm ring-2 ring-indigo-600/20'
+                          : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider opacity-85 mb-1">
+                          Linh hoạt
                         </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Chi tiết số câu các phần */}
-              <div className="bg-gray-50/70 p-4 rounded-xl border border-gray-200 space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-gray-800 uppercase tracking-wide flex items-center gap-1.5">
-                    <BookOpen size={14} className="text-blue-600" />
-                    Cấu trúc số câu chi tiết
-                  </label>
-                  <span className="text-[11px] text-gray-500">Giáo viên có thể điều chỉnh số câu theo nhu cầu</span>
-                </div>
-
-                {/* Dành cho Trắc nghiệm 3 phần */}
-                {examFormat === 'mcq_3part' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="p-3 bg-blue-50/50 rounded-xl border border-blue-200">
-                      <div className="text-xs font-bold text-blue-950 mb-1">Phần I: Nhiều lựa chọn</div>
-                      <div className="text-[11px] text-gray-500 mb-2">4 phương án A, B, C, D (1 PA đúng)</div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-gray-600">Số câu hỏi:</span>
-                        <input
-                          type="number"
-                          min="1"
-                          max="40"
-                          value={part1Count}
-                          onChange={(e) => setPart1Count(e.target.value)}
-                          className="w-16 px-2.5 py-1 border border-blue-300 rounded-lg text-center text-sm font-bold text-blue-900 bg-white"
-                        />
+                        <div className="font-bold text-xs sm:text-sm">Trắc nghiệm tùy biến</div>
                       </div>
+                      <p className={`text-[11px] mt-2 line-clamp-2 ${examFormat === 'mcq_custom' ? 'text-indigo-100' : 'text-gray-500'}`}>
+                        Chọn kết hợp 1 hoặc 2 phần tự do
+                      </p>
+                    </button>
+
+                    {/* 3. Tự luận */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExamFormat('essay');
+                        setAutoGenType('essay');
+                        const presets = formatPresets.essay;
+                        if (presets && presets[0]) applyPreset(presets[0], 'essay');
+                      }}
+                      className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
+                        examFormat === 'essay'
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-sm ring-2 ring-amber-600/20'
+                          : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider opacity-85 mb-1">
+                          Toán tự luận
+                        </div>
+                        <div className="font-bold text-xs sm:text-sm">Tự luận</div>
+                      </div>
+                      <p className={`text-[11px] mt-2 line-clamp-2 ${examFormat === 'essay' ? 'text-amber-100' : 'text-gray-500'}`}>
+                        Bài toán tự luận có barem và lời giải
+                      </p>
+                    </button>
+
+                    {/* 4. Tổng hợp */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExamFormat('mixed');
+                        setAutoGenType('mixed');
+                        const presets = formatPresets.mixed;
+                        if (presets && presets[0]) applyPreset(presets[0], 'mixed');
+                      }}
+                      className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
+                        examFormat === 'mixed'
+                          ? 'bg-purple-600 text-white border-purple-600 shadow-sm ring-2 ring-purple-600/20'
+                          : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider opacity-85 mb-1">
+                          TN + Tự luận
+                        </div>
+                        <div className="font-bold text-xs sm:text-sm">Tổng hợp</div>
+                      </div>
+                      <p className={`text-[11px] mt-2 line-clamp-2 ${examFormat === 'mixed' ? 'text-purple-100' : 'text-gray-500'}`}>
+                        Kết hợp trắc nghiệm khách quan & tự luận
+                      </p>
+                    </button>
+                  </div>
+
+                  {/* Mẫu gợi ý đi kèm của hình thức này */}
+                  <div className="bg-blue-50/40 p-4 rounded-xl border border-blue-200/70 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-extrabold uppercase tracking-wider text-blue-950 flex items-center gap-1.5">
+                        <Sparkles size={14} className="text-amber-500" />
+                        Mẫu gợi ý đi kèm của hình thức này
+                      </label>
+                      <span className="text-[11px] text-blue-700 font-medium">
+                        Nhấp để tự động điền số câu, thời gian và barem chuẩn
+                      </span>
                     </div>
 
-                    <div className="p-3 bg-indigo-50/50 rounded-xl border border-indigo-200">
-                      <div className="text-xs font-bold text-indigo-950 mb-1">Phần II: Đúng / Sai</div>
-                      <div className="text-[11px] text-gray-500 mb-2">Mỗi câu có 4 ý a), b), c), d)</div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-gray-600">Số câu hỏi:</span>
-                        <input
-                          type="number"
-                          min="1"
-                          max="20"
-                          value={part2Count}
-                          onChange={(e) => setPart2Count(e.target.value)}
-                          className="w-16 px-2.5 py-1 border border-indigo-300 rounded-lg text-center text-sm font-bold text-indigo-900 bg-white"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="p-3 bg-purple-50/50 rounded-xl border border-purple-200">
-                      <div className="text-xs font-bold text-purple-950 mb-1">Phần III: Trả lời ngắn</div>
-                      <div className="text-[11px] text-gray-500 mb-2">Điền kết quả số học / công thức</div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-gray-600">Số câu hỏi:</span>
-                        <input
-                          type="number"
-                          min="1"
-                          max="20"
-                          value={part3Count}
-                          onChange={(e) => setPart3Count(e.target.value)}
-                          className="w-16 px-2.5 py-1 border border-purple-300 rounded-lg text-center text-sm font-bold text-purple-900 bg-white"
-                        />
-                      </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                      {(formatPresets[examFormat] || []).map((preset: any) => {
+                        const isSelected = activePresetId === preset.id;
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => applyPreset(preset, examFormat)}
+                            className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
+                              isSelected
+                                ? 'bg-white border-blue-500 ring-2 ring-blue-500/20 shadow-sm'
+                                : 'bg-white/80 border-gray-200 hover:border-blue-200 hover:bg-white'
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-center justify-between gap-1 mb-1">
+                                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                                  {preset.badge}
+                                </span>
+                                <span className="text-xs font-bold text-blue-900 flex items-center gap-1">
+                                  <Clock size={12} className="text-blue-600" /> {preset.duration}'
+                                </span>
+                              </div>
+                              <h4 className="font-bold text-xs text-gray-900 leading-snug mt-1">{preset.name}</h4>
+                              <p className="text-[11px] text-gray-500 mt-1 line-clamp-2">{preset.desc}</p>
+                            </div>
+                            
+                            <div className="mt-2.5 pt-2 border-t border-gray-100 flex items-center justify-between text-[11px]">
+                              <span className="text-gray-500 font-medium">{preset.totalQuestions} câu</span>
+                              {isSelected ? (
+                                <span className="text-blue-600 font-bold flex items-center gap-0.5">
+                                  <Check size={13} /> Đang chọn
+                                </span>
+                              ) : (
+                                <span className="text-blue-500 hover:underline">Áp dụng</span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
-                )}
+                  {/* Chi tiết số câu các phần */}
+                  <div className="bg-gray-50/70 p-4 rounded-xl border border-gray-200 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-gray-800 uppercase tracking-wide flex items-center gap-1.5">
+                        <BookOpen size={14} className="text-blue-600" />
+                        Cấu trúc số câu chi tiết
+                      </label>
+                      <span className="text-[11px] text-gray-500">Giáo viên có thể điều chỉnh số câu theo nhu cầu</span>
+                    </div>
 
-                {/* Dành cho Trắc nghiệm tùy biến */}
-                {examFormat === 'mcq_custom' && (
-                  <div className="space-y-2">
-                    <p className="text-xs text-indigo-700 font-medium">
-                      Chọn 1 hoặc tối đa 2 phần từ cấu trúc 3 phần:
-                    </p>
-                    
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                      <div className={`p-3 rounded-xl border transition-all ${
-                        customPart1Enabled ? 'bg-blue-50/70 border-blue-300' : 'bg-gray-50 border-gray-200 opacity-60'
-                      }`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-gray-800">
-                            <input
-                              type="checkbox"
-                              checked={customPart1Enabled}
-                              onChange={(e) => {
-                                const nextVal = e.target.checked;
-                                if (!nextVal && !customPart2Enabled && !customPart3Enabled) return;
-                                if (nextVal && [customPart1Enabled, customPart2Enabled, customPart3Enabled].filter(Boolean).length >= 2) {
-                                  if (setSysError) {
-                                    setSysError('Dạng tùy biến chỉ cho phép chọn 1 hoặc 2 phần!');
-                                    setTimeout(() => setSysError(''), 4000);
-                                  }
-                                  return;
-                                }
-                                setCustomPart1Enabled(nextVal);
-                              }}
-                              className="w-4 h-4 text-blue-600 rounded"
-                            />
-                            Phần I: Nhiều PA
-                          </label>
-                        </div>
-                        {customPart1Enabled && (
+                    {/* Dành cho Trắc nghiệm 3 phần */}
+                    {examFormat === 'mcq_3part' && (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="p-3 bg-blue-50/50 rounded-xl border border-blue-200">
+                          <div className="text-xs font-bold text-blue-950 mb-1">Phần I: Nhiều lựa chọn</div>
+                          <div className="text-[11px] text-gray-500 mb-2">4 phương án A, B, C, D (1 PA đúng)</div>
                           <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-gray-500">Số câu:</span>
+                            <span className="text-xs font-medium text-gray-600">Số câu hỏi:</span>
                             <input
                               type="number"
                               min="1"
                               max="40"
-                              value={customPart1Count}
-                              onChange={(e) => setCustomPart1Count(e.target.value)}
-                              className="w-16 px-2 py-1 border border-blue-300 rounded-lg text-center text-xs font-bold text-blue-900 bg-white"
+                              value={part1Count}
+                              onChange={(e) => setPart1Count(e.target.value)}
+                              className="w-16 px-2.5 py-1 border border-blue-300 rounded-lg text-center text-sm font-bold text-blue-900 bg-white"
                             />
                           </div>
-                        )}
-                      </div>
-
-                      <div className={`p-3 rounded-xl border transition-all ${
-                        customPart2Enabled ? 'bg-indigo-50/70 border-indigo-300' : 'bg-gray-50 border-gray-200 opacity-60'
-                      }`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-gray-800">
-                            <input
-                              type="checkbox"
-                              checked={customPart2Enabled}
-                              onChange={(e) => {
-                                const nextVal = e.target.checked;
-                                if (!nextVal && !customPart1Enabled && !customPart3Enabled) return;
-                                if (nextVal && [customPart1Enabled, customPart2Enabled, customPart3Enabled].filter(Boolean).length >= 2) {
-                                  if (setSysError) {
-                                    setSysError('Dạng tùy biến chỉ cho phép chọn 1 hoặc 2 phần!');
-                                    setTimeout(() => setSysError(''), 4000);
-                                  }
-                                  return;
-                                }
-                                setCustomPart2Enabled(nextVal);
-                              }}
-                              className="w-4 h-4 text-indigo-600 rounded"
-                            />
-                            Phần II: Đúng/Sai
-                          </label>
                         </div>
-                        {customPart2Enabled && (
+
+                        <div className="p-3 bg-indigo-50/50 rounded-xl border border-indigo-200">
+                          <div className="text-xs font-bold text-indigo-950 mb-1">Phần II: Đúng / Sai</div>
+                          <div className="text-[11px] text-gray-500 mb-2">Mỗi câu có 4 ý a), b), c), d)</div>
                           <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-gray-500">Số câu:</span>
+                            <span className="text-xs font-medium text-gray-600">Số câu hỏi:</span>
                             <input
                               type="number"
                               min="1"
                               max="20"
-                              value={customPart2Count}
-                              onChange={(e) => setCustomPart2Count(e.target.value)}
-                              className="w-16 px-2 py-1 border border-indigo-300 rounded-lg text-center text-xs font-bold text-indigo-900 bg-white"
+                              value={part2Count}
+                              onChange={(e) => setPart2Count(e.target.value)}
+                              className="w-16 px-2.5 py-1 border border-indigo-300 rounded-lg text-center text-sm font-bold text-indigo-900 bg-white"
                             />
                           </div>
-                        )}
-                      </div>
-
-                      <div className={`p-3 rounded-xl border transition-all ${
-                        customPart3Enabled ? 'bg-purple-50/70 border-purple-300' : 'bg-gray-50 border-gray-200 opacity-60'
-                      }`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-gray-800">
-                            <input
-                              type="checkbox"
-                              checked={customPart3Enabled}
-                              onChange={(e) => {
-                                const nextVal = e.target.checked;
-                                if (!nextVal && !customPart1Enabled && !customPart2Enabled) return;
-                                if (nextVal && [customPart1Enabled, customPart2Enabled, customPart3Enabled].filter(Boolean).length >= 2) {
-                                  if (setSysError) {
-                                    setSysError('Dạng tùy biến chỉ cho phép chọn 1 hoặc 2 phần!');
-                                    setTimeout(() => setSysError(''), 4000);
-                                  }
-                                  return;
-                                }
-                                setCustomPart3Enabled(nextVal);
-                              }}
-                              className="w-4 h-4 text-purple-600 rounded"
-                            />
-                            Phần III: Trả lời ngắn
-                          </label>
                         </div>
-                        {customPart3Enabled && (
+
+                        <div className="p-3 bg-purple-50/50 rounded-xl border border-purple-200">
+                          <div className="text-xs font-bold text-purple-950 mb-1">Phần III: Trả lời ngắn</div>
+                          <div className="text-[11px] text-gray-500 mb-2">Điền kết quả số học / công thức</div>
                           <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-gray-500">Số câu:</span>
+                            <span className="text-xs font-medium text-gray-600">Số câu hỏi:</span>
                             <input
                               type="number"
                               min="1"
                               max="20"
-                              value={customPart3Count}
-                              onChange={(e) => setCustomPart3Count(e.target.value)}
-                              className="w-16 px-2 py-1 border border-purple-300 rounded-lg text-center text-xs font-bold text-purple-900 bg-white"
+                              value={part3Count}
+                              onChange={(e) => setPart3Count(e.target.value)}
+                              className="w-16 px-2.5 py-1 border border-purple-300 rounded-lg text-center text-sm font-bold text-purple-900 bg-white"
                             />
                           </div>
-                        )}
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                )}
+                    )}
 
-                {/* Dành cho Tự luận */}
-                {examFormat === 'essay' && (
-                  <div className="p-3 bg-amber-50/60 rounded-xl border border-amber-200 flex items-center justify-between">
-                    <div>
-                      <div className="text-xs font-bold text-amber-950">Số bài toán tự luận:</div>
-                      <div className="text-[11px] text-gray-500">Có barem biểu điểm & hướng dẫn chấm từng bước</div>
-                    </div>
-                    <input
-                      type="number"
-                      min="1"
-                      max="10"
-                      value={essayCount}
-                      onChange={(e) => setEssayCount(e.target.value)}
-                      className="w-20 px-3 py-1.5 border border-amber-300 rounded-lg text-center text-sm font-bold text-amber-900 bg-white"
-                    />
-                  </div>
-                )}
+                    {/* Dành cho Trắc nghiệm tùy biến */}
+                    {examFormat === 'mcq_custom' && (
+                      <div className="space-y-2">
+                        <p className="text-xs text-indigo-700 font-medium">
+                          Chọn 1 hoặc tối đa 2 phần từ cấu trúc 3 phần:
+                        </p>
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <div className={`p-3 rounded-xl border transition-all ${
+                            customPart1Enabled ? 'bg-blue-50/70 border-blue-300' : 'bg-gray-50 border-gray-200 opacity-60'
+                          }`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-gray-800">
+                                <input
+                                  type="checkbox"
+                                  checked={customPart1Enabled}
+                                  onChange={(e) => {
+                                    const nextVal = e.target.checked;
+                                    if (!nextVal && !customPart2Enabled && !customPart3Enabled) return;
+                                    if (nextVal && [customPart1Enabled, customPart2Enabled, customPart3Enabled].filter(Boolean).length >= 2) {
+                                      if (setSysError) {
+                                        setSysError('Dạng tùy biến chỉ cho phép chọn 1 hoặc 2 phần!');
+                                        setTimeout(() => setSysError(''), 4000);
+                                      }
+                                      return;
+                                    }
+                                    setCustomPart1Enabled(nextVal);
+                                  }}
+                                  className="w-4 h-4 text-blue-600 rounded"
+                                />
+                                Phần I: Nhiều PA
+                              </label>
+                            </div>
+                            {customPart1Enabled && (
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] text-gray-500">Số câu:</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="40"
+                                  value={customPart1Count}
+                                  onChange={(e) => setCustomPart1Count(e.target.value)}
+                                  className="w-16 px-2 py-1 border border-blue-300 rounded-lg text-center text-xs font-bold text-blue-900 bg-white"
+                                />
+                              </div>
+                            )}
+                          </div>
 
-                {/* Dành cho Tổng hợp */}
-                {examFormat === 'mixed' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="p-3 bg-purple-50/60 rounded-xl border border-purple-200 flex items-center justify-between">
-                      <div>
-                        <div className="text-xs font-bold text-purple-950">Số câu trắc nghiệm:</div>
-                        <div className="text-[11px] text-gray-500">Trắc nghiệm 4 lựa chọn</div>
+                          <div className={`p-3 rounded-xl border transition-all ${
+                            customPart2Enabled ? 'bg-indigo-50/70 border-indigo-300' : 'bg-gray-50 border-gray-200 opacity-60'
+                          }`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-gray-800">
+                                <input
+                                  type="checkbox"
+                                  checked={customPart2Enabled}
+                                  onChange={(e) => {
+                                    const nextVal = e.target.checked;
+                                    if (!nextVal && !customPart1Enabled && !customPart3Enabled) return;
+                                    if (nextVal && [customPart1Enabled, customPart2Enabled, customPart3Enabled].filter(Boolean).length >= 2) {
+                                      if (setSysError) {
+                                        setSysError('Dạng tùy biến chỉ cho phép chọn 1 hoặc 2 phần!');
+                                        setTimeout(() => setSysError(''), 4000);
+                                      }
+                                      return;
+                                    }
+                                    setCustomPart2Enabled(nextVal);
+                                  }}
+                                  className="w-4 h-4 text-indigo-600 rounded"
+                                />
+                                Phần II: Đúng/Sai
+                              </label>
+                            </div>
+                            {customPart2Enabled && (
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] text-gray-500">Số câu:</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="20"
+                                  value={customPart2Count}
+                                  onChange={(e) => setCustomPart2Count(e.target.value)}
+                                  className="w-16 px-2 py-1 border border-indigo-300 rounded-lg text-center text-xs font-bold text-indigo-900 bg-white"
+                                />
+                              </div>
+                            )}
+                          </div>
+
+                          <div className={`p-3 rounded-xl border transition-all ${
+                            customPart3Enabled ? 'bg-purple-50/70 border-purple-300' : 'bg-gray-50 border-gray-200 opacity-60'
+                          }`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-gray-800">
+                                <input
+                                  type="checkbox"
+                                  checked={customPart3Enabled}
+                                  onChange={(e) => {
+                                    const nextVal = e.target.checked;
+                                    if (!nextVal && !customPart1Enabled && !customPart2Enabled) return;
+                                    if (nextVal && [customPart1Enabled, customPart2Enabled, customPart3Enabled].filter(Boolean).length >= 2) {
+                                      if (setSysError) {
+                                        setSysError('Dạng tùy biến chỉ cho phép chọn 1 hoặc 2 phần!');
+                                        setTimeout(() => setSysError(''), 4000);
+                                      }
+                                      return;
+                                    }
+                                    setCustomPart3Enabled(nextVal);
+                                  }}
+                                  className="w-4 h-4 text-purple-600 rounded"
+                                />
+                                Phần III: Trả lời ngắn
+                              </label>
+                            </div>
+                            {customPart3Enabled && (
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] text-gray-500">Số câu:</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="20"
+                                  value={customPart3Count}
+                                  onChange={(e) => setCustomPart3Count(e.target.value)}
+                                  className="w-16 px-2 py-1 border border-purple-300 rounded-lg text-center text-xs font-bold text-purple-900 bg-white"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <input
-                        type="number"
-                        min="1"
-                        max="40"
-                        value={mcqCount}
-                        onChange={(e) => setMcqCount(e.target.value)}
-                        className="w-20 px-3 py-1.5 border border-purple-300 rounded-lg text-center text-sm font-bold text-purple-900 bg-white"
-                      />
-                    </div>
+                    )}
 
-                    <div className="p-3 bg-amber-50/60 rounded-xl border border-amber-200 flex items-center justify-between">
-                      <div>
-                        <div className="text-xs font-bold text-amber-950">Số câu tự luận:</div>
-                        <div className="text-[11px] text-gray-500">Bài toán trình bày lời giải</div>
+                    {/* Dành cho Tự luận */}
+                    {examFormat === 'essay' && (
+                      <div className="p-3 bg-amber-50/60 rounded-xl border border-amber-200 flex items-center justify-between">
+                        <div>
+                          <div className="text-xs font-bold text-amber-950">Số bài toán tự luận:</div>
+                          <div className="text-[11px] text-gray-500">Có barem biểu điểm & hướng dẫn chấm từng bước</div>
+                        </div>
+                        <input
+                          type="number"
+                          min="1"
+                          max="10"
+                          value={essayCount}
+                          onChange={(e) => setEssayCount(e.target.value)}
+                          className="w-20 px-3 py-1.5 border border-amber-300 rounded-lg text-center text-sm font-bold text-amber-900 bg-white"
+                        />
                       </div>
-                      <input
-                        type="number"
-                        min="1"
-                        max="10"
-                        value={essayCount}
-                        onChange={(e) => setEssayCount(e.target.value)}
-                        className="w-20 px-3 py-1.5 border border-amber-300 rounded-lg text-center text-sm font-bold text-amber-900 bg-white"
-                      />
-                    </div>
+                    )}
+
+                    {/* Dành cho Tổng hợp */}
+                    {examFormat === 'mixed' && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="p-3 bg-purple-50/60 rounded-xl border border-purple-200 flex items-center justify-between">
+                          <div>
+                            <div className="text-xs font-bold text-purple-950">Số câu trắc nghiệm:</div>
+                            <div className="text-[11px] text-gray-500">Trắc nghiệm 4 lựa chọn</div>
+                          </div>
+                          <input
+                            type="number"
+                            min="1"
+                            max="40"
+                            value={mcqCount}
+                            onChange={(e) => setMcqCount(e.target.value)}
+                            className="w-20 px-3 py-1.5 border border-purple-300 rounded-lg text-center text-sm font-bold text-purple-900 bg-white"
+                          />
+                        </div>
+
+                        <div className="p-3 bg-amber-50/60 rounded-xl border border-amber-200 flex items-center justify-between">
+                          <div>
+                            <div className="text-xs font-bold text-amber-950">Số câu tự luận:</div>
+                            <div className="text-[11px] text-gray-500">Bài toán trình bày lời giải</div>
+                          </div>
+                          <input
+                            type="number"
+                            min="1"
+                            max="10"
+                            value={essayCount}
+                            onChange={(e) => setEssayCount(e.target.value)}
+                            className="w-20 px-3 py-1.5 border border-amber-300 rounded-lg text-center text-sm font-bold text-amber-900 bg-white"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            </>
+                </>
+              )}
 
             {/* THẺ TÀI LIỆU THAM CHIẾU MẶC ĐỊNH (KHI TẠO ĐỀ THEO MA TRẬN) */}
             {onlineCreationMode === 'matrix' && (

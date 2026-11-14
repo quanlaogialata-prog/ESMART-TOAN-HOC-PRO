@@ -256,58 +256,83 @@ export default function EditQuestionsModal({
             </div>
 
             <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
-              {questions.map((q, idx) => {
-                const isSelected = idx === activeIndex;
-                const hasVisual = Boolean(q.figureSvg || q.figureTable || q.imageUrl);
-                const level = q.reference?.cognitiveLevel || '';
-                
-                return (
-                  <button
-                    key={q.id || idx}
-                    type="button"
-                    onClick={() => setActiveIndex(idx)}
-                    className={`w-full text-left p-2.5 rounded-xl transition-all flex items-start justify-between gap-2 cursor-pointer ${
-                      isSelected
-                        ? 'bg-blue-600 text-white shadow-sm shadow-blue-200'
-                        : 'bg-white hover:bg-slate-100/90 text-slate-700 border border-slate-200/80 shadow-2xs'
-                    }`}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <span className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-slate-800'}`}>
-                          Câu {idx + 1}
-                        </span>
-                        <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
-                          isSelected ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600'
-                        }`}>
-                          {q.type === 'mcq' ? 'MCQ' : q.type === 'tf' ? 'Đúng/Sai' : q.type === 'short' ? 'Điền' : 'Tự luận'}
-                        </span>
-                      </div>
-                      <p className={`text-[11px] truncate ${isSelected ? 'text-blue-100' : 'text-slate-500'}`}>
-                        {q.question || 'Câu hỏi chưa có nội dung...'}
-                      </p>
-                    </div>
+              {(() => {
+                const sectionCounters: Record<string, number> = { mcq: 0, tf: 0, short: 0, essay: 0 };
+                let prevType: string | null = null;
 
-                    <div className="flex flex-col items-end gap-1 shrink-0">
-                      {hasVisual && (
-                        <span 
-                          className={`p-0.5 rounded ${isSelected ? 'text-white' : 'text-blue-600'}`}
-                          title="Có hình vẽ hoặc bảng biểu"
-                        >
-                          <ImageIcon size={12} />
-                        </span>
+                const sectionMeta: Record<string, { label: string; badgeClass: string }> = {
+                  mcq: { label: 'PHẦN I • NHIỀU LỰA CHỌN', badgeClass: 'bg-blue-50 text-blue-800 border-blue-200' },
+                  tf: { label: 'PHẦN II • ĐÚNG / SAI (4 Ý)', badgeClass: 'bg-amber-50 text-amber-800 border-amber-200' },
+                  short: { label: 'PHẦN III • TRẢ LỜI NGẮN', badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+                  essay: { label: 'PHẦN IV • TỰ LUẬN', badgeClass: 'bg-purple-50 text-purple-800 border-purple-200' }
+                };
+
+                return questions.map((q, idx) => {
+                  const qType = q.type || 'mcq';
+                  sectionCounters[qType] = (sectionCounters[qType] || 0) + 1;
+                  const sectionNum = sectionCounters[qType];
+                  const showSectionHeader = qType !== prevType;
+                  prevType = qType;
+
+                  const isSelected = idx === activeIndex;
+                  const hasVisual = Boolean(q.figureSvg || q.figureTable || q.imageUrl);
+                  const level = q.reference?.cognitiveLevel || '';
+                  const meta = sectionMeta[qType] || sectionMeta.mcq;
+
+                  return (
+                    <React.Fragment key={q.id || idx}>
+                      {showSectionHeader && (
+                        <div className={`px-2.5 py-1.5 mt-2 first:mt-0 rounded-lg border text-[10px] font-extrabold uppercase tracking-wider ${meta.badgeClass}`}>
+                          {meta.label}
+                        </div>
                       )}
-                      {level && (
-                        <span className={`text-[9px] font-bold px-1 rounded ${
-                          isSelected ? 'bg-blue-700 text-white' : 'bg-slate-100 text-slate-600'
-                        }`}>
-                          {level.slice(0, 2)}
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
+                      <button
+                        type="button"
+                        onClick={() => setActiveIndex(idx)}
+                        className={`w-full text-left p-2.5 rounded-xl transition-all flex items-start justify-between gap-2 cursor-pointer ${
+                          isSelected
+                            ? 'bg-blue-600 text-white shadow-sm shadow-blue-200'
+                            : 'bg-white hover:bg-slate-100/90 text-slate-700 border border-slate-200/80 shadow-2xs'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-slate-800'}`}>
+                              Câu {sectionNum}
+                            </span>
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
+                              isSelected ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {q.type === 'mcq' ? 'Phần I' : q.type === 'tf' ? 'Phần II (Đ/S)' : q.type === 'short' ? 'Phần III (TLN)' : 'Phần IV (TL)'}
+                            </span>
+                          </div>
+                          <p className={`text-[11px] truncate ${isSelected ? 'text-blue-100' : 'text-slate-500'}`}>
+                            {q.question || 'Câu hỏi chưa có nội dung...'}
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          {hasVisual && (
+                            <span 
+                              className={`p-0.5 rounded ${isSelected ? 'text-white' : 'text-blue-600'}`}
+                              title="Có hình vẽ hoặc bảng biểu"
+                            >
+                              <ImageIcon size={12} />
+                            </span>
+                          )}
+                          {level && (
+                            <span className={`text-[9px] font-bold px-1 rounded ${
+                              isSelected ? 'bg-blue-700 text-white' : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {level.slice(0, 2)}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    </React.Fragment>
+                  );
+                });
+              })()}
             </div>
           </div>
 

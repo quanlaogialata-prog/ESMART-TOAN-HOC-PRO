@@ -3,7 +3,7 @@ import { Check, RotateCcw, PenTool, Highlighter, Eraser, Undo, Minus, Square, Ci
 import { getStroke } from 'perfect-freehand';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 
 // Load mathlive only on client
 if (typeof window !== 'undefined') {

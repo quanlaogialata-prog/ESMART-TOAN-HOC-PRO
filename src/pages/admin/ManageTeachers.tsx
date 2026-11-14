@@ -1,8 +1,10 @@
 import React, { useEffect, useState, lazy, Suspense } from 'react';
-import { collection, getDocs, getDocsFromCache, updateDoc, doc, setDoc, addDoc, deleteDoc, query, where } from 'firebase/firestore';
-import { initializeApp, deleteApp, getApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword, updatePassword, deleteUser } from 'firebase/auth';
-import { db, firebaseConfig } from '../../lib/firebase';
+import {
+  collection, getDocs, getDocsFromCache, updateDoc, doc, setDoc, addDoc, deleteDoc, query, where,
+  initializeApp, deleteApp, getApp,
+  getAuth, createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword, updatePassword, deleteUser,
+  db, firebaseConfig
+} from '../../lib/firebaseLazy';
 import { Users, UserPlus, BookOpen, Database, Key, Trash2, FileSpreadsheet, Download, Pencil, ArrowRightLeft, X, Calendar, Search } from 'lucide-react';
 import { 
   getCurrentSchoolYear, 
@@ -178,18 +180,8 @@ export default function AdminDashboard() {
   }, []);
 
   const loadData = async () => {
-    try {
-      const fetchPromise = Promise.all([
-        getDocs(collection(db, 'users')).catch(() => getDocsFromCache(collection(db, 'users'))),
-        getDocs(collection(db, 'classes')).catch(() => getDocsFromCache(collection(db, 'classes')))
-      ]);
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Thời gian tải dữ liệu quá lâu')), 8000)
-      );
-      const [snap, clsSnap] = await Promise.race([fetchPromise, timeoutPromise]) as any;
-      const data = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-      setUsers(data);
-      const fetchedClasses = clsSnap.docs.map((d: any) => ({ id: d.id, ...d.data() } as any));
+    const applyClasses = (clsDocs: any[]) => {
+      const fetchedClasses = clsDocs.map((d: any) => ({ id: d.id, ...d.data() } as any));
       fetchedClasses.sort((a: any, b: any) => {
         const yearDiff = compareSchoolYears(a.schoolYear, b.schoolYear);
         if (yearDiff !== 0) return yearDiff;
@@ -199,9 +191,35 @@ export default function AdminDashboard() {
       });
       setSchoolClasses(fetchedClasses);
       try {
-        localStorage.setItem('esmart_admin_users_cache', JSON.stringify(data));
         localStorage.setItem('esmart_admin_classes_cache', JSON.stringify(fetchedClasses));
       } catch {}
+    };
+
+    const applyUsers = (userDocs: any[]) => {
+      const data = userDocs.map((d: any) => ({ id: d.id, ...d.data() }));
+      setUsers(data);
+      try {
+        localStorage.setItem('esmart_admin_users_cache', JSON.stringify(data));
+      } catch {}
+    };
+
+    if (users.length === 0) {
+      setLoading(true);
+    }
+
+    try {
+      const usersTask = getDocs(collection(db, 'users'))
+        .then(snap => applyUsers(snap.docs))
+        .catch(() => getDocsFromCache(collection(db, 'users')).then(snap => applyUsers(snap.docs)));
+
+      const classesTask = getDocs(collection(db, 'classes'))
+        .then(snap => applyClasses(snap.docs))
+        .catch(() => getDocsFromCache(collection(db, 'classes')).then(snap => applyClasses(snap.docs)));
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Thời gian tải dữ liệu quá lâu')), 8000)
+      );
+      await Promise.race([Promise.all([usersTask, classesTask]), timeoutPromise]);
     } catch(e: any) {
       console.error(e);
       if (e?.code === 'resource-exhausted') {
